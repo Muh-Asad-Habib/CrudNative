@@ -1,0 +1,584 @@
+## Pengantar
+
+Sari membuka aplikasi tugas kuliah di HP sambil menunggu angkot. Kurang dari sedetik, daftar tugasnya muncul. Padahal data itu tidak tersimpan di HP Sari. Aplikasinya **meminta** data ke komputer lain lewat internet, lalu komputer itu mengirim jawabannya dalam bentuk teks.
+
+Kursus ini mengajarimu membangun alur seperti itu dari nol. Di sini kamu berkenalan dengan **client**, **server**, **database**, **URL**, **HTTP**, dan **JSON**. Kamu belum perlu bisa coding.
+
+## Client, server, dan database
+
+<Callout type="analogi" title="Seperti makan di warung">
+
+Kamu memesan nasi goreng ke pelayan warung. Dapur mengambil bahan dari lemari stok dan memasak, lalu pelayan mengantar piringnya. Kamu tidak pernah masuk dapur sendiri.
+
+- Kamu (pembeli) = **client**, pihak yang meminta.
+- Pelayan dan dapur = **server**, pihak yang menerima pesanan, mengolahnya, lalu menjawab.
+- Lemari stok bahan = **database**, tempat semua data disimpan.
+
+Bedanya, server bukan orang. Server adalah program yang bekerja otomatis dan bisa melayani ratusan pembeli sekaligus.
+
+</Callout>
+
+Sekarang versi teknisnya:
+
+- **Client** adalah program yang *meminta* data. Contohnya browser (aplikasi pembuka website, seperti Chrome), aplikasi di HP, atau perintah `curl` di terminal (jendela untuk memberi perintah lewat tulisan).
+- **Server** adalah program yang *menunggu* permintaan lalu *menjawab*. Di kursus ini, server-nya adalah API Express yang berjalan di laptopmu. **API** adalah pintu resmi untuk meminta data (lihat [Apa itu API?](#apa-itu-api)). Express adalah alat pembuat server dengan JavaScript.
+- **Database** adalah tempat data disimpan permanen, tetap ada walaupun laptop dimatikan. Hanya server yang boleh berbicara dengannya.
+
+| Contoh | Client | Server | Database |
+| --- | --- | --- | --- |
+| Membuka SIAKAD kampus | Browser | Server web kampus | Data nilai dan KRS |
+| Capstone kita | Aplikasi Expo | API Express di laptop | SQLite (lewat Prisma) |
+
+Capstone adalah proyek akhir kursus ini: aplikasi tugas kuliah. **Expo** adalah alat pembuat aplikasi HP dengan JavaScript. **SQLite** adalah database kecil berupa satu file. **Prisma** menerjemahkan kode JavaScript menjadi perintah database.
+
+Kenapa aplikasi HP tidak langsung membuka database saja? Ada tiga alasan:
+
+1. **Keamanan.** Membuka database butuh kata sandi. Kata sandi di dalam aplikasi bisa dibongkar siapa pun yang mengunduhnya.
+2. **Aturan.** Server bisa menolak data yang salah, misalnya tugas tanpa judul.
+3. **Satu sumber data.** Aplikasi HP dan website bertanya ke server yang sama, jadi datanya selalu sama.
+
+Lihat juga [glosarium Client & Server](/glosarium#client-server).
+
+## Anatomi URL
+
+<Callout type="analogi" title="Seperti alamat lengkap untuk kurir">
+
+Kurir butuh alamat lengkap: cara kirim, nama gedung, nomor loket, bagian yang dituju, dan catatan tambahan.
+
+- Cara kirim = **protokol**
+- Nama gedung = **host**
+- Nomor loket = **port**
+- Bagian yang dituju = **path**
+- Catatan tambahan = **query string**
+
+URL adalah alamat lengkap seperti itu dalam satu baris.
+
+</Callout>
+
+Setiap permintaan di internet dimulai dari sebuah [URL](/glosarium#url). Contohnya:
+
+```txt
+https://api.kampus.ac.id:8443/api/tasks?done=false&page=2#daftar
+```
+
+| Bagian | Contoh | Fungsi |
+| --- | --- | --- |
+| Protokol | `https:` | Aturan berkomunikasi. `https` adalah HTTP yang isinya diacak (dienkripsi) agar tidak terbaca orang lain. |
+| Host (domain) | `api.kampus.ac.id` | Nama komputer tujuan. |
+| Port | `8443` | Nomor "pintu" program di komputer itu. Jika tidak ditulis, `http` memakai 80 dan `https` memakai 443. |
+| Path | `/api/tasks` | Data mana yang diminta. |
+| Query string | `?done=false&page=2` | Keterangan tambahan berupa `kunci=nilai`, dipisah `&`. Artinya: tugas belum selesai, halaman 2. |
+| Fragment | `#daftar` | Penanda posisi di halaman, mirip pembatas buku. **Tidak dikirim** ke server. |
+
+JavaScript, bahasa yang kita pakai di kursus ini, bisa memecah URL. Kalau Node.js sudah terpasang (lihat [Menyiapkan Tools](/belajar/fondasi/setup-tools)), ketik `node` di terminal lalu tekan <Kbd>Enter</Kbd>. Bisa juga lewat tab Console di DevTools (dibahas di bawah). Lalu tempel kode ini:
+
+```js
+const url = new URL("https://api.kampus.ac.id:8443/api/tasks?done=false&page=2#daftar");
+
+console.log(url.protocol); // https:
+console.log(url.hostname); // api.kampus.ac.id
+console.log(url.port); // 8443
+console.log(url.pathname); // /api/tasks
+console.log(url.search); // ?done=false&page=2
+console.log(url.searchParams.get("page")); // 2
+console.log(url.hash); // #daftar
+```
+
+Cara membacanya:
+
+- Baris pertama membuat **object** `url` dari teks alamat. Object adalah wadah berisi data bernama, mirip formulir yang sudah terisi.
+- Setiap `console.log(...)` menampilkan satu bagian URL. Tulisan setelah `//` adalah komentar berisi hasilnya.
+
+Semua nilai di URL berupa **teks** (*string*). Jadi `url.searchParams.get("done")` menghasilkan teks `"false"`, bukan nilai benar/salah `false` (*boolean*). Server yang harus mengubahnya, dan kamu akan melakukannya di [Pagination, Filter, Search & Sort](/belajar/crud-backend/pagination-filter-search).
+
+### localhost
+
+Selama belajar, API kita berjalan di `http://localhost:3000`. [localhost](/glosarium#localhost) berarti "komputer ini sendiri", dengan alamat IP `127.0.0.1`. `3000` adalah port yang lazim saat membuat aplikasi. Jadi `http://localhost:3000/api/tasks` artinya: hubungi pintu 3000 di laptop ini, lalu minta `/api/tasks`.
+
+Kata `localhost` mirip kata "rumahku". Kalau temanmu yang mengucapkannya, artinya rumah temanmu. Ingat ini untuk nanti, saat aplikasi di HP memanggil `localhost`.
+
+## DNS: buku telepon internet
+
+<Callout type="analogi" title="Seperti daftar kontak di HP">
+
+Kamu tidak hafal nomor HP ibu kos. Kamu cukup mencari "Ibu Kos" di kontak, lalu HP menelepon nomornya.
+
+- Nama di kontak = **nama domain**, misalnya `api.kampus.ac.id`
+- Nomor HP = **alamat IP**
+- Daftar kontak = **DNS**
+- Riwayat panggilan = **cache**
+
+Bedanya, DNS bukan daftar di HP-mu. DNS adalah jaringan server di internet yang dipakai semua orang.
+
+</Callout>
+
+Komputer saling menemukan lewat **alamat IP**, yaitu deretan angka seperti `203.0.113.10` (alamat contoh untuk dokumentasi). Manusia lebih mudah mengingat nama. **DNS** (*Domain Name System*) menerjemahkan nama menjadi alamat IP.
+
+Saat kamu membuka sebuah URL, urutannya kira-kira begini:
+
+1. Browser dan sistem operasi memeriksa **cache**, yaitu catatan hasil pencarian sebelumnya.
+2. Kalau belum ada, mereka bertanya ke **DNS resolver**, server "penanya" milik penyedia internet atau layanan seperti `1.1.1.1`.
+3. Resolver bertanya ke server DNS pemilik domain dan mendapat alamat IP-nya.
+4. Browser menghubungi IP itu, lalu mengirim request HTTP.
+
+Coba ketik `nslookup jsonplaceholder.typicode.com` di terminal lalu tekan <Kbd>Enter</Kbd>. Hasilnya satu atau beberapa alamat IP. `localhost` tidak perlu DNS karena laptopmu sudah mengenali dirinya sendiri.
+
+## Siklus request–response HTTP
+
+<Callout type="analogi" title="Seperti memesan lewat GoFood">
+
+Kamu memilih menu di GoFood, menulis catatan "sambal dipisah", lalu menekan **Pesan**. Itulah **request** (permintaan). Driver datang membawa makanan dan nota. Itulah **response** (jawaban).
+
+- Jenis aksi (pesan, cek, ubah, batalkan) = **method**
+- Menu yang dipilih = **path**
+- Catatan untuk driver = **header**
+- Rincian pesanan, misalnya "2 nasi goreng" = **body**
+
+Bedanya, GoFood butuh puluhan menit. Server biasanya menjawab dalam milidetik.
+
+</Callout>
+
+[HTTP](/glosarium#http) (*HyperText Transfer Protocol*) adalah aturan percakapan antara client dan server. Client mengirim satu **request**, server membalas satu **response**. Server tidak mengirim apa pun tanpa diminta.
+
+### Isi sebuah request
+
+Request hanyalah teks dengan empat bagian: **method**, **path**, **header**, dan **body**. Berikut request untuk meminta dua tugas pertama:
+
+```http
+GET /api/tasks?page=1&limit=2 HTTP/1.1
+Host: localhost:3000
+Accept: application/json
+```
+
+- **Method** `GET` adalah aksinya: "ambilkan data".
+- **Path** `/api/tasks?page=1&limit=2` menyebut data yang diminta. `HTTP/1.1` adalah versi HTTP.
+- **Header** `Host` dan `Accept` adalah keterangan tambahan. `Accept: application/json` berarti "balas dalam format JSON".
+- **Body** kosong, karena `GET` hanya meminta.
+
+Saat membuat data baru, client memakai `POST` dan mengisi body. Header `Content-Type` menyebut format body. Baris kosong memisahkan header dari body.
+
+```http
+POST /api/tasks HTTP/1.1
+Host: localhost:3000
+Content-Type: application/json
+
+{"title":"Belajar REST API","priority":"tinggi"}
+```
+
+Artinya: "buat tugas baru berjudul *Belajar REST API* dengan prioritas tinggi".
+
+Tiap method cocok dengan satu huruf [CRUD](/glosarium#crud): **C**reate (buat), **R**ead (baca), **U**pdate (ubah), **D**elete (hapus). Kamu sudah sering melakukannya pada kontak di HP.
+
+| Method | Arti | CRUD |
+| --- | --- | --- |
+| `GET` | Ambil data | Read |
+| `POST` | Buat data baru | Create |
+| `PUT` / `PATCH` | Ubah data (seluruhnya / sebagian) | Update |
+| `DELETE` | Hapus data | Delete |
+
+### Isi sebuah response
+
+Response punya tiga bagian: **status**, **header**, dan **body**. Berikut jawaban untuk request `GET` tadi (header disederhanakan):
+
+```http
+HTTP/1.1 200 OK
+x-powered-by: Express
+content-type: application/json; charset=utf-8
+content-length: 378
+date: Mon, 20 Jan 2025 09:30:00 GMT
+
+{
+  "data": [
+    {
+      "id": 4,
+      "title": "Review catatan kuliah Pemrograman Web",
+      "done": false,
+      "priority": "rendah",
+      "createdAt": "2025-01-13T08:00:00.000Z",
+      "updatedAt": "2025-01-13T08:00:00.000Z"
+    },
+    {
+      "id": 3,
+      "title": "Setup Expo di HP",
+      "done": false,
+      "priority": "sedang",
+      "createdAt": "2025-01-12T08:00:00.000Z",
+      "updatedAt": "2025-01-12T08:00:00.000Z"
+    }
+  ],
+  "meta": { "page": 1, "limit": 2, "total": 4, "totalPages": 2 }
+}
+```
+
+Cara membacanya:
+
+- Baris pertama berisi **status code** `200 OK`: permintaan berhasil.
+- Berikutnya header. `content-type` menyatakan body berformat JSON. `date` adalah waktu server menjawab.
+- Setelah baris kosong, ada body: `data` (dua tugas) dan `meta` (total 4 tugas dalam 2 halaman).
+
+Nama header tidak membedakan huruf besar dan kecil.
+
+[Status code](/glosarium#status-code) mirip status resi JNE: "terkirim" atau "alamat tidak ditemukan". Kodenya selalu tiga digit, dan digit pertama menunjukkan kelompoknya:
+
+| Kelompok | Arti | Contoh |
+| --- | --- | --- |
+| 2xx | Berhasil | `200 OK`, `201 Created`, `204 No Content` |
+| 3xx | Pindah alamat (redirect) | `301 Moved Permanently` |
+| 4xx | Kesalahan client, misalnya alamat salah atau data kurang | `400 Bad Request`, `404 Not Found` |
+| 5xx | Kesalahan server, misalnya bug di kode server | `500 Internal Server Error` |
+
+<Callout type="info" title="Pendalaman nanti">
+
+Cukup kenali polanya dulu. `PUT` vs `PATCH`, arti tiap status code, dan prinsip REST dibahas di [REST API, Method & Status Code](/belajar/crud-backend/rest-api-http).
+
+</Callout>
+
+## JSON: format data antarprogram
+
+<Callout type="analogi" title="Seperti formulir dengan kolom tetap">
+
+Formulir pendaftaran UKM punya kolom berlabel tetap: "Nama", "NIM", "Jurusan". Karena bentuknya disepakati, panitia mana pun bisa membacanya.
+
+JSON bekerja seperti itu. Label kolom = **nama properti** (misalnya `"title"`), isi kolom = **nilai** (misalnya `"Laporan Basis Data"`).
+
+Bedanya, panitia masih memaklumi tulisan yang sedikit salah. Komputer tidak. Satu tanda kutip keliru membuat seluruh JSON ditolak.
+
+</Callout>
+
+Body response tadi ditulis dalam [JSON](/glosarium#json) (*JavaScript Object Notation*). JSON adalah **teks** yang bentuknya mirip object JavaScript. Hampir semua bahasa pemrograman bisa membacanya, jadi JSON menjadi bahasa bersama antara Expo, Express, dan API lain.
+
+Aturannya lebih ketat daripada object JavaScript:
+
+- Nama properti **wajib** memakai tanda kutip ganda: `"title"`, bukan `title` atau `'title'`.
+- Teks (string) juga wajib memakai kutip ganda.
+- Tidak boleh ada koma setelah elemen terakhir, dan tidak boleh ada komentar.
+- Hanya ada enam jenis nilai:
+  - string (teks): `"Sari"`
+  - number (angka): `3` atau `3.5`
+  - boolean (benar/salah): `true` atau `false`, huruf kecil
+  - `null`, artinya sengaja dikosongkan
+  - array (daftar berurutan): `[1, 2]`
+  - object: pasangan nama dan nilai di dalam kurung kurawal
+- `undefined` dan function tidak bisa ditulis di JSON. Tanggal dikirim sebagai teks, seperti `createdAt` tadi.
+
+Coba temukan kesalahan di kotak kiri sebelum melihat kotak kanan.
+
+<Compare>
+<CompareItem title="Bukan JSON valid" tone="bad">
+
+```txt
+{
+  title: 'Laporan Basis Data',
+  done: False,
+  // tenggat minggu depan
+  tags: ["kuliah",],
+}
+```
+
+</CompareItem>
+<CompareItem title="JSON valid" tone="good">
+
+```json
+{
+  "title": "Laporan Basis Data",
+  "done": false,
+  "tags": ["kuliah"]
+}
+```
+
+</CompareItem>
+</Compare>
+
+JavaScript punya dua **fungsi** bawaan untuk ini. Fungsi adalah perintah siap pakai: diberi masukan, ia mengembalikan hasil. `JSON.stringify` mengubah object menjadi teks (sebelum dikirim). `JSON.parse` mengubah teks menjadi object (setelah diterima):
+
+```js
+const tugas = { id: 1, title: "Laporan Basis Data", done: false };
+
+const teks = JSON.stringify(tugas);
+console.log(teks); // {"id":1,"title":"Laporan Basis Data","done":false}
+console.log(typeof teks); // string
+
+const lagi = JSON.parse(teks);
+console.log(lagi.title); // Laporan Basis Data
+```
+
+Yang terjadi di kode itu:
+
+- `tugas` adalah object berisi `id`, `title`, dan `done`.
+- `JSON.stringify(tugas)` mengubahnya menjadi teks. `typeof teks` membuktikan jenisnya `string`.
+- `JSON.parse(teks)` mengembalikannya menjadi object, jadi `lagi.title` bisa dibaca.
+
+Jika teksnya tidak valid, `JSON.parse` melempar error (berhenti dengan pesan kesalahan). Contohnya `JSON.parse("{'title': 'Laporan'}")` di Node 22 menghasilkan:
+
+```txt
+SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)
+```
+
+Artinya: di posisi 1, JSON mengharapkan nama properti berkutip ganda atau `}`. Komputer menghitung dari 0, jadi posisi 1 adalah karakter kedua, yaitu kutip tunggal. Nomor posisi ini menunjukkan bagian yang harus diperbaiki.
+
+## Mengintip lalu lintas dengan DevTools
+
+**DevTools** (*Developer Tools*) adalah panel di browser untuk mengintip "dapur" sebuah halaman. Tab **Network** di dalamnya mencatat setiap request beserta response-nya, mirip buku ekspedisi yang mencatat paket keluar-masuk. Langkah berikut memakai Chrome atau Edge.
+
+<Steps>
+<Step title="Buka DevTools">
+
+Tekan <Kbd>F12</Kbd> atau <Kbd>Ctrl</Kbd> + <Kbd>Shift</Kbd> + <Kbd>I</Kbd> (macOS: <Kbd>⌘</Kbd> + <Kbd>Option</Kbd> + <Kbd>I</Kbd>). Pilih tab **Network**. Tab **Console** di sebelahnya bisa dipakai mencoba kode JavaScript.
+
+</Step>
+<Step title="Kirim request">
+
+Dengan DevTools terbuka, kunjungi `https://jsonplaceholder.typicode.com/todos/1`, API latihan gratis yang juga dipakai di [Async JavaScript](/belajar/fondasi/async-javascript). Kalau halamannya terbuka lebih dulu, muat ulang dengan <Kbd>F5</Kbd>.
+
+</Step>
+<Step title="Baca request dan response">
+
+Klik baris bernama `1`. Di tab **Headers**, bagian General menampilkan Request URL, Request Method `GET`, dan Status Code `200 OK`. Response Headers memuat `content-type: application/json; charset=utf-8`. Buka tab **Response** atau **Preview** untuk melihat body-nya:
+
+```json
+{
+  "userId": 1,
+  "id": 1,
+  "title": "delectus aut autem",
+  "completed": false
+}
+```
+
+Ini satu data tugas latihan. `completed: false` artinya tugas itu belum selesai.
+
+</Step>
+<Step title="Saring request data">
+
+Buka situs lain yang sering kamu pakai, lalu klik filter **Fetch/XHR**. Filter ini menyembunyikan gambar dan file tampilan, jadi tersisa request data saja. Aplikasimu nanti mengirim request seperti ini. Perhatikan method, status, dan JSON-nya.
+
+</Step>
+</Steps>
+
+## Apa itu API?
+
+<Callout type="analogi" title="Seperti pelayan dan menu warung">
+
+Kamu tidak perlu tahu cara dapur memasak. Kamu cukup membaca menu dan memesan ke pelayan. Pesanan di luar menu akan ditolak.
+
+- Pelayan beserta menunya = **API**, pintu resmi untuk meminta sesuatu ke server
+- Satu baris menu, misalnya "Nasi goreng telur" = satu **endpoint**
+- Dapur yang tidak terlihat = kode server dan database
+
+</Callout>
+
+**API** (*Application Programming Interface*) adalah daftar permintaan yang boleh diajukan ke sebuah program, lengkap dengan bentuk request dan response-nya. Setiap pasangan method + path disebut [endpoint](/glosarium#endpoint), misalnya `GET /api/tasks`.
+
+Lab di kursus ini meniru API tugas yang akan kamu bangun di Track 1. Endpoint-nya:
+
+| Endpoint | Fungsi | Status sukses |
+| --- | --- | --- |
+| `GET /api/tasks` | Daftar tugas; bisa disaring dengan `page`, `limit`, `done`, `q` | `200 OK` |
+| `GET /api/tasks/:id` | Satu tugas berdasarkan id | `200 OK` |
+| `POST /api/tasks` | Tambah tugas | `201 Created` |
+| `PATCH /api/tasks/:id` | Ubah sebagian data tugas | `200 OK` |
+| `DELETE /api/tasks/:id` | Hapus tugas | `204 No Content` |
+
+`:id` diisi nomor tugas, misalnya `/api/tasks/2`. Coba lab di bawah ini:
+
+1. Tekan **Kirim**, lalu bandingkan hasilnya dengan contoh response di atas.
+2. Buka tab Headers di lab.
+3. Coba tombol "Detail #2" dan "404".
+4. Ubah path menjadi `/api/tasks?q=expo`, lalu tekan **Kirim** lagi.
+
+<HttpExplorer initialMethod="GET" initialPath="/api/tasks?page=1&limit=2" />
+
+Lab ini tiruan yang berjalan di browser, jadi request-nya **tidak** muncul di tab Network. Datanya kembali semula saat kamu menekan "Reset data" atau memuat ulang halaman. Versi layar penuhnya ada di [lab HTTP Explorer](/lab/http-explorer).
+
+## Gambaran besar: dari HP ke database
+
+Berikut arsitektur (susunan bagian) capstone yang akan kamu bangun:
+
+<Flow nodes={["Aplikasi Expo (HP)", "API Express", "Prisma", "Database SQLite"]} labels={["HTTP + JSON", "fungsi JS", "query SQL"]} caption="Alur satu request di aplikasi tugas" />
+
+Di warung tadi, Expo adalah pembeli, Express pelayannya, Prisma juru masak, dan SQLite lemari stok. **SQL** adalah bahasa khusus untuk berbicara dengan database.
+
+Misalkan Sari menambah tugas "Belajar REST API" lalu menekan **Simpan**:
+
+1. Aplikasi Expo mengubah isi form menjadi JSON dan mengirim `POST /api/tasks`.
+2. API Express memeriksa datanya, misalnya judul tidak boleh kosong.
+3. Prisma menerjemahkannya menjadi perintah SQL `INSERT` ("tambahkan baris baru").
+4. SQLite menyimpan baris itu dan memberinya nomor id.
+5. API membalas `201 Created` beserta tugas baru dalam JSON.
+6. Aplikasi menampilkan tugas itu di daftar.
+
+Setiap kotak di diagram punya track sendiri:
+
+| Bagian | Dipelajari di |
+| --- | --- |
+| JavaScript yang dipakai semua bagian | Track 0 (sekarang) |
+| SQL, API Express, Prisma | Track 1 |
+| Aplikasi Expo | Track 2 |
+| Menyambungkan aplikasi ke API | Track 3 |
+| Keamanan, testing, dan performa | Track 4 |
+
+## Kesalahan umum
+
+### Mengira aplikasi langsung membaca database
+
+Client tidak pernah menyentuh database langsung. Kalau kamu tergoda menaruh kata sandi database di kode Expo, berhenti dulu. Yang kamu butuhkan adalah endpoint baru di API. Pembeli tidak masuk dapur.
+
+### Mengirim JSON yang tidak valid
+
+Penyebab tersering: kutip tunggal, koma setelah elemen terakhir, dan komentar. Lab menampilkan "JSON tidak valid" di bawah kotak body. Server sungguhan biasanya membalas `400 Bad Request`.
+
+### Memakai `localhost` dari HP
+
+<Callout type="warning" title="localhost di HP adalah HP itu sendiri">
+
+Ingat kata "rumahku" tadi. Jika aplikasi di HP memanggil `http://localhost:3000`, HP mencari server di dirinya sendiri, bukan di laptopmu. Hasilnya error `TypeError: Network request failed`, artinya HP gagal tersambung. Solusinya, pakai alamat IP laptop di Wi-Fi yang sama, seperti dibahas di [Menghubungkan Expo ke API Lokal](/belajar/fullstack/menghubungkan-expo-api).
+
+</Callout>
+
+### Mengira 404 berarti server mati
+
+`404 Not Found` justru bukti server hidup. Server menjawab bahwa data atau route (alamat path) yang diminta tidak ada. Mirip resi "alamat tidak ditemukan": kurirnya bekerja, alamatnya yang salah. Periksa path-nya, misalnya `/api/task` padahal seharusnya `/api/tasks`. Kalau server benar-benar mati, tidak ada status code sama sekali. Browser menampilkan error koneksi seperti `ERR_CONNECTION_REFUSED` (sambungan ditolak).
+
+## Latihan
+
+<Exercise title="Bedah URL" difficulty="mudah" hints={["Pisahkan dulu di tanda `?`: kiri adalah alamat, kanan adalah query string.", "`q` mencari judul yang mengandung kata tersebut, tanpa membedakan huruf besar dan kecil."]}>
+
+Perhatikan URL berikut:
+
+```txt
+http://localhost:3000/api/tasks?done=false&q=basis
+```
+
+1. Sebutkan protokol, host, port, path, dan setiap parameter query-nya.
+2. Lihat empat tugas awal di lab pada tabel di bawah. Tebak tugas mana yang akan dikembalikan.
+3. Buka HTTP Explorer di atas, lalu tekan "Reset data".
+4. Ketik path `/api/tasks?done=false&q=basis`, lalu tekan **Kirim** untuk membuktikan tebakanmu.
+
+| id | title | done |
+| --- | --- | --- |
+| 1 | Baca materi HTTP & REST | `true` |
+| 2 | Kerjakan tugas Basis Data bab 3 | `false` |
+| 3 | Setup Expo di HP | `false` |
+| 4 | Review catatan kuliah Pemrograman Web | `false` |
+
+<Solution>
+
+Protokol `http:`, host `localhost`, port `3000`, path `/api/tasks`. Query string berisi `done` bernilai `"false"` dan `q` bernilai `"basis"`.
+
+`done=false` membuang tugas 1 yang sudah selesai. Dari sisanya, hanya judul tugas 2 yang mengandung "basis". Response-nya:
+
+```json
+{
+  "data": [
+    {
+      "id": 2,
+      "title": "Kerjakan tugas Basis Data bab 3",
+      "done": false,
+      "priority": "tinggi",
+      "createdAt": "2025-01-11T08:00:00.000Z",
+      "updatedAt": "2025-01-11T08:00:00.000Z"
+    }
+  ],
+  "meta": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+`limit` bernilai 10 karena itu nilai bawaan (default) jika `limit` tidak dikirim.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Perbaiki JSON yang rusak" difficulty="sedang" hints={["Ada empat jenis kesalahan. Bandingkan dengan aturan JSON di atas.", "Pembaca JSON (parser) berhenti di kesalahan pertama. Perbaiki satu, uji lagi, lalu lanjut ke kesalahan berikutnya."]}>
+
+Seorang teman ingin menambah tugas lewat API, tetapi body-nya selalu ditolak:
+
+```txt
+{
+  'title': 'Kerjakan laporan Basis Data',
+  "done": False,
+  "priority": "tinggi", // jangan lupa
+}
+```
+
+1. Perbaiki body tersebut sampai menjadi JSON valid.
+2. Di HTTP Explorer, pilih method `POST` dan isi path `/api/tasks`.
+3. Tempel body hasil perbaikanmu, lalu tekan **Kirim**.
+4. Kamu berhasil jika mendapat `201 Created`.
+
+<Solution>
+
+```json
+{
+  "title": "Kerjakan laporan Basis Data",
+  "done": false,
+  "priority": "tinggi"
+}
+```
+
+Yang diperbaiki:
+
+- Kutip tunggal di nama properti dan nilai `title` diganti kutip ganda.
+- `False` diganti `false`, karena boolean JSON selalu huruf kecil.
+- Komentar `// jangan lupa` dihapus.
+- Koma setelah `"tinggi"` dihapus.
+
+Lab membalas `201 Created` berisi tugas baru dengan `id` 5 (kalau data baru di-reset). `createdAt` dan `updatedAt` mengikuti waktu saat kamu mencoba.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Di aplikasi tugas kita, siapa yang boleh berbicara langsung dengan database?",
+    options: ["Aplikasi Expo di HP", "API (server)", "Browser pengguna", "Semua client, asalkan tahu URL-nya"],
+    answer: 1,
+    explain: "Hanya server (API Express, lewat Prisma) yang membuka database. Aplikasi HP dan browser adalah client. Mereka meminta lewat HTTP, jadi kata sandi database tidak pernah sampai ke tangan pengguna. Sama seperti pembeli warung yang tidak masuk dapur.",
+  },
+  {
+    q: "Pada URL `https://api.kampus.ac.id/api/tasks?page=2`, bagian path-nya adalah…",
+    options: ["`https://api.kampus.ac.id`", "`?page=2`", "`/api/tasks`", "`api.kampus.ac.id/api`"],
+    answer: 2,
+    explain: "Path dimulai setelah host dan berakhir sebelum tanda `?`. `https://api.kampus.ac.id` adalah protokol ditambah host, `?page=2` adalah query string, dan pilihan terakhir mencampur host dengan sebagian path.",
+  },
+  {
+    q: "Server membalas `404 Not Found`. Apa artinya?",
+    options: ["Server hidup dan menjawab, tetapi data atau route yang diminta tidak ada", "Server sedang mati", "Koneksi internetmu terputus", "Body JSON yang kamu kirim tidak valid"],
+    answer: 0,
+    explain: "Status code hanya datang dari server yang hidup, mirip resi 'alamat tidak ditemukan' yang tetap dikirim oleh kurir yang bekerja. Kalau server mati atau internet putus, kamu mendapat error koneksi tanpa status code. Body yang tidak valid biasanya dibalas `400 Bad Request`.",
+  },
+  {
+    q: "Manakah yang merupakan JSON valid?",
+    options: ["`{'done': false}`", '`{"done": false,}`', "`{done: false}`", '`{"done": false}`'],
+    answer: 3,
+    explain: "JSON mewajibkan nama properti memakai kutip ganda dan melarang koma setelah elemen terakhir. Pilihan pertama memakai kutip tunggal, pilihan kedua punya koma di akhir, dan pilihan ketiga tidak memakai kutip sama sekali.",
+  },
+  {
+    q: "Apa tugas DNS?",
+    options: ["Mengenkripsi data yang dikirim lewat HTTPS", "Menerjemahkan nama domain menjadi alamat IP", "Menyimpan data tugas secara permanen", "Mengubah object JavaScript menjadi teks JSON"],
+    answer: 1,
+    explain: "DNS bekerja seperti daftar kontak di HP: dari nama `api.kampus.ac.id`, ia mencarikan alamat IP-nya. Mengacak (mengenkripsi) data adalah tugas HTTPS, menyimpan data adalah tugas database, dan mengubah object menjadi JSON adalah tugas `JSON.stringify`.",
+  },
+]} />
+
+## Ringkasan
+
+- **Client** meminta, **server** menjawab, dan hanya server yang membuka **database**, seperti pembeli, pelayan, dan lemari stok di warung.
+- URL berisi protokol, host, port, path, query string, dan fragment. Semua nilainya berupa teks.
+- **DNS** mengubah nama domain menjadi alamat IP. `localhost` berarti komputer ini sendiri.
+- Request berisi method, path, header, dan body. Response berisi status code, header, dan body.
+- **JSON** adalah teks berformat ketat. `JSON.stringify` mengubah object menjadi teks, `JSON.parse` sebaliknya.
+- Tab **Network** di DevTools menampilkan setiap request dan response.
+- **API** adalah menu endpoint yang disediakan server.
+
+Berikutnya, kamu mulai menulis JavaScript sungguhan di [JavaScript Modern 1: Variabel, Fungsi, Array & Object](/belajar/fondasi/javascript-modern-1).
+
+<Callout type="capstone" title="Langkah capstone">
+
+1. Di folder `kursus-crud`, buat file `rencana-api.txt`.
+2. Tulis lima endpoint: lihat daftar, lihat detail, tambah, ubah, dan hapus.
+3. Catat method, path, dan status code sukses tiap endpoint. Tabel endpoint di atas boleh jadi contekan.
+
+Catatan ini nanti dicocokkan dengan desain REST di Track 1.
+
+</Callout>

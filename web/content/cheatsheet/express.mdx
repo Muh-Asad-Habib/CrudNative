@@ -1,0 +1,623 @@
+<Callout type="analogi" title="Server Express seperti warung makan">
+
+Pembeli (client, misalnya aplikasi HP) datang membawa pesanan (request). Papan menu (route) menentukan siapa yang mengurus pesanan itu. Satpam dan kasir di depan (middleware) memeriksa pesanan sebelum masuk dapur. Makanan yang diantar balik adalah response. Bedanya dengan warung sungguhan: server tidak ingat pembeli sebelumnya, jadi tiap pesanan harus lengkap.
+
+</Callout>
+
+## Setup proyek
+
+Express adalah **framework** (kerangka siap pakai) untuk membuat server HTTP di Node.js. Proyek `belajar-api` memakai Express 5 dan **ESM**, yaitu gaya `import`/`export` yang diaktifkan lewat `"type": "module"`.
+
+**Contoh sehari-hari:** menyiapkan proyek mirip membuka warung. `npm init -y` membuat "surat izin usaha" (`package.json`), lalu `npm install express@5` membeli peralatan dapurnya.
+
+```bash
+mkdir belajar-api
+cd belajar-api
+npm init -y
+npm pkg set type=module
+npm install express@5
+```
+
+Urutannya: buat folder, buat `package.json`, aktifkan `import`/`export`, lalu pasang Express versi 5.
+
+```json title="package.json (bagian penting)"
+{
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  }
+}
+```
+
+| Perintah | Fungsi |
+| --- | --- |
+| `npm run dev` | Jalankan server dan restart otomatis setiap file disimpan |
+| `npm start` | Jalankan server biasa, tanpa restart otomatis |
+| `Ctrl + C` | Hentikan server di terminal |
+
+## Server minimal
+
+Server paling sederhana punya tiga bagian: middleware (pemeriksa di depan), route (alamat yang dilayani), dan `listen`. `listen` membuat server mulai menunggu request di sebuah **port**, yaitu nomor pintu di komputermu.
+
+**Contoh sehari-hari:** `app.listen(3000)` seperti membuka pintu warung nomor 3000, lalu menunggu pembeli datang.
+
+```js title="src/server.js"
+import express from "express";
+
+const app = express();
+const PORT = process.env.PORT ?? 3000;
+
+app.use(express.json());
+
+app.get("/api/health", (req, res) => {
+  res.json({ data: { status: "ok" } });
+});
+
+app.listen(PORT, (error) => {
+  if (error) throw error; // contoh: EADDRINUSE, port sudah dipakai
+  console.log(`Server jalan di http://localhost:${PORT}`);
+});
+```
+
+`app.use(express.json())` membuat body JSON bisa dibaca. Route `/api/health` hanya membalas "ok", gunanya untuk mengecek server hidup. Perintah `curl` di bawah mengirim request uji dari terminal.
+
+```bash
+curl http://localhost:3000/api/health
+# {"data":{"status":"ok"}}
+```
+
+## Routing
+
+**Route** adalah aturan "kalau datang method X ke path Y, jalankan fungsi Z". Fungsi Z disebut **handler**. Express memeriksa route dari atas ke bawah dan menjalankan yang pertama cocok.
+
+**Contoh sehari-hari:** route seperti papan petunjuk di bank: "Setor tunai → loket 1, Tarik tunai → loket 2". Petugas membaca papan dari atas dan berhenti di petunjuk pertama yang cocok.
+
+| Method | Untuk | Contoh | Status sukses |
+| --- | --- | --- | --- |
+| `app.get` | Membaca data | `GET /api/tasks` | 200 |
+| `app.post` | Membuat data | `POST /api/tasks` | 201 |
+| `app.put` | Mengganti seluruh data | `PUT /api/tasks/1` | 200 |
+| `app.patch` | Mengubah sebagian data | `PATCH /api/tasks/1` | 200 |
+| `app.delete` | Menghapus data | `DELETE /api/tasks/1` | 204 |
+| `app.use` | Memasang middleware untuk semua method | `app.use(express.json())` | - |
+
+`req.params` berisi bagian path yang berubah-ubah (`:id`). `req.query` berisi isian setelah tanda `?`. Keduanya selalu string, jadi id diubah dulu dengan `Number(...)`.
+
+```js title="Params dan query string"
+// GET /api/tasks/7
+app.get("/api/tasks/:id", (req, res) => {
+  const id = Number(req.params.id); // params selalu string
+  const task = tasks.find((t) => t.id === id);
+  if (!task) {
+    return res.status(404).json({ error: { message: "Tugas tidak ditemukan", code: "NOT_FOUND" } });
+  }
+  res.json({ data: task });
+});
+
+// GET /api/tasks?done=true
+app.get("/api/tasks", (req, res) => {
+  const { done } = req.query; // "true", "false", atau undefined (selalu string)
+  const result = done === undefined ? tasks : tasks.filter((t) => t.done === (done === "true"));
+  res.json({ data: result });
+});
+```
+
+Kalau satu path punya beberapa method, `app.route()` cukup menulis path-nya sekali.
+
+```js title="Satu path, beberapa method"
+app.route("/api/tasks/:id")
+  .get(getTask)
+  .patch(updateTask)
+  .delete(deleteTask);
+```
+
+<Callout type="warning" title="Urutan route penting">
+
+Tulis path tetap (statis, misalnya `/api/tasks/stats`) sebelum path yang punya bagian berubah (dinamis, misalnya `/api/tasks/:id`). Kalau `/api/tasks/:id` ditulis lebih dulu, request `GET /api/tasks/stats` masuk ke handler `:id` dengan `id = "stats"`.
+
+</Callout>
+
+## Sintaks path Express 5
+
+Express 5 memakai aturan penulisan path yang baru (dari pustaka path-to-regexp v8). Beberapa pola lama Express 4 sekarang langsung error saat server dinyalakan.
+
+**Contoh sehari-hari:** mirip kantor pos yang mengganti format alamat. Surat dengan format lama ditolak di loket, jadi alamatnya perlu ditulis ulang.
+
+Kurung kurawal seperti `{/:format}` menandai bagian opsional (boleh ada, boleh tidak). Bintang seperti `*splat` menangkap sisa path, berapa pun segmennya.
+
+| Pola | Cocok dengan | Isi `req.params` |
+| --- | --- | --- |
+| `/tasks/:id` | `/tasks/7` | `{ id: "7" }` |
+| `/courses/:courseId/tasks/:taskId` | `/courses/2/tasks/5` | `{ courseId: "2", taskId: "5" }` |
+| `/export{/:format}` | `/export` dan `/export/csv` | `format` boleh `undefined` |
+| `/files/*splat` | `/files/a/b.txt` | `{ splat: ["a", "b.txt"] }` |
+| `/{*splat}` | semua path, termasuk `/` | `splat` boleh `undefined` |
+
+<Compare>
+<CompareItem title="Gaya Express 4 (error)" tone="bad">
+
+```js
+app.get("*", handler);
+// Missing parameter name at index 1: *
+
+app.get("/tasks/:id?", handler);
+// Unexpected ? at index 10
+```
+
+</CompareItem>
+<CompareItem title="Gaya Express 5" tone="good">
+
+```js
+app.get("/{*splat}", handler);
+
+app.get("/tasks{/:id}", handler);
+
+// Untuk 404, cukup middleware tanpa path:
+app.use(notFound);
+```
+
+</CompareItem>
+</Compare>
+
+## Objek request
+
+`req` berisi semua yang dikirim client (aplikasi atau browser yang mengirim request). Nilai dari URL selalu berupa string, jadi ubah dulu ke angka atau boolean sebelum dipakai.
+
+**Contoh sehari-hari:** `req` seperti nota pesanan yang diterima kasir. Ada nomor meja (`params`), catatan tambahan seperti "pedas" (`query`), dan isi pesanannya (`body`).
+
+| Properti | Isi | Contoh nilai |
+| --- | --- | --- |
+| `req.params` | Bagian path yang berubah-ubah (`:id`) | `{ id: "7" }` |
+| `req.query` | Isian setelah `?` (string, atau array kalau kuncinya berulang) | `{ page: "2", tags: ["a", "b"] }` |
+| `req.body` | Isi request yang sudah diubah jadi objek oleh `express.json()` | `{ title: "Laporan" }` |
+| `req.get("Content-Type")` | Membaca header; huruf besar/kecil tidak berpengaruh | `"application/json"` |
+| `req.method` | Method HTTP | `"POST"` |
+| `req.path` | Path tanpa query string | `"/api/tasks"` |
+| `req.originalUrl` | URL lengkap dengan query string | `"/api/tasks?page=2"` |
+| `req.ip` | Alamat IP client | `"::1"` |
+
+<Callout type="danger" title="req.body bernilai undefined">
+
+Di Express 5, `req.body` tetap `undefined` sampai ada **parser** (middleware pembaca body) yang mengisinya. Pasang `app.use(express.json())` sebelum router, dan pastikan client mengirim header `Content-Type: application/json`. Tanpa header itu, `express.json()` melewati request begitu saja.
+
+</Callout>
+
+<Callout type="note" title="req.query di Express 5">
+
+`req.query` sekarang hanya bisa dibaca, tidak bisa diisi ulang (istilahnya *getter*). Menulis `req.query = ...` akan melempar `TypeError`. Simpan hasil validasi di variabel, misalnya `const query = listQuerySchema.parse(req.query)`. Parser bawaannya juga mode *simple*: `?filter[done]=true` dibaca sebagai kunci `"filter[done]"`, bukan objek bersarang.
+
+</Callout>
+
+## Objek response
+
+`res` dipakai untuk mengirim jawaban. Setiap request harus mendapat tepat satu respons.
+
+**Contoh sehari-hari:** `res` seperti nampan pengantar. Kamu memberi label status (`status`), menaruh makanannya (`json`), lalu mengantarnya. Satu pesanan hanya boleh diantar sekali.
+
+| Method | Fungsi | Contoh |
+| --- | --- | --- |
+| `res.status(code)` | Mengatur status code; bisa langsung disambung `.json()` | `res.status(201).json(...)` |
+| `res.json(data)` | Mengirim data JSON dan otomatis memasang header `Content-Type` | `res.json({ data: task })` |
+| `res.status(204).end()` | Sukses tanpa body | setelah DELETE |
+| `res.sendStatus(404)` | Mengatur status dan mengirim teks bawaannya | `"Not Found"` |
+| `res.set(name, value)` | Mengatur header | `res.set("Cache-Control", "no-store")` |
+| `res.location(url)` | Mengisi header `Location` (alamat data yang baru dibuat) | setelah POST |
+| `res.send(body)` | Mengirim teks, HTML, atau data biner (Buffer) | jarang dipakai di API JSON |
+
+Lima baris di bawah adalah bentuk respons yang dipakai di seluruh kursus: daftar, satu item, berhasil dibuat, berhasil dihapus, dan tidak ditemukan.
+
+```js title="Pola respons sesuai format API kursus"
+res.json({ data: tasks, meta: { page, limit, total, totalPages } }); // list
+res.json({ data: task }); // satu item
+res.status(201).json({ data: created }); // berhasil dibuat
+res.status(204).end(); // berhasil dihapus
+res.status(404).json({ error: { message: "Tugas tidak ditemukan", code: "NOT_FOUND" } });
+```
+
+<Callout type="warning" title="Cannot set headers after they are sent to the client">
+
+Error ini muncul kalau handler mengirim respons dua kali. Biasakan `return` saat mengirim respons lebih awal.
+
+```js
+if (!task) {
+  return res.status(404).json({ error: { message: "Tugas tidak ditemukan", code: "NOT_FOUND" } });
+}
+res.json({ data: task });
+```
+
+</Callout>
+
+## Middleware
+
+Middleware adalah fungsi `(req, res, next)` yang berjalan berurutan sebelum handler. Panggil `next()` untuk lanjut, atau kirim respons untuk menghentikan rantai.
+
+**Contoh sehari-hari:** middleware seperti satpam dan resepsionis di gerbang kampus. Tiap petugas memeriksa tamu, lalu mempersilakan lanjut (`next()`) atau menyuruhnya pulang (kirim respons). Kalau petugas lupa mempersilakan, tamu tertahan di gerbang selamanya.
+
+```js title="Logger buatan sendiri"
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms`);
+  });
+  next(); // lupa next() = request menggantung
+});
+```
+
+Logger di atas mencatat method, URL, status, dan lama proses tiap request. `res.on("finish")` menunggu respons selesai dikirim, baru mencatat.
+
+```js title="Middleware hanya untuk satu route"
+app.post("/api/tasks", validateBody(createTaskSchema), createTask);
+```
+
+Di sini `validateBody` memeriksa body dulu. Kalau lolos, baru `createTask` dijalankan.
+
+| Middleware | Cara pasang | Fungsi |
+| --- | --- | --- |
+| `express.json()` | bawaan | Parse (membaca dan mengubah) body JSON jadi objek, batas bawaan 100kb |
+| `express.urlencoded({ extended: false })` | bawaan | Parse body form HTML |
+| `express.static("public")` | bawaan | Menyajikan file statis |
+| `cors()` | `npm install cors` | Menambahkan header CORS (izin agar web dari domain lain boleh memanggil API) |
+| `morgan("dev")` | `npm install morgan` | Mencatat log setiap request |
+
+Urutan yang disarankan di `createApp()`:
+
+1. Logger (`morgan`), supaya semua request tercatat.
+2. `cors()`.
+3. `express.json()`.
+4. Route dan router.
+5. 404 catch-all (penangkap semua path yang tidak terdaftar).
+6. Error handler (4 parameter), selalu paling akhir.
+
+<Callout type="info" title="CORS dan aplikasi Expo">
+
+CORS hanya ditegakkan oleh browser. Aplikasi Expo yang berjalan di HP (Android/iOS) tidak terkena CORS, tapi Expo Web dan frontend web lain terkena, jadi tetap pasang `cors()`.
+
+</Callout>
+
+## Router per fitur
+
+`express.Router()` mengelompokkan route satu fitur, lalu di-mount (dipasang) dengan prefix (awalan path) di `app.js`.
+
+**Contoh sehari-hari:** seperti gedung kampus yang dibagi per fakultas. Semua urusan tugas ada di gedung `/api/tasks`. Di dalam gedung, cukup sebut nomor ruangannya (`/`, `/:id`).
+
+```js title="src/modules/tasks/tasks.routes.js"
+import { Router } from "express";
+import * as controller from "./tasks.controller.js";
+
+export const tasksRouter = Router();
+
+tasksRouter.get("/", controller.list);
+tasksRouter.post("/", controller.create);
+tasksRouter.get("/:id", controller.getById);
+tasksRouter.patch("/:id", controller.update);
+tasksRouter.delete("/:id", controller.remove);
+```
+
+```js title="src/app.js (potongan)"
+app.use("/api/tasks", tasksRouter); // GET /api/tasks/7 masuk ke "/:id"
+```
+
+```js title="Router bersarang: /api/courses/:courseId/tasks"
+const courseTasksRouter = Router({ mergeParams: true }); // agar req.params.courseId terbaca
+courseTasksRouter.get("/", (req, res) => {
+  const courseId = Number(req.params.courseId);
+  res.json({ data: tasks.filter((t) => t.courseId === courseId) });
+});
+app.use("/api/courses/:courseId/tasks", courseTasksRouter);
+```
+
+Router anak tidak bisa membaca `:courseId` milik path induk, kecuali dibuat dengan `mergeParams: true`.
+
+## Error handling di Express 5
+
+**Error handler** adalah middleware khusus yang menjawab semua error di satu tempat. Express 5 otomatis meneruskan error dari handler `async` (promise yang gagal, istilahnya *reject*) ke error handler. Jadi tidak perlu `try/catch` hanya untuk memanggil `next(error)`.
+
+**Contoh sehari-hari:** seperti meja customer service di mal. Penjaga toko tidak melayani komplain sendiri. Mereka cukup melempar masalahnya (`throw`), lalu meja CS menjawab semua komplain dengan format yang sama.
+
+```js title="src/lib/http-error.js"
+export class HttpError extends Error {
+  constructor(status, code, message, details) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+```
+
+`HttpError` adalah `Error` biasa yang membawa `status` (kode HTTP), `code` (kode singkat untuk aplikasi), dan `details` (opsional).
+
+```js title="Melempar error dari handler async"
+tasksRouter.get("/:id", async (req, res) => {
+  const task = await prisma.task.findUnique({ where: { id: Number(req.params.id) } });
+  if (!task) throw new HttpError(404, "NOT_FOUND", "Tugas tidak ditemukan");
+  res.json({ data: task });
+});
+```
+
+```js title="src/middleware/error-handler.js"
+import { z } from "zod";
+import { HttpError } from "../lib/http-error.js";
+
+export function notFound(req, res) {
+  res.status(404).json({ error: { message: "Route tidak ditemukan", code: "ROUTE_NOT_FOUND" } });
+}
+
+function toDetails(error) {
+  return error.issues.map((issue) => ({ field: issue.path.join("."), message: issue.message }));
+}
+
+// Wajib 4 parameter walau `next` tidak dipakai.
+export function errorHandler(err, req, res, next) {
+  if (err instanceof z.ZodError) {
+    err = new HttpError(400, "VALIDATION_ERROR", "Data yang dikirim tidak valid", toDetails(err));
+  }
+  if (err instanceof HttpError) {
+    return res.status(err.status).json({
+      error: { message: err.message, code: err.code, ...(err.details && { details: err.details }) },
+    });
+  }
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({ error: { message: "Body bukan JSON yang valid", code: "BAD_REQUEST" } });
+  }
+  console.error(err); // detail hanya di log server
+  res.status(500).json({ error: { message: "Terjadi kesalahan pada server", code: "INTERNAL_ERROR" } });
+}
+```
+
+Urutan pengecekannya: error Zod diubah jadi 400, `HttpError` dikirim sesuai statusnya, body JSON rusak dibalas 400, dan sisanya dibalas 500 tanpa membocorkan detail.
+
+| Kode | Status | Kapan |
+| --- | --- | --- |
+| `VALIDATION_ERROR` | 400 | Body, params, atau query tidak lolos Zod |
+| `NOT_FOUND` | 404 | Data dengan id tersebut tidak ada |
+| `ROUTE_NOT_FOUND` | 404 | Method + path tidak terdaftar |
+| `INTERNAL_ERROR` | 500 | Error tak terduga (bug, database mati) |
+
+<Callout type="warning" title="Error handler tidak terpanggil?">
+
+Express mengenali error handler dari jumlah parameternya, jadi harus tepat 4: `(err, req, res, next)`. Daftarkan juga **setelah** semua route dan 404 catch-all.
+
+</Callout>
+
+## Validasi dengan Zod 4
+
+**Zod** adalah library untuk memeriksa bentuk data memakai **skema** (daftar aturan isi tiap field). Zod juga merapikan data: *trim* membuang spasi di tepi teks, *coerce* mengubah tipe (teks `"7"` jadi angka `7`), dan *default* mengisi nilai bawaan. Karena error handler di atas sudah menangani `ZodError`, cukup panggil `parse`.
+
+**Contoh sehari-hari:** seperti petugas loket yang mengecek formulir sebelum diproses. Kolom wajib yang kosong ditolak, tulisan dirapikan, dan kolom yang tidak diisi diberi nilai bawaan.
+
+```js title="src/modules/tasks/tasks.schemas.js"
+import { z } from "zod";
+
+const taskFields = {
+  title: z.string().trim().min(1, "Judul wajib diisi").max(200, "Judul maksimal 200 karakter"),
+  done: z.boolean(),
+  priority: z.enum(["rendah", "sedang", "tinggi"]),
+  courseId: z.number().int().positive().nullable(),
+};
+
+export const createTaskSchema = z.object({
+  ...taskFields,
+  done: taskFields.done.default(false),
+  priority: taskFields.priority.default("sedang"),
+  courseId: taskFields.courseId.optional(),
+});
+
+export const updateTaskSchema = z.object(taskFields).partial();
+
+export const idParamsSchema = z.object({ id: z.coerce.number().int().positive() });
+
+export const listQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+  done: z.stringbool().optional(),
+});
+```
+
+`createTaskSchema` dipakai untuk POST dan mengisi nilai bawaan. `updateTaskSchema` dipakai untuk PATCH, semua field-nya opsional. `idParamsSchema` dan `listQuerySchema` mengubah teks dari URL menjadi angka atau boolean.
+
+```js title="src/middleware/validate.js"
+export const validateBody = (schema) => (req, res, next) => {
+  req.body = schema.parse(req.body ?? {}); // gagal: ZodError diteruskan ke errorHandler
+  next();
+};
+```
+
+```js title="Dipakai di handler"
+export async function list(req, res) {
+  const { page, limit, done } = listQuerySchema.parse(req.query);
+  // ... query database
+}
+```
+
+| API Zod | Fungsi |
+| --- | --- |
+| `z.string().trim().min(1)` | Teks wajib, spasi di tepi dibuang |
+| `z.coerce.number().int()` | Mengubah `"7"` menjadi `7` (untuk params dan query) |
+| `z.stringbool()` | Mengubah `"true"`/`"false"` menjadi boolean |
+| `z.enum([...])` | Hanya boleh salah satu nilai |
+| `.optional()`, `.nullable()`, `.default(v)` | Boleh tidak ada, boleh null, atau nilai bawaan |
+| `.partial()` | Semua field menjadi opsional (untuk PATCH) |
+| `schema.parse(x)` | Mengembalikan data bersih atau melempar `ZodError` |
+| `schema.safeParse(x)` | Mengembalikan `success` beserta `data` atau `error` |
+| `z.flattenError(err)` | Ringkasan berbentuk `formErrors` dan `fieldErrors` |
+
+<Callout type="danger" title="Jebakan .partial() dan .default()">
+
+Di Zod 4, `.partial()` tetap menerapkan `.default()`. Kalau `updateTaskSchema` dibuat dari skema yang punya default, `PATCH` dengan body kosong akan mengembalikan `done` ke `false`. Karena itu default hanya dipasang di skema create, seperti contoh di atas.
+
+</Callout>
+
+<Callout type="warning" title="Jangan pakai z.coerce.boolean() untuk query">
+
+`z.coerce.boolean()` memakai `Boolean("false")`, hasilnya `true`. Gunakan `z.stringbool()`.
+
+</Callout>
+
+<Callout type="tip" title="Pesan error bahasa Indonesia">
+
+Panggil `z.config(z.locales.id())` sekali saat aplikasi start, maka pesan bawaan menjadi "Input tidak valid: diharapkan string, diterima number".
+
+</Callout>
+
+## Struktur proyek
+
+Pisahkan pembuatan app dari `listen`, supaya app bisa diuji dengan supertest (library penguji API) tanpa membuka port.
+
+**Contoh sehari-hari:** dapur restoran yang dibagi per stasiun. Routes adalah papan menu, controller adalah pelayan yang mencatat pesanan dan mengantar makanan, service adalah koki, dan schemas adalah petugas yang mengecek bahan masuk. Pelayan tidak ikut memasak, koki tidak bertemu pembeli.
+
+<FileTree title="belajar-api" tree={`
+src/
+  * app.js # createApp(): middleware + router
+  * server.js # hanya baca env lalu listen
+  lib/
+    http-error.js
+  middleware/
+    error-handler.js
+    validate.js
+  modules/
+    tasks/
+      tasks.routes.js # path + middleware
+      tasks.controller.js # baca req, kirim res
+      tasks.service.js # logika + query database
+      tasks.schemas.js # skema Zod
+.env
+package.json
+`} />
+
+```js title="src/app.js"
+import express from "express";
+import cors from "cors";
+import morgan from "morgan";
+import { tasksRouter } from "./modules/tasks/tasks.routes.js";
+import { errorHandler, notFound } from "./middleware/error-handler.js";
+
+export function createApp() {
+  const app = express();
+  app.use(morgan("dev"));
+  app.use(cors());
+  app.use(express.json());
+
+  app.get("/api/health", (req, res) => res.json({ data: { status: "ok" } }));
+  app.use("/api/tasks", tasksRouter);
+
+  app.use(notFound);
+  app.use(errorHandler);
+  return app;
+}
+```
+
+File `.env` menyimpan pengaturan seperti `PORT` dan alamat database di luar kode, seperti kunci rumah yang tidak ditempel di pintu. Ada dua cara membacanya.
+
+<Tabs items={["dotenv", "Flag --env-file"]}>
+<Tab>
+
+```js title="src/server.js"
+import "dotenv/config"; // harus import pertama
+import { createApp } from "./app.js";
+
+const PORT = process.env.PORT ?? 3000;
+
+createApp().listen(PORT, (error) => {
+  if (error) throw error;
+  console.log(`API siap di http://localhost:${PORT}`);
+});
+```
+
+</Tab>
+<Tab>
+
+```json title="package.json"
+{
+  "scripts": {
+    "dev": "node --env-file=.env --watch src/server.js"
+  }
+}
+```
+
+Fitur bawaan Node 22, tanpa paket tambahan. Node berhenti dengan error kalau file `.env` tidak ada.
+
+</Tab>
+</Tabs>
+
+**Logika bisnis** adalah aturan inti aplikasi, misalnya "tugas yang dicari harus ada, kalau tidak lempar 404". Tempatnya di service.
+
+| Lapisan | Tugas | Jangan |
+| --- | --- | --- |
+| Routes | Memetakan method + path ke middleware dan controller | Menulis logika bisnis |
+| Controller | Membaca `req`, memanggil service, mengirim `res` | Menulis query database langsung |
+| Service | Logika bisnis, query Prisma, melempar `HttpError` | Menyentuh `req` atau `res` |
+| Schemas | Skema Zod untuk body, params, dan query | Mengakses database |
+
+```js title="src/modules/tasks/tasks.service.js"
+import { prisma } from "../../lib/prisma.js";
+import { HttpError } from "../../lib/http-error.js";
+
+export async function findById(id) {
+  const task = await prisma.task.findUnique({ where: { id } });
+  if (!task) throw new HttpError(404, "NOT_FOUND", "Tugas tidak ditemukan");
+  return task;
+}
+```
+
+```js title="src/modules/tasks/tasks.controller.js"
+import * as service from "./tasks.service.js";
+import { idParamsSchema } from "./tasks.schemas.js";
+
+export async function getById(req, res) {
+  const { id } = idParamsSchema.parse(req.params);
+  res.json({ data: await service.findById(id) });
+}
+```
+
+## File statis dan upload
+
+`express.static` menyajikan file dari folder, sedangkan upload file memakai multer (library penerima file) dengan format `multipart/form-data`.
+
+**Contoh sehari-hari:** `express.static` seperti rak brosur di lobi, siapa pun bisa mengambil file yang ditaruh di sana. `multipart/form-data` seperti satu kardus berisi beberapa barang berlabel: ada teks, ada file.
+
+```js title="Menyajikan folder uploads"
+app.use("/uploads", express.static("uploads")); // GET /uploads/foto.jpg
+```
+
+```js title="Menerima satu file dengan multer"
+import multer from "multer";
+
+const upload = multer({ dest: "uploads/", limits: { fileSize: 5 * 1024 * 1024 } });
+
+tasksRouter.post("/:id/attachments", upload.single("file"), (req, res) => {
+  // req.file: { originalname, mimetype, size, filename, path }
+  res.status(201).json({ data: { url: `/uploads/${req.file.filename}` } });
+});
+```
+
+`upload.single("file")` mengambil satu file dari field bernama `file`, menyimpannya di folder `uploads/`, dan menolak file di atas 5 MB.
+
+## Kesalahan umum
+
+Sebagian besar bug Express pemula berasal dari urutan middleware dan respons ganda.
+
+**Contoh sehari-hari:** pakai tabel ini seperti buku panduan servis motor. Cocokkan gejalanya dulu, lihat penyebabnya, lalu ikuti cara memperbaikinya.
+
+| Gejala | Penyebab | Solusi |
+| --- | --- | --- |
+| `req.body` bernilai `undefined` | Belum ada `express.json()` atau header Content-Type bukan JSON | Pasang parser sebelum router dan kirim header yang benar |
+| `Cannot set headers after they are sent to the client` | Respons dikirim dua kali | `return res...` saat keluar lebih awal |
+| `Missing parameter name at index 1: *` | Pola path gaya Express 4 | Pakai `/*splat`, `/{*splat}`, atau `app.use(notFound)` |
+| Request tidak pernah selesai | Middleware lupa `next()` atau handler tidak mengirim respons | Pastikan setiap jalur memanggil `next()` atau `res.*` |
+| `EADDRINUSE` | Port sudah dipakai proses lain | Hentikan server lama atau ganti `PORT` |
+| Respons HTML `Cannot GET /api/task` | Path atau method salah, belum ada 404 JSON | Cek path, lalu tambahkan `notFound` |
+| `ERR_MODULE_NOT_FOUND` | Import relatif tanpa ekstensi | Tulis lengkap: `./app.js` |
+| `TypeError` saat `req.query = ...` | `req.query` hanya getter di Express 5 | Simpan hasil parse di variabel |
+
+## Pelajari lebih lanjut
+
+- [Dasar Express.js](/belajar/crud-backend/express-dasar): server pertama, route, dan middleware.
+- [CRUD API dengan Data In-Memory](/belajar/crud-backend/crud-in-memory): lima endpoint CRUD dengan status code yang benar.
+- [Validasi dengan Zod & Error Handling](/belajar/crud-backend/validasi-error-handling): `HttpError` dan error handler terpusat.
+- [Pagination, Filter, Search & Sort](/belajar/crud-backend/pagination-filter-search): query string dan `meta`.
+- [Struktur Proyek, Env, CORS & Logging](/belajar/crud-backend/struktur-proyek-backend): `createApp()` dan folder per fitur.
+- [Keamanan API](/belajar/expert/keamanan-api) dan [Testing Backend](/belajar/expert/testing-backend).
+- Coba request langsung di [HTTP Explorer](/lab/http-explorer), dan lihat juga cheatsheet [HTTP & REST](/cheatsheet/http) serta [Prisma](/cheatsheet/prisma).

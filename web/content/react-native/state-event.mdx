@@ -1,0 +1,847 @@
+## Pengantar
+
+Di [Dasar React](/belajar/react-native/dasar-react) kamu sudah membuat `TaskCard` dan daftar tugas yang rapi. Sayangnya, semuanya masih diam. Tombol tidak bisa diklik, checkbox tidak bisa dicentang, dan tugas baru tidak bisa ditambahkan.
+
+Supaya layar bisa berubah saat pengguna mengklik atau mengetik, komponen butuh **ingatan**. Ingatan ini menyimpan data di antara dua kali **render** (saat React menjalankan fungsi komponen lalu menggambar hasilnya di layar). Kalau isi ingatan berubah, React menggambar ulang layar. Ingatan itu disebut **state**.
+
+<Callout type="analogi" title="Seperti papan skor di pertandingan futsal kampus">
+
+Papan skor (state) mencatat angka saat ini, misalnya 2–1. Wasit (event handler) melihat gol, lalu menyuruh petugas mengganti angka (memanggil setter). Begitu angka diganti, semua penonton langsung melihat skor baru (React render ulang). Kalau wasit cuma mengingat skor di kepalanya sendiri (variabel biasa), penonton tidak pernah tahu ada gol.
+
+</Callout>
+
+Di akhir pelajaran ini kamu akan membuat aplikasi daftar tugas kecil. Aplikasinya bisa menambah, mencentang, dan menghapus tugas. Ini CRUD mini (Create, Read, Update, Delete: tambah, lihat, ubah, hapus) yang semua datanya disimpan di state. Pola yang sama akan kamu pakai lagi di React Native. Bedanya, nanti datanya datang dari API.
+
+Prasyarat: spread `...`, `map`, dan `filter` dari [JavaScript Modern 1](/belajar/fondasi/javascript-modern-1) dan [JavaScript Modern 2](/belajar/fondasi/javascript-modern-2). Ketiganya akan sering dipakai di pelajaran ini.
+
+## useState: memori milik komponen
+
+Kenapa variabel biasa tidak cukup? Coba playground berikut. Tombol pertama menaikkan variabel `let`. Tombol kedua menaikkan state.
+
+<ReactPlayground title="Variabel biasa vs state" height={340} code={`
+import { useState } from "react";
+
+export default function App() {
+  let biasa = 0;
+  const [count, setCount] = useState(0);
+
+  function handleBiasa() {
+    biasa = biasa + 1;
+    console.log("biasa =", biasa);
+  }
+
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16 }}>
+      <h1>Sesi belajar hari ini</h1>
+      <p>Variabel biasa: {biasa}</p>
+      <button onClick={handleBiasa}>+1 variabel biasa</button>
+      <p>State: {count}</p>
+      <button onClick={() => setCount(count + 1)}>+1 state</button>
+    </main>
+  );
+}
+`} />
+
+Tombol pertama tidak mengubah layar sama sekali. Ada dua penyebabnya:
+
+1. Mengubah variabel biasa tidak memberi tahu React bahwa layar perlu digambar ulang.
+2. Setiap kali komponen dirender ulang, baris `let biasa = 0` dijalankan lagi dari awal. Angkanya kembali ke nol.
+
+Coba buka console di DevTools browser (<Kbd>F12</Kbd>). Di sana angkanya memang naik, tetapi layar tidak tahu.
+
+`useState` menyelesaikan dua masalah itu sekaligus:
+
+```jsx
+import { useState } from "react";
+
+const [count, setCount] = useState(0);
+//     ^ nilai saat ini  ^ fungsi pengubah    ^ nilai awal
+```
+
+Cara membaca baris di atas:
+
+- `useState(0)` mengembalikan array berisi dua item. Kedua item itu langsung dipecah ke dua nama (destructuring).
+- `count` adalah nilai state **untuk render ini**. Di contoh ini nilai awalnya `0`.
+- `setCount(nilaiBaru)` menyimpan nilai baru **dan** meminta React merender ulang komponen. Fungsi ini disebut **setter**.
+- Penamaannya biasanya `[sesuatu, setSesuatu]`, misalnya `[tasks, setTasks]`.
+
+<Flow nodes={["Klik tombol", "Event handler", "setCount(1)", "React render ulang", "Layar diperbarui"]} labels={["memanggil", "menjadwalkan", "App() dipanggil lagi", "DOM berubah"]} caption="Siklus state: event → setState → render ulang → DOM" />
+
+**DOM** di diagram itu adalah susunan elemen halaman (tombol, teks, input) yang digambar browser.
+
+Fungsi yang namanya diawali `use` disebut **hook** (fungsi khusus React yang memberi kemampuan tambahan ke komponen). Hook wajib dipanggil di **level teratas** komponen. Artinya, jangan memanggilnya di dalam `if`, loop, atau fungsi lain. Aturan lengkapnya dibahas di pelajaran berikutnya.
+
+### State adalah snapshot
+
+<Callout type="analogi" title="Seperti foto papan pengumuman">
+
+Pagi tadi kamu memotret papan pengumuman jadwal ujian. Siangnya admin mengganti jadwal itu. Foto di HP kamu tetap menunjukkan jadwal lama. Kamu baru melihat jadwal baru kalau memotret lagi. Di React, `count` di dalam handler adalah foto itu (snapshot). Render berikutnya adalah foto baru.
+
+</Callout>
+
+Perhatikan kode berikut:
+
+```jsx
+function handleClick() {
+  setCount(count + 1);
+  console.log(count); // masih 0 pada klik pertama!
+}
+```
+
+`setCount` **tidak** mengubah variabel `count` saat itu juga. Ia hanya meminta render berikutnya memakai nilai baru. Selama handler ini berjalan, `count` tetap foto dari render saat ini. Nilai baru baru terlihat di render berikutnya, saat `useState` mengembalikan angka yang sudah diperbarui.
+
+## Event handler
+
+**Event** adalah kejadian dari pengguna, misalnya klik, ketikan, atau kirim form. **Event handler** adalah fungsi yang kamu siapkan untuk menanggapi kejadian itu.
+
+<Callout type="analogi" title="Seperti bel di meja resepsionis">
+
+Kamu titip pesan ke resepsionis: "Kalau bel ini berbunyi, tolong panggil saya." Yang kamu serahkan adalah **instruksinya**, bukan langsung memanggil dirimu saat itu juga. Bel = tombol, bel berbunyi = event klik, instruksi titipan = event handler.
+
+</Callout>
+
+Di React, kamu memasang event lewat prop bergaya camelCase seperti `onClick`, `onChange`, dan `onSubmit`. Isinya harus **fungsi**, bukan hasil memanggil fungsi:
+
+| Tulisan | Arti | Hasil |
+| --- | --- | --- |
+| `onClick={handleClick}` | Kirim fungsinya | ✅ Dipanggil saat diklik |
+| `onClick={() => handleDelete(task.id)}` | Kirim arrow function baru | ✅ Dipanggil saat diklik, dengan argumen |
+| `onClick={handleClick()}` | Panggil fungsinya **sekarang**, saat render | ❌ Langsung jalan tanpa diklik |
+
+Baris ketiga berbahaya. Misalkan fungsi itu memanggil setter state di komponen yang sama. React akan render ulang, fungsi terpanggil lagi, setter dipanggil lagi, dan begitu terus. Akhirnya muncul error **`Too many re-renders. React limits the number of renders to prevent an infinite loop.`** Artinya: React menghentikan render yang berputar tanpa akhir.
+
+Beberapa kebiasaan penamaan yang membantu:
+
+- Fungsi handler di dalam komponen diberi nama `handleX`, misalnya `handleAdd` dan `handleToggle`.
+- Prop yang menerima handler diberi nama `onX`, misalnya `onAdd` dan `onDelete`. Ini meniru `onClick` bawaan.
+- Handler menerima **objek event**, biasanya ditulis `e`. Objek ini berisi detail kejadian. Teks yang diketik di input ada di `e.target.value`.
+- Pada form, panggil `e.preventDefault()` agar browser tidak me-*reload* halaman saat form dikirim.
+
+## Updater function
+
+Kalau nilai berikutnya dihitung dari nilai sebelumnya, kirim **fungsi** ke setter, bukan nilai jadi.
+
+<Callout type="analogi" title="Seperti titip pesan ke sekretaris kelas">
+
+Sekretaris kelas mencatat jumlah mahasiswa yang hadir. Catatan awalnya 0. Tiga temanmu masuk dan masing-masing menitip pesan.
+
+- Cara salah: tiap teman bilang "Tulis angka 1." Hasil akhirnya tetap 1.
+- Cara benar: tiap teman bilang "Tambah satu dari angka terakhir." Hasil akhirnya 3.
+
+Pesan "tambah satu dari angka terakhir" itulah updater function.
+
+</Callout>
+
+Bandingkan dua tombol di playground ini:
+
+<ReactPlayground title="Updater function" height={300} code={`
+import { useState } from "react";
+
+export default function App() {
+  const [count, setCount] = useState(0);
+
+  function tambahTigaSalah() {
+    setCount(count + 1);
+    setCount(count + 1);
+    setCount(count + 1);
+  }
+
+  function tambahTigaBenar() {
+    setCount((c) => c + 1);
+    setCount((c) => c + 1);
+    setCount((c) => c + 1);
+  }
+
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16 }}>
+      <h1>{count} sesi Pomodoro</h1>
+      <button onClick={tambahTigaSalah}>+3 (salah)</button>{" "}
+      <button onClick={tambahTigaBenar}>+3 (benar)</button>{" "}
+      <button onClick={() => setCount(0)}>Reset</button>
+    </main>
+  );
+}
+`} />
+
+Tombol "salah" hanya menambah 1. Alasannya, `count` adalah snapshot bernilai `0`. Jadi ketiga baris itu sama dengan menulis `setCount(0 + 1)` tiga kali. React menyimpan semua permintaan itu dalam antrean, lalu memprosesnya satu per satu:
+
+| Antrean pembaruan | Nilai yang diproses | Hasil |
+| --- | --- | --- |
+| `setCount(count + 1)` ×3 | ganti dengan `1`, ganti dengan `1`, ganti dengan `1` | **1** |
+| `setCount((c) => c + 1)` ×3 | `0 + 1`, lalu `1 + 1`, lalu `2 + 1` | **3** |
+
+*Updater function* `(c) => c + 1` menerima nilai **terbaru dari antrean**, bukan snapshot. Kapan memakainya?
+
+- Setiap kali nilai baru dihitung dari nilai lama, misalnya menambah angka atau menambah item ke daftar.
+- Terutama di dalam kode yang berjalan belakangan (async), seperti callback `setTimeout` atau setelah `await`.
+
+Updater harus **murni** (pure): cukup hitung dan kembalikan nilai baru. Jangan melakukan hal lain di dalamnya, misalnya mengirim data ke server atau membuat ID acak. Saat pengembangan, StrictMode (mode pemeriksa dari React) sengaja memanggil updater dua kali. Tujuannya untuk menangkap updater yang tidak murni.
+
+## Input terkontrol
+
+<Callout type="analogi" title="Seperti layar kalkulator">
+
+Angka di layar kalkulator selalu sama dengan angka di memorinya. Saat kamu menekan tombol, memori berubah dulu, baru layar ikut menampilkan. Layar = kotak input, memori = state, menekan tombol = mengetik (memicu `onChange`, yang lalu mengubah state).
+
+</Callout>
+
+Input yang isinya (`value`) diambil dari state, dan diperbarui lewat `onChange`, disebut **controlled input** (input terkontrol). State menjadi satu-satunya sumber kebenaran. Apa yang tampil di kotak input selalu sama dengan isi state.
+
+- Teks dan `select` (dropdown): pasangan `value` + `onChange`, lalu baca `e.target.value`.
+- Checkbox: pasangan `checked` + `onChange`, lalu baca `e.target.checked`.
+
+Form sering punya banyak kolom isian (field). Simpan semuanya dalam satu object state, lalu beri setiap input atribut `name`. Dengan cara ini, satu handler cukup untuk semua field:
+
+<ReactPlayground title="Form terkontrol" height={420} code={`
+import { useState } from "react";
+
+export default function App() {
+  const [form, setForm] = useState({
+    title: "",
+    course: "Basis Data",
+    important: false,
+  });
+
+  function handleChange(e) {
+    const { name, value, type, checked } = e.target;
+    setForm({ ...form, [name]: type === "checkbox" ? checked : value });
+  }
+
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16, display: "grid", gap: 12 }}>
+      <label>
+        Judul tugas{" "}
+        <input name="title" value={form.title} onChange={handleChange} placeholder="mis. Laporan Praktikum" />
+      </label>
+      <label>
+        Mata kuliah{" "}
+        <select name="course" value={form.course} onChange={handleChange}>
+          <option>Basis Data</option>
+          <option>Pemrograman Mobile</option>
+          <option>Etika Profesi</option>
+        </select>
+      </label>
+      <label>
+        <input type="checkbox" name="important" checked={form.important} onChange={handleChange} /> Penting
+      </label>
+      <pre style={{ background: "#f4f6fb", padding: 12 }}>{JSON.stringify(form, null, 2)}</pre>
+    </main>
+  );
+}
+`} />
+
+Perhatikan isi `handleChange`:
+
+- Baris pertama mengambil `name`, `value`, `type`, dan `checked` dari input yang baru berubah.
+- `{ ...form, [name]: value }` menyalin semua field lama, lalu menimpa satu field saja. Nama field-nya diambil dari atribut `name` input itu. Penulisan `[name]` ini disebut *computed property name*.
+- Kalau inputnya checkbox, yang disimpan adalah `checked` (true/false). Selain itu, yang disimpan adalah `value` (teks).
+
+Ketik sesuatu, lalu lihat JSON di bawah form ikut berubah di setiap ketukan.
+
+<Callout type="warning" title="Dua peringatan input yang sering muncul">
+
+- **``You provided a `value` prop to a form field without an `onChange` handler. This will render a read-only field.``** Artinya, kamu memasang `value` tanpa `onChange`, jadi input tidak bisa diketik. Tambahkan `onChange`. Kalau input itu memang tidak perlu dikontrol, pakai `defaultValue`.
+- **`A component is changing an uncontrolled input to be controlled.`** Artinya, nilai awal input `undefined`, lalu berubah menjadi string. Selalu mulai state input teks dengan string kosong `""`, bukan `useState()` tanpa isi.
+
+</Callout>
+
+## Update immutable: array dan object
+
+Aturan emas state: **jangan ubah (mutasi) state secara langsung. Selalu buat salinan baru.** *Mutasi* artinya mengubah isi array atau object yang sudah ada. *Immutable* artinya tidak diubah; kamu membuat versi baru.
+
+<Callout type="analogi" title="Seperti menyerahkan revisi laporan ke dosen">
+
+Dosen memeriksa revisi laporanmu dengan satu pertanyaan cepat: "Ini kertas lama atau kertas baru?" Kalau kamu mencoret kertas lama lalu menyerahkannya lagi, dosen menganggap sudah pernah memeriksanya. Revisimu tidak dibaca. Kalau kamu mencetak lembar baru, dosen tahu ada perubahan. Dosen = React, kertas = array/object state, lembar baru = salinan.
+
+Bedanya, React sama sekali tidak membaca isi kertas. Ia hanya mengecek apakah kertasnya sama.
+
+</Callout>
+
+Setiap kali kamu memanggil setter, React membandingkan nilai lama dan baru dengan `Object.is` (cek "apakah ini benda yang sama persis?"). Kalau keduanya array atau object **yang sama persis**, React menganggap tidak ada perubahan. React bisa melewatkan render ulang. Mutasi juga merusak snapshot render sebelumnya, sehingga muncul bug yang sulit dilacak.
+
+Tabel ini menunjukkan pasangan cara salah dan cara benar:
+
+| Tujuan | Mutasi ❌ | Immutable ✅ |
+| --- | --- | --- |
+| Tambah item | `tasks.push(baru)` | `[...tasks, baru]` |
+| Hapus item | `tasks.splice(i, 1)` | `tasks.filter((t) => t.id !== id)` |
+| Ubah satu item | `tasks[i].done = true` | `tasks.map((t) => (t.id === id ? { ...t, done: true } : t))` |
+| Urutkan | `tasks.sort(...)` | `[...tasks].sort(...)` atau `tasks.toSorted(...)` |
+| Ubah field object | `form.title = "x"` | `{ ...form, title: "x" }` |
+
+Tiga operasi CRUD utama ternyata cukup tiga baris. Kode berikut bisa kamu jalankan langsung dengan Node (`node immutable.mjs`):
+
+```js title="immutable.mjs"
+const tasks = [
+  { id: 1, title: "Kuis SQL", done: false },
+  { id: 2, title: "Setup Expo", done: true },
+];
+
+const added = [...tasks, { id: 3, title: "Rangkum Bab 4", done: false }];
+const toggled = tasks.map((t) => (t.id === 1 ? { ...t, done: !t.done } : t));
+const removed = tasks.filter((t) => t.id !== 2);
+
+console.log(added.length, tasks.length);
+console.log(toggled[0].done, tasks[0].done);
+console.log(removed.map((t) => t.title));
+console.log(toggled[1] === tasks[1]);
+console.log(toggled === tasks);
+```
+
+```txt title="Output"
+3 2
+true false
+[ 'Kuis SQL' ]
+true
+false
+```
+
+Cara membaca hasilnya:
+
+- `3 2`: `added` punya 3 item, sedangkan `tasks` asli tetap 2.
+- `true false`: tugas pertama di `toggled` sudah dicentang, tetapi di `tasks` asli belum.
+- `[ 'Kuis SQL' ]`: `removed` tidak lagi berisi tugas ber-`id` 2.
+- `true`: item yang tidak diubah (`toggled[1]`) tetap object yang sama. Penyalinannya hemat, hanya item yang berubah yang dibuat baru.
+- `false`: `toggled` adalah array baru, jadi React tahu ada perubahan.
+
+Array asli `tasks` tidak pernah berubah.
+
+## Lifting state up
+
+Aplikasi daftar tugas punya tiga bagian yang butuh data yang sama:
+
+- form untuk **menambah** tugas,
+- list untuk **menampilkan dan mengubah** tugas,
+- ringkasan yang **menghitung** tugas yang selesai.
+
+Kalau `tasks` disimpan di dalam `TaskForm`, list tidak bisa membacanya. State bersifat lokal, hanya milik satu komponen.
+
+<Callout type="analogi" title="Seperti buku kas yang dipegang bendahara kelas">
+
+Kalau setiap mahasiswa mencatat uang kas di bukunya sendiri, angkanya pasti berbeda-beda. Jadi satu buku kas dipegang bendahara. Yang membayar cukup lapor ke bendahara, dan semua orang membaca angka dari buku yang sama. Bendahara = `App` (induk), buku kas = state `tasks`, lapor = memanggil callback, membaca angka = menerima props.
+
+</Callout>
+
+Solusinya adalah **mengangkat state** (*lifting state up*) ke induk terdekat yang membungkus semua pemakainya. Di sini induknya `App`. Data mengalir turun lewat props. Perubahan mengalir naik lewat callback (fungsi yang dikirim ke anak untuk dipanggil nanti):
+
+<Flow nodes={["TaskForm", "App (state tasks)", "TaskItem + ringkasan"]} labels={["onAdd(title, priority)", "props: task, onToggle, onDelete"]} caption="State hidup di App; anak hanya menerima data dan memanggil callback" />
+
+`TaskItem` tidak mengubah `tasks` sendiri. Ia hanya "melapor" dengan memanggil `onToggle(task.id)`. Setelah itu, `App` yang memutuskan cara memperbarui state.
+
+## Derived state: hitung, jangan simpan
+
+**Derived state** adalah nilai yang bisa dihitung dari state lain. Untuk ringkasan "2 dari 5 selesai", kamu **tidak** perlu state baru. Nilainya bisa dihitung dari `tasks` setiap kali render.
+
+<Callout type="analogi" title="Seperti total SKS di KRS">
+
+Total SKS di KRS-mu tidak perlu dicatat terpisah. Angkanya cukup dijumlahkan dari daftar mata kuliah yang kamu ambil. Kalau kamu mencatatnya di kertas lain, lalu menambah satu mata kuliah tapi lupa mengubah kertas itu, angkanya jadi salah. Daftar mata kuliah = state `tasks`, total SKS = `doneCount`.
+
+</Callout>
+
+Bandingkan dua cara berikut:
+
+<Compare>
+<CompareItem title="State ganda yang harus disinkronkan" tone="bad">
+
+```jsx
+const [tasks, setTasks] = useState(initialTasks);
+const [doneCount, setDoneCount] = useState(1);
+// Setiap tambah, centang, dan hapus harus ingat
+// memanggil setDoneCount juga. Lupa sekali = angka salah.
+```
+
+</CompareItem>
+<CompareItem title="Derived state, dihitung saat render" tone="good">
+
+```jsx
+const [tasks, setTasks] = useState(initialTasks);
+const doneCount = tasks.filter((t) => t.done).length;
+// Selalu benar, karena dihitung ulang setiap render.
+```
+
+</CompareItem>
+</Compare>
+
+Prinsipnya: simpan state sesedikit mungkin. Apa pun yang bisa dihitung dari state atau props cukup dihitung dengan `const` biasa di dalam komponen. Contohnya jumlah item, hasil filter, atau teks gabungan.
+
+## Praktik: daftar tugas interaktif
+
+Sekarang semua konsep digabung. Playground ini punya tiga file komponen:
+
+- `App.js` menyimpan state `tasks` dan tiga handler: tambah, centang, hapus.
+- `TaskForm.js` berisi form untuk mengetik tugas baru.
+- `TaskItem.js` menampilkan satu tugas beserta checkbox dan tombol hapus.
+
+Coba tambah tugas, centang, lalu hapus. Perhatikan ringkasan di atas daftar yang selalu tepat.
+
+<ReactPlayground title="Daftar tugas (CRUD di state)" height={520} files={{
+"/App.js": `import { useState } from "react";
+import "./styles.css";
+import TaskForm from "./TaskForm";
+import TaskItem from "./TaskItem";
+
+const initialTasks = [
+  { id: "t1", title: "Laporan Praktikum Basis Data", priority: "tinggi", done: false },
+  { id: "t2", title: "Kuis Expo Router", priority: "sedang", done: true },
+  { id: "t3", title: "Rangkum Bab Normalisasi", priority: "rendah", done: false },
+];
+
+export default function App() {
+  const [tasks, setTasks] = useState(initialTasks);
+
+  function handleAdd(title, priority) {
+    const newTask = { id: crypto.randomUUID(), title, priority, done: false };
+    setTasks((prev) => [...prev, newTask]);
+  }
+
+  function handleToggle(id) {
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t))
+    );
+  }
+
+  function handleDelete(id) {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  const doneCount = tasks.filter((t) => t.done).length;
+
+  return (
+    <main className="page">
+      <h1>Daftar Tugas</h1>
+      <TaskForm onAdd={handleAdd} />
+      <p className="summary">
+        {doneCount} dari {tasks.length} selesai
+      </p>
+      {tasks.length === 0 ? (
+        <p className="empty">Belum ada tugas. Tambahkan satu di atas!</p>
+      ) : (
+        <ul className="list">
+          {tasks.map((task) => (
+            <TaskItem
+              key={task.id}
+              task={task}
+              onToggle={handleToggle}
+              onDelete={handleDelete}
+            />
+          ))}
+        </ul>
+      )}
+    </main>
+  );
+}
+`,
+"/TaskForm.js": `import { useState } from "react";
+
+export default function TaskForm({ onAdd }) {
+  const [title, setTitle] = useState("");
+  const [priority, setPriority] = useState("sedang");
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    onAdd(trimmed, priority);
+    setTitle("");
+    setPriority("sedang");
+  }
+
+  return (
+    <form className="form" onSubmit={handleSubmit}>
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Tugas baru, mis. Kuis SQL"
+        aria-label="Judul tugas"
+      />
+      <select
+        value={priority}
+        onChange={(e) => setPriority(e.target.value)}
+        aria-label="Prioritas"
+      >
+        <option value="rendah">Rendah</option>
+        <option value="sedang">Sedang</option>
+        <option value="tinggi">Tinggi</option>
+      </select>
+      <button type="submit" disabled={title.trim() === ""}>
+        Tambah
+      </button>
+    </form>
+  );
+}
+`,
+"/TaskItem.js": `export default function TaskItem({ task, onToggle, onDelete }) {
+  return (
+    <li className={task.done ? "item done" : "item"}>
+      <label>
+        <input
+          type="checkbox"
+          checked={task.done}
+          onChange={() => onToggle(task.id)}
+        />
+        <span>{task.title}</span>
+      </label>
+      <span className={"badge " + task.priority}>{task.priority}</span>
+      <button className="delete" onClick={() => onDelete(task.id)}>
+        Hapus
+      </button>
+    </li>
+  );
+}
+`,
+"/styles.css": `body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  background: #f4f6fb;
+}
+.page {
+  padding: 16px;
+}
+h1 {
+  margin: 0 0 12px;
+}
+.form {
+  display: flex;
+  gap: 8px;
+}
+.form input {
+  flex: 1;
+  padding: 8px;
+}
+.summary {
+  color: #555;
+}
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: white;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.item label {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.done span {
+  text-decoration: line-through;
+  color: #888;
+}
+.badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.rendah {
+  background: #16a34a;
+}
+.sedang {
+  background: #d97706;
+}
+.tinggi {
+  background: #dc2626;
+}
+.delete {
+  border: none;
+  background: none;
+  color: #dc2626;
+  cursor: pointer;
+}
+.empty {
+  color: #888;
+  font-style: italic;
+}
+`,
+}} />
+
+Beberapa keputusan di kode itu, dan alasannya:
+
+- `id` baru dibuat dengan `crypto.randomUUID()` (fungsi bawaan browser untuk membuat ID acak yang unik) **di luar** updater. Ingat, updater harus murni, dan StrictMode memanggilnya dua kali saat pengembangan. Kalau `id` dibuat di dalam updater, dua panggilan itu menghasilkan dua `id` yang berbeda.
+- Semua handler di `App` memakai bentuk updater `(prev) => ...`. Jadi hasilnya tetap benar walaupun handler dipanggil beruntun.
+- `TaskForm` menyimpan state lokalnya sendiri (`title`, `priority`), karena hanya form itu yang membutuhkannya. Hanya `tasks` yang diangkat ke `App`.
+- Tombol **Tambah** mati (disabled) selama judul kosong. Setelah form dikirim, isinya dikosongkan lagi.
+
+## Kesalahan umum
+
+**1. Mutasi state lalu memanggil setter dengan array yang sama.** Layar tidak berubah karena React melihat array yang sama persis (ingat analogi kertas revisi tadi).
+
+<Compare>
+<CompareItem title="Mutasi: layar tidak berubah" tone="bad">
+
+```jsx
+function handleAdd(title) {
+  tasks.push({ id: crypto.randomUUID(), title, done: false });
+  setTasks(tasks); // array yang sama → Object.is → dianggap tidak berubah
+}
+```
+
+</CompareItem>
+<CompareItem title="Salinan baru: React melihat perubahan" tone="good">
+
+```jsx
+function handleAdd(title) {
+  const newTask = { id: crypto.randomUUID(), title, done: false };
+  setTasks((prev) => [...prev, newTask]);
+}
+```
+
+</CompareItem>
+</Compare>
+
+Jebakan yang lebih halus: `const copy = [...tasks]; copy[0].done = true;`. Array-nya memang baru. Tetapi object di dalamnya masih object lama, dan object lama itulah yang kamu ubah. Spread `[...tasks]` hanya menyalin "wadahnya", bukan isinya. Gunakan `map` dengan `{ ...t }` supaya item yang diubah juga jadi object baru.
+
+**2. Stale state di callback async.** *Stale* artinya basi. Callback `setTimeout` "mengingat" snapshot state dari render saat tombol diklik, seperti foto papan pengumuman tadi. Saat callback akhirnya jalan, foto itu sudah basi. Coba sendiri: klik tiap tombol tiga kali dengan cepat, lalu tunggu sebentar.
+
+<ReactPlayground title="Stale state" height={300} code={`
+import { useState } from "react";
+
+export default function App() {
+  const [stale, setStale] = useState(0);
+  const [fresh, setFresh] = useState(0);
+
+  function handleStale() {
+    setTimeout(() => {
+      setStale(stale + 1);
+    }, 1500);
+  }
+
+  function handleFresh() {
+    setTimeout(() => {
+      setFresh((n) => n + 1);
+    }, 1500);
+  }
+
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16 }}>
+      <p>Klik tiap tombol 3x dengan cepat, lalu tunggu 1,5 detik.</p>
+      <p>Stale: {stale}</p>
+      <button onClick={handleStale}>+1 nanti (stale)</button>
+      <p>Updater: {fresh}</p>
+      <button onClick={handleFresh}>+1 nanti (updater)</button>
+    </main>
+  );
+}
+`} />
+
+Hasilnya "Stale: 1", tetapi "Updater: 3". Ketiga timeout pertama membawa snapshot `stale = 0`, jadi ketiganya menulis `0 + 1`. Updater selalu menerima nilai terbaru, jadi hasilnya bertambah tiga kali.
+
+**3. `onClick={handleDelete(task.id)}`.** Fungsi ini dipanggil saat render, bukan saat diklik. Di daftar tugas, akibatnya semua tugas langsung terhapus begitu halaman tampil. Kamu juga akan melihat peringatan ``Cannot update a component (`App`) while rendering a different component (`TaskItem`)``. Artinya, `TaskItem` mengubah state `App` di tengah proses render. Kalau setter dipanggil di komponen yang sama, error-nya `Too many re-renders`. Perbaikannya: bungkus dengan arrow function, `onClick={() => handleDelete(task.id)}`.
+
+**4. Peringatan input terkontrol.** Selalu pasang `value` bersama `onChange`. Mulai state teks dari `""`.
+
+Kalau ingin membaca lebih dalam, buka panduan resmi [Updating Arrays in State](https://react.dev/learn/updating-arrays-in-state) dan [Sharing State Between Components](https://react.dev/learn/sharing-state-between-components) di react.dev.
+
+## Latihan
+
+<Exercise title="Tombol Hapus yang selesai" difficulty="mudah" hints={["Kebalikan dari `t.done` adalah `!t.done`. Pakai `filter` untuk menyisakan tugas yang belum selesai.", "Kamu sudah punya `doneCount`. Tombol bisa memakai `disabled={doneCount === 0}`."]}>
+
+Langkah:
+
+1. Buka playground "Daftar tugas (CRUD di state)" di atas, lalu buka file `App.js`.
+2. Buat handler `handleClearDone` yang menghapus semua tugas yang sudah dicentang.
+3. Pasang tombol **Hapus yang selesai** tepat di bawah ringkasan.
+4. Buat tombol itu mati (disabled) kalau belum ada tugas yang selesai.
+5. Uji: centang dua tugas, klik tombolnya, dan pastikan hanya tugas yang belum selesai yang tersisa.
+
+<Solution>
+
+Tambahkan handler ini di `App`:
+
+```jsx
+function handleClearDone() {
+  setTasks((prev) => prev.filter((t) => !t.done));
+}
+```
+
+Lalu pasang tombolnya tepat di bawah `<p className="summary">`:
+
+```jsx
+<button onClick={handleClearDone} disabled={doneCount === 0}>
+  Hapus yang selesai ({doneCount})
+</button>
+```
+
+`filter` menyisakan tugas yang `done`-nya `false`, dan hasilnya array baru. Tidak perlu state baru, karena `doneCount` adalah derived state yang sudah ada.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Tab filter Semua / Belum / Selesai" difficulty="sedang" hints={["Simpan pilihan tab dalam state baru: `const [filter, setFilter] = useState(\"semua\")`.", "Daftar yang tampil adalah derived state: hitung `visibleTasks` dari `tasks` dan `filter`, jangan simpan di state.", "Tombol tab yang aktif bisa dinonaktifkan dengan `disabled={filter === nilaiTab}`."]}>
+
+Langkah:
+
+1. Di `App.js`, tambahkan state baru `filter` dengan nilai awal `"semua"`.
+2. Buat tiga tombol tab di atas daftar: **Semua**, **Belum**, dan **Selesai**. Klik tombol mengubah `filter`.
+3. Hitung `visibleTasks` dari `tasks` dan `filter`. Jangan simpan hasilnya di state.
+4. Tampilkan `visibleTasks` di daftar, bukan `tasks`.
+5. Pastikan ringkasan "x dari y selesai" tetap menghitung **semua** tugas, apa pun tab yang dipilih.
+
+<Solution>
+
+Ganti `/App.js` dengan versi berikut. `TaskForm`, `TaskItem`, dan `styles.css` tidak berubah.
+
+```jsx
+import { useState } from "react";
+import "./styles.css";
+import TaskForm from "./TaskForm";
+import TaskItem from "./TaskItem";
+
+const initialTasks = [
+  { id: "t1", title: "Laporan Praktikum Basis Data", priority: "tinggi", done: false },
+  { id: "t2", title: "Kuis Expo Router", priority: "sedang", done: true },
+  { id: "t3", title: "Rangkum Bab Normalisasi", priority: "rendah", done: false },
+];
+
+const FILTERS = [
+  { value: "semua", label: "Semua" },
+  { value: "belum", label: "Belum" },
+  { value: "selesai", label: "Selesai" },
+];
+
+export default function App() {
+  const [tasks, setTasks] = useState(initialTasks);
+  const [filter, setFilter] = useState("semua");
+
+  function handleAdd(title, priority) {
+    const newTask = { id: crypto.randomUUID(), title, priority, done: false };
+    setTasks((prev) => [...prev, newTask]);
+  }
+
+  function handleToggle(id) {
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t))
+    );
+  }
+
+  function handleDelete(id) {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  const doneCount = tasks.filter((t) => t.done).length;
+  const visibleTasks = tasks.filter((t) => {
+    if (filter === "belum") return !t.done;
+    if (filter === "selesai") return t.done;
+    return true;
+  });
+
+  return (
+    <main className="page">
+      <h1>Daftar Tugas</h1>
+      <TaskForm onAdd={handleAdd} />
+      <p className="summary">
+        {doneCount} dari {tasks.length} selesai
+      </p>
+      <div className="form">
+        {FILTERS.map((f) => (
+          <button
+            key={f.value}
+            onClick={() => setFilter(f.value)}
+            disabled={filter === f.value}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+      {visibleTasks.length === 0 ? (
+        <p className="empty">Tidak ada tugas di tab ini.</p>
+      ) : (
+        <ul className="list">
+          {visibleTasks.map((task) => (
+            <TaskItem
+              key={task.id}
+              task={task}
+              onToggle={handleToggle}
+              onDelete={handleDelete}
+            />
+          ))}
+        </ul>
+      )}
+    </main>
+  );
+}
+```
+
+Hanya `filter` yang menjadi state baru. `visibleTasks` dihitung ulang setiap render. Jadi saat kamu mencentang tugas di tab **Belum**, tugas itu langsung hilang dari tab itu dan muncul di tab **Selesai**. Kamu tidak perlu menulis kode tambahan untuk menyamakan dua daftar.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Apa yang tercetak di console pada klik pertama?",
+    code: "const [count, setCount] = useState(0);\n\nfunction handleClick() {\n  setCount(count + 1);\n  console.log(count);\n}",
+    options: ["`0`", "`1`", "`undefined`", "Error karena `count` adalah const"],
+    answer: 0,
+    explain: "State adalah snapshot, seperti foto. `setCount` hanya meminta render berikutnya memakai angka 1. Di dalam handler ini, `count` tetap 0. Tidak ada error, karena `count` hanya dibaca, tidak diubah.",
+  },
+  {
+    q: "`count` bernilai 0. Berapa nilainya setelah handler ini dijalankan sekali?",
+    code: "setCount(count + 1);\nsetCount(count + 1);\nsetCount((c) => c + 1);",
+    options: ["`1`", "`2`", "`3`", "`0`"],
+    answer: 1,
+    explain: "Dua baris pertama sama-sama berarti \"ganti dengan 0 + 1\", jadi setelah itu nilainya 1. Baris ketiga adalah updater: ia mengambil nilai terbaru (1) lalu menambah 1. Hasil akhirnya 2.",
+  },
+  {
+    q: "Mana cara yang benar untuk membalik `done` pada tugas dengan `id` tertentu?",
+    options: [
+      "`tasks.find((t) => t.id === id).done = true; setTasks(tasks);`",
+      "`const copy = [...tasks]; const i = copy.findIndex((t) => t.id === id); copy[i].done = !copy[i].done; setTasks(copy);`",
+      "`setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));`",
+      "`setTasks(tasks.sort((a, b) => a.done - b.done));`",
+    ],
+    answer: 2,
+    explain: "`map` membuat array baru, dan `{ ...t }` membuat object baru khusus untuk item yang diubah. Opsi pertama mengubah tugas lama lalu mengirim array yang sama. Opsi kedua menyalin array, tetapi tetap mengubah object lama di dalamnya. Opsi keempat mengubah array lewat `sort` dan sama sekali tidak membalik `done`.",
+  },
+  {
+    q: "`TaskForm` menambah tugas dan `TaskList` menampilkannya. Keduanya anak langsung `App`. Di mana sebaiknya state `tasks` disimpan?",
+    options: [
+      "Di `TaskForm`, karena di sanalah tugas dibuat",
+      "Di `TaskList`, karena di sanalah tugas ditampilkan",
+      "Di `App`, induk terdekat yang membungkus keduanya",
+      "Di variabel global di luar komponen",
+    ],
+    answer: 2,
+    explain: "Ini lifting state up, seperti buku kas yang dipegang bendahara. Simpan state di induk terdekat, kirim data lewat props, dan terima perubahan lewat callback seperti `onAdd`. State di `TaskForm` atau `TaskList` tidak bisa dibaca saudaranya. Variabel global tidak memicu render ulang.",
+  },
+  {
+    q: "Cara terbaik menampilkan ringkasan \"3 dari 5 selesai\" adalah...",
+    options: [
+      "Membuat state `doneCount` dan memperbaruinya di setiap handler",
+      "Menghitung `tasks.filter((t) => t.done).length` langsung saat render",
+      "Menyimpan jumlahnya di `localStorage`",
+      "Menghitungnya sekali di luar komponen saat aplikasi dimuat",
+    ],
+    answer: 1,
+    explain: "Jumlah ini derived state, seperti total SKS yang dijumlahkan dari daftar mata kuliah. Cukup hitung saat render, jadi angkanya selalu cocok. State terpisah rawan lupa diperbarui. `localStorage` tidak memicu render. Hitungan di luar komponen tidak ikut berubah saat `tasks` berubah.",
+  },
+]} />
+
+## Ringkasan
+
+- **State** adalah ingatan komponen: `const [x, setX] = useState(awal)`. Memanggil setter membuat React menggambar ulang layar. Variabel biasa tidak bisa.
+- State adalah **snapshot**. Nilainya tetap sama selama satu handler berjalan. Nilai baru baru terlihat di render berikutnya.
+- Kirim event handler sebagai fungsi: `onClick={handleClick}` atau `onClick={() => handleDelete(id)}`. Jangan `onClick={handleClick()}`.
+- Pakai **updater function** `setX((prev) => ...)` kalau nilai baru dihitung dari nilai lama, terutama di callback async.
+- **Controlled input** memakai `value` + `onChange` (checkbox: `checked`). Mulai state teks dari `""`.
+- Update **immutable**: tambah dengan spread, hapus dengan `filter`, ubah dengan `map` + `{ ...item }`. Jangan pakai `push`, `splice`, atau mengubah langsung.
+- **Angkat state** ke induk terdekat. Turunkan data lewat props dan terima perubahan lewat callback `onX`.
+- **Derived state**, seperti jumlah tugas selesai, cukup dihitung saat render. Tidak perlu disimpan.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Pola `TaskForm` dari pelajaran ini muncul lagi sebagai `src/components/task-form.js` di Track 3, di pelajaran create & update. Bedanya, `onAdd` nanti mengirim data ke API. Trik `filter` untuk menghapus juga dipakai lagi di pelajaran delete dengan *optimistic update*. Caranya: tugas dihapus dari layar lebih dulu, lalu dikembalikan kalau server gagal. Di pelajaran berikutnya, [useEffect, List & Custom Hook](/belajar/react-native/effect-list-custom-hook), kamu akan mengambil data tugas dari internet.
+
+</Callout>

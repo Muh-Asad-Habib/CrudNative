@@ -1,0 +1,512 @@
+## Pengantar
+
+Setiap kali aplikasi tugasmu menampilkan, menambah, mengubah, atau menghapus data, server API sedang "berbicara" dengan **database**, yaitu tempat data disimpan dengan rapi dan permanen. Bahasa yang dipakai adalah **SQL** (*Structured Query Language*, lihat [glosarium SQL](/glosarium#sql)). Satu perintah SQL biasa disebut **query**.
+
+<Callout type="analogi" title="Seperti lemari arsip di bagian akademik">
+
+Bagian akademik kampus menyimpan berkas di lemari arsip. Setiap laci berisi satu jenis berkas: laci mahasiswa, laci mata kuliah, laci nilai. Kamu tidak membuka lemarinya sendiri. Kamu mengisi formulir permintaan, lalu petugas yang mengambil, menambah, mengubah, atau membuang berkas.
+
+- Lemari arsip = **database**.
+- Satu laci = satu **tabel**.
+- Formulir permintaan = **query SQL**.
+- Petugas = program database, di kursus ini **SQLite**.
+
+Bedanya, petugas arsip mungkin bertanya "Yakin semua mau dibuang?". SQL langsung mengerjakan perintahmu apa adanya.
+
+</Callout>
+
+Di [Konsep CRUD](/belajar/crud-backend/konsep-crud) kamu sudah melihat petanya: Create menjadi `INSERT`, Read menjadi `SELECT`, Update menjadi `UPDATE`, dan Delete menjadi `DELETE`. Sekarang kamu menulis perintah-perintah itu sendiri.
+
+Kursus ini memakai **SQLite** ([glosarium](/glosarium#sqlite)), database ringan yang seluruh isinya tersimpan dalam satu file. Kamu tidak perlu memasang server database. SQL yang kamu pelajari di sini juga hampir sama dengan PostgreSQL atau MySQL, dua database populer lainnya. Semua contoh di halaman ini bisa dijalankan di [SQL Playground](/lab/sql-playground), yaitu SQLite asli yang berjalan di browser.
+
+## Tabel, baris, dan kolom
+
+<Callout type="analogi" title="Seperti sheet Excel daftar hadir">
+
+Bayangkan file Excel daftar hadir kuliah. Judul kolomnya NIM, Nama, dan Hadir. Setiap baris di bawahnya berisi satu mahasiswa.
+
+- Satu sheet = satu **tabel**, berisi satu jenis data.
+- Judul kolom = **kolom**, satu jenis keterangan, misalnya judul, status, atau deadline.
+- Satu baris = satu **baris** data, misalnya satu mahasiswa atau satu tugas.
+
+Bedanya, di Excel kamu bebas mengetik apa saja di sel mana pun. Tabel database lebih ketat: setiap kolom punya tipe data dan aturan sendiri.
+
+</Callout>
+
+Contohnya tabel `tasks` di playground ([glosarium tabel](/glosarium#table)). Setiap baris adalah satu tugas. Berikut tiga baris pertamanya:
+
+| id | course_id | user_id | title | done | priority | due_date |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 1 | Desain ERD perpustakaan | 1 | tinggi | 2025-03-01 |
+| 2 | 1 | 1 | Normalisasi tabel sampai 3NF | 0 | tinggi | 2025-03-08 |
+| 3 | 2 | 1 | Install Expo & jalankan di HP | 1 | sedang | 2025-03-02 |
+
+Database playground punya tiga tabel: `users` (pengguna), `courses` (mata kuliah), dan `tasks` (tugas). Kolom `user_id` dan `course_id` menunjuk ke tabel lain. Cara kerjanya dibahas di pelajaran berikutnya. Untuk sekarang, fokus pada satu tabel saja.
+
+### Primary key
+
+<Callout type="analogi" title="Seperti NIM mahasiswa">
+
+Di kampusmu mungkin ada dua mahasiswa bernama Budi. Nama boleh kembar, tetapi NIM tidak pernah kembar. Karena itu bagian akademik mencari data lewat NIM, bukan lewat nama. Primary key adalah "NIM" untuk setiap baris di tabel.
+
+</Callout>
+
+Kolom `id` adalah **primary key** ([glosarium](/glosarium#primary-key)), yaitu identitas unik setiap baris. Dua tugas boleh punya judul yang sama, tetapi tidak boleh punya `id` yang sama. Itulah sebabnya URL API seperti `/api/tasks/2` memakai id, bukan judul.
+
+Dengan `AUTOINCREMENT`, SQLite mengisi id secara otomatis: 1, 2, 3, dan seterusnya. Id yang sudah dihapus tidak dipakai ulang. Kalau tugas nomor 8 dihapus, tugas baru berikutnya tetap mendapat id 9. Mirip NIM mahasiswa yang sudah lulus, yang tidak diberikan ke mahasiswa baru.
+
+### Tipe data di SQLite
+
+Setiap kolom punya **tipe data**, yaitu jenis isi yang boleh disimpan. SQLite mengenal lima tipe:
+
+| Tipe | Isi | Contoh di tabel `tasks` |
+| --- | --- | --- |
+| `INTEGER` | bilangan bulat | `id`, `user_id`, `done` |
+| `REAL` | bilangan desimal | tidak ada; contohnya IPK `3.75` |
+| `TEXT` | teks | `title`, `priority`, `due_date` |
+| `BLOB` | data mentah, misalnya isi file gambar | jarang dipakai |
+| `NULL` | tidak ada nilai | `due_date` milik tugas 8 |
+
+SQLite tidak punya tipe khusus untuk boolean (nilai benar/salah) dan tanggal. Jadi ada dua kebiasaan:
+
+- **Boolean disimpan sebagai `0` dan `1`.** Kolom `done` berisi `1` untuk selesai dan `0` untuk belum.
+- **Tanggal disimpan sebagai teks berformat ISO**, misalnya `'2025-03-08'` (tahun-bulan-tanggal). Karena tahun ditulis paling depan, urutan teksnya sama dengan urutan tanggal.
+
+Fungsi `typeof()` menunjukkan tipe yang benar-benar tersimpan:
+
+```sql
+SELECT typeof(id), typeof(title), typeof(done), typeof(due_date)
+FROM tasks WHERE id = 8;
+-- integer | text | integer | null
+```
+
+Query ini menanyakan tipe empat kolom milik tugas 8. Teks setelah `--` adalah komentar, yaitu catatan yang tidak dijalankan. Di sini komentarnya menunjukkan hasil query. `due_date` bertipe null karena tugas 8 tidak punya deadline.
+
+## Membuat tabel dengan CREATE TABLE
+
+<Callout type="analogi" title="Seperti menyusun Google Form sebelum disebar">
+
+Sebelum menyebar Google Form pendaftaran panitia, kamu menyusun pertanyaannya dulu. Setiap pertanyaan punya jenis jawaban: teks pendek, angka, atau tanggal. Pertanyaan yang penting kamu tandai wajib, sehingga muncul bintang merah.
+
+- Menyusun form kosong = `CREATE TABLE`.
+- Satu pertanyaan = satu kolom.
+- Jenis jawaban = tipe data.
+- Tanda wajib = `NOT NULL`.
+- Opsi "Batasi ke 1 tanggapan" = `UNIQUE`, satu akun hanya boleh muncul sekali.
+
+Bedanya, menambah pertanyaan di Google Form yang sudah berisi jawaban itu gampang. Mengubah struktur tabel yang sudah berisi data perlu langkah khusus bernama migrasi, yang disinggung di akhir bagian ini.
+
+</Callout>
+
+Sebelum bisa menyimpan data, tabelnya harus dibuat dulu. Misalnya kamu ingin menambah fitur catatan kuliah:
+
+```sql
+CREATE TABLE notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  body TEXT,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+Query ini membuat tabel `notes` dengan lima kolom. Setiap baris di dalam kurung mendefinisikan satu kolom: nama, tipe, lalu aturan tambahan yang disebut *constraint*. Constraint boleh tidak ada.
+
+- `PRIMARY KEY AUTOINCREMENT`: kolom identitas yang terisi otomatis.
+- `NOT NULL`: kolom wajib diisi. Kolom `body` tidak memakainya, jadi boleh kosong.
+- `DEFAULT`: nilai bawaan kalau kolom tidak disebut saat `INSERT`. `pinned` otomatis bernilai 0, dan `datetime('now')` mengisi waktu saat baris dibuat.
+- `UNIQUE` (tidak dipakai di `notes`): nilainya tidak boleh kembar. Kolom `email` di tabel `users` memakainya.
+
+Kalau tabel `notes` sudah ada, `CREATE TABLE` yang sama menghasilkan error `table notes already exists`. Tulis `CREATE TABLE IF NOT EXISTS notes (...)` supaya perintahnya aman dijalankan berulang kali. Di proyek sungguhan kamu jarang menulis `CREATE TABLE` sendiri. Prisma membuatkannya lewat **migrasi** (perubahan struktur database yang dicatat dan dijalankan otomatis) di [Database Sungguhan dengan Prisma + SQLite](/belajar/crud-backend/prisma-sqlite).
+
+## Create: menambah data dengan INSERT
+
+`INSERT INTO` menambah baris baru, mirip menulis satu nama baru di baris paling bawah daftar hadir. Sebutkan nama kolomnya, lalu nilainya dengan urutan yang sama:
+
+```sql
+INSERT INTO tasks (user_id, course_id, title, priority, due_date)
+VALUES (1, 3, 'Kuis routing statis', 'sedang', '2025-03-15');
+```
+
+Artinya: tambahkan satu tugas ke tabel `tasks`. Baris pertama menyebut lima kolom yang diisi. Baris kedua (`VALUES`) berisi nilainya. Nilai pertama (`1`) masuk ke kolom pertama (`user_id`), dan seterusnya.
+
+Kolom yang tidak disebut terisi otomatis: `id` mendapat nomor berikutnya (9) dan `done` memakai default `0`. Teks selalu diapit tanda kutip tunggal (`'...'`), sedangkan angka ditulis apa adanya. Satu `INSERT` juga bisa menambah beberapa baris sekaligus:
+
+```sql
+-- jalankan setelah CREATE TABLE notes di atas
+INSERT INTO notes (title, pinned)
+VALUES ('Link Zoom kelas', 1), ('Jadwal UTS', 0);
+```
+
+Setiap pasangan kurung setelah `VALUES` adalah satu baris. Jadi query ini menambah dua catatan.
+
+Kalau kolom wajib terlewat, database menolaknya:
+
+```sql
+INSERT INTO tasks (user_id, priority) VALUES (1, 'tinggi');
+-- Error: NOT NULL constraint failed: tasks.title
+```
+
+Kolom `title` wajib diisi (`NOT NULL`), tetapi tidak disebut. Aturan seperti ini adalah pengaman terakhir. Server API tetap harus memeriksa input lebih dulu dan membalas `400` (ingat [REST API, Method & Status Code](/belajar/crud-backend/rest-api-http)). Constraint di database menjamin data yang rusak tetap tidak bisa tersimpan, walaupun pemeriksaan di API terlewat.
+
+## Read: membaca data dengan SELECT
+
+`SELECT` membaca data tanpa mengubah apa pun. `SELECT * FROM tasks;` artinya "ambil semua kolom dari semua baris tabel `tasks`". Tanda `*` berarti semua kolom. Tanda ini praktis untuk melihat-lihat. Di kode aplikasi, sebutkan kolom yang memang dibutuhkan saja, misalnya `SELECT id, title, done FROM tasks;`.
+
+<Callout type="analogi" title="Seperti tombol Filter dan Sort di Excel">
+
+Di sheet daftar hadir tadi, kamu bisa menekan Filter lalu memilih "Hadir = Tidak". Baris lain disembunyikan sementara, bukan dihapus. Kamu juga bisa menekan Sort A→Z untuk mengurutkan nama.
+
+- Filter = `WHERE`.
+- Sort A→Z atau Z→A = `ORDER BY ... ASC` atau `DESC`.
+- Hanya melihat 3 baris teratas = `LIMIT 3`.
+
+Sama seperti Filter di Excel, `SELECT` tidak mengubah isi tabel sedikit pun.
+
+</Callout>
+
+### Menyaring dengan WHERE
+
+`WHERE` memilih baris yang memenuhi syarat:
+
+```sql
+SELECT id, title FROM tasks WHERE done = 0;
+```
+
+Artinya: ambil `id` dan `title` dari tabel `tasks`, tetapi hanya baris yang `done`-nya bernilai 0 (belum selesai). Hasilnya lima tugas:
+
+```txt
+id | title
+2  | Normalisasi tabel sampai 3NF
+4  | Buat layar daftar tugas
+5  | Laporan praktikum subnetting
+6  | Query JOIN tiga tabel
+8  | Beli buku catatan
+```
+
+Tabel berikut berisi operator (tanda pembanding) yang bisa dipakai di dalam `WHERE`:
+
+| Operator | Arti | Contoh |
+| --- | --- | --- |
+| `=` | sama dengan | `priority = 'tinggi'` |
+| `<>` atau `!=` | tidak sama dengan | `priority <> 'rendah'` |
+| `<`, `>`, `<=`, `>=` | lebih kecil atau lebih besar | `due_date < '2025-03-03'` |
+| `AND` | kedua syarat benar | `done = 0 AND priority = 'tinggi'` |
+| `OR` | minimal satu syarat benar | `priority = 'tinggi' OR done = 1` |
+| `IN` | cocok dengan salah satu nilai | `priority IN ('tinggi', 'rendah')` |
+| `BETWEEN` | dalam rentang, ujungnya ikut | `due_date BETWEEN '2025-03-01' AND '2025-03-07'` |
+
+Ada dua jebakan kecil:
+
+1. `=` pada teks membedakan huruf besar dan kecil. Jadi `priority = 'Tinggi'` tidak menemukan apa pun, karena datanya tertulis `'tinggi'`.
+2. `AND` dikerjakan lebih dulu daripada `OR`, mirip perkalian yang dikerjakan sebelum penjumlahan. Pakai tanda kurung agar maksudmu jelas.
+
+<Compare>
+<CompareItem title="Tanpa kurung: 5 baris" tone="bad">
+
+```sql
+SELECT id, title FROM tasks
+WHERE done = 0 AND priority = 'tinggi' OR priority = 'sedang';
+```
+
+Tugas 3 dan 7 yang sudah selesai ikut muncul, karena syaratnya dibaca sebagai "(belum selesai dan tinggi) atau sedang".
+
+</CompareItem>
+<CompareItem title="Dengan kurung: 3 baris" tone="good">
+
+```sql
+SELECT id, title FROM tasks
+WHERE done = 0 AND (priority = 'tinggi' OR priority = 'sedang');
+```
+
+Hanya tugas yang belum selesai (2, 4, dan 6) dengan prioritas tinggi atau sedang.
+
+</CompareItem>
+</Compare>
+
+### Mengurutkan dan membatasi: ORDER BY dan LIMIT
+
+`ORDER BY` mengurutkan hasil secara `ASC` (naik, bawaan) atau `DESC` (turun). `LIMIT` membatasi jumlah baris, dan `OFFSET` melewati sejumlah baris di awal.
+
+```sql
+SELECT title, due_date FROM tasks
+WHERE due_date IS NOT NULL
+ORDER BY due_date ASC
+LIMIT 3;
+```
+
+```txt
+title                         | due_date
+Dokumen SRS bab 1             | 2025-02-28
+Desain ERD perpustakaan       | 2025-03-01
+Install Expo & jalankan di HP | 2025-03-02
+```
+
+Itulah tiga deadline terdekat. Berkat format ISO, urutan teksnya sama dengan urutan tanggal. Beberapa catatan:
+
+- Urutkan dengan lebih dari satu kolom, misalnya `ORDER BY priority DESC, due_date ASC`. Kolom kedua dipakai saat nilai kolom pertama sama. Ingat, teks diurutkan menurut abjad, bukan makna. Urutan tinggi, sedang, rendah pada contoh ini benar hanya karena huruf awalnya kebetulan t, s, r.
+- Di SQLite, `NULL` muncul paling atas saat `ASC` dan paling bawah saat `DESC`.
+- `LIMIT 3 OFFSET 3` mengambil baris ke-4 sampai ke-6. Pola ini adalah dasar *pagination* (membagi daftar panjang menjadi beberapa halaman, seperti halaman katalog) di [Pagination, Filter, Search & Sort](/belajar/crud-backend/pagination-filter-search).
+
+Urutan klausa dalam `SELECT` tidak boleh ditukar:
+
+<Flow nodes={["SELECT kolom", "FROM tabel", "WHERE syarat", "ORDER BY urutan", "LIMIT jumlah"]} caption="Urutan klausa SELECT. Klausa setelah FROM boleh dilewati, tetapi urutannya tetap." />
+
+## NULL: ketika nilai tidak ada
+
+<Callout type="analogi" title="Seperti sel kosong di daftar hadir">
+
+Di sheet daftar hadir tadi, ada mahasiswa yang kolom "Hadir"-nya masih kosong karena asisten dosen lupa mengisi. Sel kosong itu tidak berarti "tidak hadir", dan juga bukan angka 0. Artinya: belum diketahui.
+
+Kalau dua mahasiswa sama-sama kosong, kamu juga tidak bisa bilang kehadiran mereka "sama". Dua-duanya memang belum diketahui. SQL berpikir dengan cara yang sama.
+
+</Callout>
+
+`NULL` berarti "tidak ada nilai" atau "tidak diketahui". `NULL` bukan `0` dan bukan teks kosong `''`. Tugas 8, "Beli buku catatan", punya `course_id` dan `due_date` bernilai `NULL` karena tidak terkait mata kuliah dan tidak punya deadline. Playground menampilkannya sebagai NULL bercetak miring.
+
+Karena nilainya tidak diketahui, perbandingan dengan `NULL`, termasuk `= NULL`, tidak pernah bernilai benar. Gunakan `IS NULL` atau `IS NOT NULL`:
+
+<Compare>
+<CompareItem title="Salah: hasil kosong" tone="bad">
+
+```sql
+SELECT id, title FROM tasks WHERE course_id = NULL;
+```
+
+</CompareItem>
+<CompareItem title="Benar: tugas 8" tone="good">
+
+```sql
+SELECT id, title FROM tasks WHERE course_id IS NULL;
+```
+
+</CompareItem>
+</Compare>
+
+Versi yang salah tidak menghasilkan error, hanya hasil kosong. Ini berbahaya karena kamu tidak sadar ada yang keliru.
+
+## Mencari teks dengan LIKE
+
+Kamu pasti pernah mengetik "uts" di kolom pencarian WhatsApp, lalu muncul semua chat yang mengandung kata itu. Fitur pencarian di aplikasi tugas bekerja mirip itu, dan di SQL caranya memakai `LIKE`.
+
+`LIKE` memakai dua karakter pengganti (*wildcard*): `%` cocok dengan nol atau lebih karakter apa pun, sedangkan `_` cocok dengan tepat satu karakter.
+
+| Syarat | Hasil dari data awal |
+| --- | --- |
+| `title LIKE '%tabel%'` | tugas 2 dan 6, kata "tabel" di posisi mana pun |
+| `title LIKE 'buat%'` | tugas 4, judul diawali "Buat" |
+| `title LIKE '%EXPO%'` | tugas 3 |
+| `title LIKE '_uery%'` | tugas 6, satu karakter apa pun lalu "uery" |
+
+Contoh ketiga menunjukkan bahwa `LIKE` di SQLite tidak membedakan huruf besar dan kecil untuk huruf A sampai Z, berbeda dengan `=`. `LIKE` juga bisa digabung dengan syarat lain, misalnya `WHERE done = 0 AND title LIKE '%tugas%'`.
+
+## Update: mengubah data dengan UPDATE
+
+`UPDATE` mengubah kolom pada baris yang dipilih oleh `WHERE`, mirip menghapus isi satu sel di Excel lalu mengetik nilai baru. Untuk menandai tugas 2 selesai:
+
+```sql
+UPDATE tasks SET done = 1 WHERE id = 2;
+```
+
+Bacanya dari kiri: di tabel `tasks`, ubah (`SET`) kolom `done` menjadi 1, tetapi hanya pada baris yang `id`-nya 2.
+
+Beberapa kolom bisa diubah sekaligus dengan pemisah koma, dan kolom yang boleh kosong bisa dikosongkan dengan `NULL`:
+
+```sql
+UPDATE tasks SET priority = 'tinggi', due_date = '2025-03-09' WHERE id = 4;
+UPDATE tasks SET due_date = NULL WHERE id = 5;
+```
+
+Baris pertama mengubah dua kolom milik tugas 4: prioritasnya menjadi tinggi dan deadline-nya menjadi 9 Maret. Baris kedua menghapus deadline tugas 5.
+
+Kalau `WHERE` tidak cocok dengan baris mana pun, misalnya `WHERE id = 99`, perintahnya tetap berhasil dengan 0 baris terpengaruh. Server API bisa memakai angka ini untuk memutuskan apakah membalas `200` atau `404 Not Found`.
+
+## Delete: menghapus data dengan DELETE
+
+`DELETE FROM` menghapus baris yang cocok dengan `WHERE`:
+
+```sql
+DELETE FROM tasks WHERE id = 8;
+```
+
+Artinya: dari tabel `tasks`, hapus baris yang `id`-nya 8. Tidak ada tempat sampah atau tombol batal. Baris yang dihapus langsung hilang, dan id-nya tidak dipakai lagi.
+
+## Bahaya UPDATE dan DELETE tanpa WHERE
+
+Ingat petugas arsip di awal pelajaran. Kalau kamu bilang "Tolong buang berkasnya" tanpa menyebut NIM, petugas manusia akan bertanya "Berkas siapa?". SQL tidak bertanya. Ia membuang semua berkas di laci itu.
+
+Bagi SQL, `WHERE` pada `UPDATE` dan `DELETE` itu opsional. Bagi kamu, anggap wajib. Tanpa `WHERE`, perintah mengenai semua baris:
+
+```sql
+UPDATE tasks SET done = 1;  -- 8 baris terpengaruh: semua tugas jadi selesai
+DELETE FROM tasks;          -- 8 baris terpengaruh: tabel kosong
+```
+
+Kedua perintah itu langsung dijalankan tanpa konfirmasi.
+
+<Callout type="warning" title="Biasakan SELECT dulu, baru ubah">
+
+Sebelum menjalankan `UPDATE` atau `DELETE`, jalankan `SELECT` dengan `WHERE` yang sama persis. Periksa baris yang muncul. Kalau sudah benar, baru ganti bagian depannya. Di database sungguhan, pastikan juga ada backup (salinan cadangan data).
+
+</Callout>
+
+<Steps>
+<Step title="Lihat dulu">
+
+```sql
+SELECT id, title FROM tasks WHERE done = 1;
+```
+
+Muncul tugas 1, 3, dan 7. Memang tiga tugas ini yang ingin dihapus?
+
+</Step>
+<Step title="Baru hapus">
+
+```sql
+DELETE FROM tasks WHERE done = 1;
+```
+
+Pesan sukses menyebut **3 baris terpengaruh**, sama dengan jumlah baris di langkah pertama.
+
+</Step>
+</Steps>
+
+## Praktik di SQL Playground
+
+<SqlPlayground initialQuery="SELECT id, title, done, priority, due_date FROM tasks WHERE done = 0 ORDER BY due_date ASC;" />
+
+Playground ini sama dengan halaman lab [SQL Playground](/lab/sql-playground). Ikuti langkah berikut:
+
+1. Tekan **Jalankan** atau <Kbd>Ctrl</Kbd> + <Kbd>Enter</Kbd>. Saat pertama kali, tombolnya menampilkan "Memuat SQLite…" sebentar karena program SQLite-nya sedang diunduh ke browser.
+2. Di panel **Skema**, klik nama tabel `users`, `courses`, atau `tasks`. Playground langsung menjalankan `SELECT *` untuk tabel itu. Daftar kolom di bawah nama tabel membantu saat kamu lupa ejaan kolom.
+3. Klik tombol contoh (chip) **Filter WHERE**, lalu **ORDER & LIMIT**. Chip hanya mengisi editor, jadi tekan **Jalankan** setelahnya. Ubah syaratnya, misalnya ganti `'tinggi'` dengan `'sedang'`.
+4. Coba chip **INSERT**, **UPDATE**, dan **DELETE**. Masing-masing berisi dua perintah yang dipisah titik koma: perubahan data, lalu `SELECT` untuk memeriksa hasilnya.
+5. Jalankan contoh-contoh dari pelajaran ini, termasuk `CREATE TABLE notes` lalu `INSERT` ke tabel tersebut.
+6. Rasakan bahayanya: jalankan `UPDATE tasks SET done = 1;` lalu klik `tasks` di panel Skema. Setelah itu tekan **Reset DB** di bagian atas playground untuk mengembalikan data awal.
+
+Beberapa hal yang perlu diketahui:
+
+- Setiap `SELECT` yang menemukan baris tampil sebagai tabel hasil tersendiri. Kalau tidak ada tabel yang tampil, kamu hanya melihat pesan hijau **Query berhasil**. Untuk `INSERT`, `UPDATE`, dan `DELETE` pesan itu menyebut jumlah baris terpengaruh. Kalau tidak ada baris yang berubah (misalnya `SELECT` tanpa hasil atau `WHERE` yang tidak cocok), pesannya berbunyi "Tidak ada baris yang dikembalikan atau diubah".
+- Perubahan bertahan sampai kamu menekan **Reset DB** atau memuat ulang halaman. Misalnya, setelah chip INSERT dijalankan, tugas baru mendapat id 9 dan `INSERT` berikutnya mendapat id 10.
+- Chip **JOIN** dan **GROUP BY** adalah cuplikan pelajaran berikutnya. Boleh dicoba, tetapi belum perlu dipahami.
+
+## Kesalahan umum
+
+| Pesan atau gejala | Penyebab | Perbaikan |
+| --- | --- | --- |
+| `no such column: titel` | salah ketik nama kolom | cek daftar kolom di panel Skema |
+| `no such table: task` | salah ketik nama tabel | nama tabelnya jamak, `tasks` |
+| `no such column: tinggi` | teks tanpa tanda kutip dianggap nama kolom | tulis `'tinggi'` |
+| `NOT NULL constraint failed: tasks.title` | kolom wajib tidak diisi | sertakan kolom itu di `INSERT` |
+| `UNIQUE constraint failed: users.email` | nilai kembar di kolom `UNIQUE` | di API, balas `409 Conflict` |
+| `table notes already exists` | `CREATE TABLE` dijalankan dua kali | pakai `IF NOT EXISTS` atau Reset DB |
+| `near "SELECT": syntax error` | lupa titik koma di antara dua perintah | akhiri setiap perintah dengan `;` |
+| hasil kosong tanpa error | memakai `= NULL`, atau beda huruf besar-kecil pada `=` | pakai `IS NULL` dan cek ejaan nilai |
+
+## Latihan
+
+<Exercise title="Tugas Andi yang belum selesai" difficulty="mudah" hints={["Andi punya user_id = 1.", "Gabungkan dua syarat dengan AND.", "Deadline terdekat berarti urutan naik (ASC)."]}>
+
+Mulai dari data awal (tekan **Reset DB**). Tampilkan `id`, `title`, dan `due_date` semua tugas milik Andi (`user_id = 1`) yang **belum selesai**, diurutkan dari deadline terdekat.
+
+<Solution>
+
+```sql
+SELECT id, title, due_date
+FROM tasks
+WHERE user_id = 1 AND done = 0
+ORDER BY due_date ASC;
+```
+
+Hasilnya tiga baris: tugas 2 (2025-03-08), 4 (2025-03-10), dan 5 (2025-03-12). Tugas 1 dan 3 tidak muncul karena sudah selesai.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Satu siklus CRUD lengkap" difficulty="sedang" hints={["Kolom id dan done tidak perlu disebut saat INSERT.", "Catat id yang muncul di langkah Read, lalu pakai id itu di WHERE.", "COUNT(*) menghitung jumlah baris."]}>
+
+Mulai dari data awal, lalu tulis perintah berurutan berikut:
+
+1. **Create**: tambah tugas "Latihan SQL dasar" milik user 1 untuk mata kuliah 2, prioritas `sedang`, deadline `2025-03-14`.
+2. **Read**: temukan tugas itu dengan `LIKE`, tampilkan `id`, `title`, dan `done`.
+3. **Update**: tandai selesai sekaligus ubah prioritasnya menjadi `rendah`.
+4. **Delete**: hapus tugas itu, lalu pastikan jumlah tugas kembali 8.
+
+<Solution>
+
+```sql
+INSERT INTO tasks (user_id, course_id, title, priority, due_date)
+VALUES (1, 2, 'Latihan SQL dasar', 'sedang', '2025-03-14');
+
+SELECT id, title, done FROM tasks WHERE title LIKE '%latihan sql%';
+-- 9 | Latihan SQL dasar | 0
+
+UPDATE tasks SET done = 1, priority = 'rendah' WHERE id = 9;
+
+DELETE FROM tasks WHERE id = 9;
+
+SELECT COUNT(*) AS total FROM tasks;
+-- 8
+```
+
+`UPDATE` dan `DELETE` memakai `WHERE id = 9`, bukan syarat pada judul, karena id dijamin unik sedangkan judul bisa kembar. Kalau sebelumnya kamu sudah menjalankan chip INSERT tanpa Reset DB, id-mu mungkin 10. Pakai id yang muncul di langkah Read.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Perintah mana yang menandai tugas nomor 5 selesai dengan aman?",
+    options: ["`UPDATE tasks SET done = 1;`", "`UPDATE tasks WHERE id = 5 SET done = 1;`", "`UPDATE tasks SET done = 1 WHERE id = 5;`", "`SELECT tasks SET done = 1 WHERE id = 5;`"],
+    answer: 2,
+    explain: "Bentuk yang benar adalah `UPDATE tabel SET kolom = nilai WHERE syarat`. Tanpa `WHERE`, semua tugas ikut selesai. `WHERE` sebelum `SET` adalah urutan yang salah, dan `SELECT` hanya membaca data.",
+  },
+  {
+    q: "Kenapa `SELECT * FROM tasks WHERE due_date = NULL;` tidak mengembalikan baris apa pun, padahal tugas 8 tidak punya deadline?",
+    options: [
+      "`NULL` berarti nilai tidak diketahui, jadi perbandingan dengan `=` tidak pernah benar. Gunakan `IS NULL`.",
+      "Karena `NULL` harus ditulis dengan tanda kutip, yaitu `'NULL'`.",
+      "Karena kolom `due_date` bertipe teks sehingga tidak bisa berisi `NULL`.",
+      "Karena `WHERE` tidak boleh dipakai bersama `SELECT *`.",
+    ],
+    answer: 0,
+    explain: "Perbandingan apa pun dengan `NULL` menghasilkan \"tidak diketahui\", bukan benar, sehingga tidak ada baris yang lolos. `'NULL'` adalah teks biasa, kolom teks boleh berisi `NULL`, dan `WHERE` bisa dipakai dengan `SELECT *`.",
+  },
+  {
+    q: "Dengan data awal playground, judul mana yang cocok dengan `WHERE title LIKE '%tugas%'`?",
+    options: ["Laporan praktikum subnetting", "Dokumen SRS bab 1", "Desain ERD perpustakaan", "Buat layar daftar tugas"],
+    answer: 3,
+    explain: "`%` di depan dan di belakang berarti kata \"tugas\" boleh berada di posisi mana pun. Hanya \"Buat layar daftar tugas\" yang mengandung kata itu.",
+  },
+  {
+    q: "Apa fungsi utama primary key?",
+    options: ["Mengurutkan baris secara otomatis", "Memberi setiap baris identitas unik", "Menyimpan waktu pembuatan baris", "Mencegah semua kolom berisi NULL"],
+    answer: 1,
+    explain: "Primary key seperti `id` menjamin setiap baris bisa ditunjuk dengan tepat, misalnya oleh `WHERE id = 2` atau URL `/api/tasks/2`. Urutan diatur `ORDER BY`, waktu pembuatan disimpan kolom biasa, dan `NOT NULL` diatur per kolom.",
+  },
+  {
+    q: "Dengan data awal, apa hasil `SELECT title FROM tasks ORDER BY due_date DESC LIMIT 1;`?",
+    options: ["Dokumen SRS bab 1", "Beli buku catatan", "Laporan praktikum subnetting", "Delapan judul, dari deadline terjauh"],
+    answer: 2,
+    explain: "`DESC` mengurutkan dari tanggal terbesar, yaitu 2025-03-12 milik \"Laporan praktikum subnetting\", dan `LIMIT 1` hanya mengambil satu baris. \"Beli buku catatan\" tidak punya deadline, jadi di SQLite ia berada paling bawah saat `DESC`.",
+  },
+]} />
+
+## Ringkasan
+
+- Database menyimpan data dalam **tabel**. Setiap **baris** adalah satu data, setiap **kolom** satu atribut, dan **primary key** (`id`) membuat setiap baris unik.
+- Tipe data SQLite: `INTEGER`, `REAL`, `TEXT`, `BLOB`, dan `NULL`. Boolean disimpan sebagai 0/1 dan tanggal sebagai teks ISO.
+- `CREATE TABLE` membuat tabel. `INSERT`, `SELECT`, `UPDATE`, dan `DELETE` adalah Create, Read, Update, dan Delete.
+- `WHERE` menyaring, `ORDER BY` mengurutkan, `LIMIT` dan `OFFSET` membatasi.
+- Pakai `IS NULL`, bukan `= NULL`. Pakai `LIKE` dengan `%` dan `_` untuk mencari teks.
+- Jangan menjalankan `UPDATE` atau `DELETE` tanpa `WHERE`. Jalankan `SELECT` dengan syarat yang sama lebih dulu.
+
+Simpan [cheatsheet SQL](/cheatsheet/sql) sebagai contekan. Di [Relasi Tabel & JOIN](/belajar/crud-backend/relasi-join), kamu akan menghubungkan `tasks`, `courses`, dan `users` lewat foreign key, lalu menggabungkan datanya dengan JOIN.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Database aplikasi Tugas & Catatan Kuliah juga punya tabel pengguna, mata kuliah, dan tugas, walau beberapa kolomnya berbeda dari playground. Nanti kamu mengaksesnya lewat Prisma, tetapi setiap `findMany`, `create`, `update`, dan `delete` tetap diterjemahkan menjadi `SELECT`, `INSERT`, `UPDATE`, dan `DELETE`. Sebagai persiapan, tulis query SQL untuk tiga fitur di daftar endpoint-mu: daftar tugas yang belum selesai, pencarian tugas berdasarkan judul, dan hapus satu tugas.
+
+</Callout>

@@ -1,0 +1,604 @@
+## Pengantar
+
+Di pelajaran sebelumnya kamu menyimpan data di database dengan SQL. Masalahnya, aplikasi di HP tidak boleh membuka database secara langsung. Aplikasi butuh perantara yang menerima permintaan, mengambil data, lalu mengirim jawaban. Perantara itu disebut **server HTTP**.
+
+<Callout type="analogi" title="Seperti makan di warung">
+
+Kamu datang ke warung dan menyebut pesanan ke pelayan. Pelayan meneruskannya ke dapur, lalu kembali membawa makanan. Di dunia web:
+
+- pembeli = **client** (browser, terminal, atau nanti aplikasi Expo di HP),
+- pelayan = **server**, program yang menunggu dan melayani pesanan,
+- pesanan yang kamu sebut = **request** (permintaan),
+- makanan yang diantar = **response** (balasan),
+- dapur = tempat data disimpan (nanti database).
+
+Bedanya, pelayan warung bisa menebak maksudmu kalau pesananmu kurang jelas. Server tidak bisa. Request harus ditulis persis sesuai aturan.
+
+</Callout>
+
+Server akan kita buat dengan **Express**. Express adalah **framework** (kerangka kerja siap pakai) untuk Node.js. Dengan Express, kamu tidak perlu menulis dari nol cara menerima dan membalas request. Express banyak dipakai untuk membuat [API](/glosarium#api), yaitu kumpulan layanan yang bisa dipanggil program lain. Bayangkan API sebagai daftar menu warung: client hanya boleh memesan yang ada di menu.
+
+Di akhir pelajaran ini kamu punya proyek `belajar-api` yang:
+
+- berjalan dengan `npm run dev` dan otomatis restart setiap kali file disimpan,
+- punya [endpoint](/glosarium#endpoint) `GET /api/health` (alamat tujuan request, mirip nomor loket) yang membalas [JSON](/glosarium#json) (format data teks dengan kolom tetap, mirip formulir),
+- mencatat setiap request yang masuk lewat **middleware** logger buatan sendiri (dijelaskan di bawah),
+- membalas 404 dalam format JSON kalau client meminta alamat yang tidak ada.
+
+Proyek ini akan terus kamu kembangkan sampai menjadi backend aplikasi Tugas & Catatan Kuliah. **Backend** artinya bagian aplikasi yang berjalan di server, bukan di HP. Pastikan Node.js 22 sudah terpasang (cek dengan `node -v`) seperti di pelajaran setup.
+
+<Flow nodes={["Client (browser/curl)", "Middleware", "Route handler", "Respons JSON"]} labels={["request HTTP", "next()", "res.json()"]} caption="Perjalanan satu request di dalam Express" />
+
+## Menyiapkan proyek belajar-api
+
+Semua perintah di bawah diketik di **terminal** (jendela teks untuk menjalankan perintah). Kamu bisa memakai terminal bawaan VS Code dengan menekan <Kbd>Ctrl</Kbd> + <Kbd>`</Kbd>.
+
+<Steps>
+<Step title="Buat folder proyek">
+
+```bash
+mkdir belajar-api
+cd belajar-api
+code .
+```
+
+Baris pertama membuat folder `belajar-api`. Baris kedua masuk ke folder itu. Perintah `code .` membuka folder ini di VS Code. Kalau `code` tidak dikenali, buka foldernya lewat menu File → Open Folder.
+
+</Step>
+<Step title="Buat package.json dengan npm init -y">
+
+```bash
+npm init -y
+```
+
+**npm** adalah alat bawaan Node untuk mengunduh dan mengelola library. `npm init` membuat file `package.json`, yaitu "KTP" proyek Node. Isinya nama proyek, versi, script, dan daftar **dependency** (library milik orang lain yang dipakai proyekmu). Flag `-y` menjawab semua pertanyaan dengan nilai bawaan, jadi kamu tidak perlu mengetik apa-apa.
+
+</Step>
+<Step title="Aktifkan modul ESM">
+
+```bash
+npm pkg set type=module
+```
+
+Perintah ini menambahkan baris `"type": "module"` ke `package.json`. Artinya Node membaca file `.js` sebagai **ES module** (gaya penulisan JavaScript modern). Dengan begitu kamu bisa menulis `import express from "express"` seperti di pelajaran JavaScript modern. Tanpa baris ini Node 22 tetap bisa menjalankan file. Tetapi setiap server start, muncul peringatan `MODULE_TYPELESS_PACKAGE_JSON`.
+
+</Step>
+<Step title="Instal Express 5">
+
+```bash
+npm install express@5
+```
+
+npm mengunduh Express beserta library pendukungnya ke folder `node_modules`, lalu mencatatnya di `package.json`. Akhiran `@5` memastikan kamu mendapat Express versi 5, versi yang dipakai di seluruh kursus ini.
+
+</Step>
+<Step title="Tambahkan script dev dan start">
+
+**Script** adalah perintah pendek yang kamu beri nama, supaya tidak perlu mengetik perintah panjang berulang kali. Buka `package.json`, hapus script `test` bawaan, lalu isi bagian `scripts` seperti ini:
+
+```json title="package.json"
+{
+  "name": "belajar-api",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.3.0"
+  },
+  "type": "module"
+}
+```
+
+Angka versi Express di komputermu bisa sedikit berbeda. Yang penting diawali `^5`. Nanti kamu menjalankan script dengan `npm run dev` atau `npm run start`.
+
+</Step>
+</Steps>
+
+## Server pertama: src/server.js
+
+<Callout type="analogi" title="Membuka warung dan menunggu pembeli">
+
+Warung baru bisa melayani kalau pintunya dibuka dan menunya ditempel. Di kode server:
+
+- `express()` = menyiapkan warungnya,
+- `app.get(...)` = menempel satu menu: "kalau ada yang minta ini, layani begini",
+- `app.listen(3000)` = membuka pintu nomor 3000 lalu menunggu pembeli datang.
+
+**Port** adalah nomor pintu itu. Satu komputer punya banyak pintu, dan setiap program server memakai nomornya sendiri.
+
+</Callout>
+
+Buat folder `src`, lalu file `src/server.js`:
+
+```js title="src/server.js" showLineNumbers
+import express from "express";
+
+const app = express();
+const PORT = process.env.PORT ?? 3000;
+
+app.get("/api/health", (req, res) => {
+  res.json({ data: { status: "ok" } });
+});
+
+app.listen(PORT, (error) => {
+  if (error) throw error; // misalnya EADDRINUSE: port sudah dipakai
+  console.log(`Server jalan di http://localhost:${PORT}`);
+});
+```
+
+Baca kodenya baris demi baris:
+
+- Baris 1 mengambil library Express yang tadi kamu instal.
+- Baris 3: `express()` membuat objek `app`. Inilah aplikasi server kita.
+- Baris 4: `process.env.PORT ?? 3000` artinya "pakai nomor port dari **environment variable** `PORT` kalau ada, kalau tidak pakai 3000". Environment variable adalah pengaturan yang diberikan dari luar kode, misalnya dari terminal.
+- Baris 6–8 mendaftarkan **route** dengan `app.get(path, handler)`. Route adalah pasangan "alamat + method" dengan fungsi yang melayaninya. Kalau ada request `GET` ke `/api/health`, Express menjalankan fungsi **handler** (fungsi pelayan) itu.
+- Baris 10–13: `app.listen` membuka port dan mulai menunggu request. Kalau port gagal dibuka, Express 5 mengirim error ke parameter `error`. Kita lempar error itu dengan `throw` supaya server tidak gagal diam-diam.
+
+Jalankan server:
+
+```bash
+npm run dev
+```
+
+```txt
+> belajar-api@1.0.0 dev
+> node --watch src/server.js
+
+Server jalan di http://localhost:3000
+```
+
+Terminal ini sekarang sibuk menjalankan server, jadi buka terminal kedua untuk perintah lain. Lalu buka `http://localhost:3000/api/health` di browser. `localhost` artinya "komputer ini sendiri". Kamu akan melihat:
+
+```json
+{"data":{"status":"ok"}}
+```
+
+### node --watch: restart otomatis
+
+Script `dev` memakai `node --watch`. Fitur bawaan Node 22 ini mengawasi file kodemu. Setiap kali kamu menyimpan perubahan, terminal menampilkan `Restarting 'src/server.js'`, lalu server jalan lagi dengan kode baru. Kalau kodemu error, muncul pesan `Failed running 'src/server.js'. Waiting for file changes before restarting...`. Perbaiki kodenya, simpan, dan server hidup lagi.
+
+Untuk menghentikan server, tekan <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd> di terminalnya. Script `start` menjalankan server tanpa mengawasi file. Mode ini dipakai setelah aplikasi di-**deploy** (dipindahkan ke server sungguhan di internet).
+
+## Route, req, dan res
+
+<Callout type="analogi" title="Pesanan GoFood dan makanan yang diantar">
+
+Bayangkan kamu memesan lewat GoFood:
+
+- warung yang kamu pilih, misalnya `/warung/bu-sri` atau `/warung/pak-budi` = **params**, bagian alamat yang berganti-ganti,
+- catatan seperti "level 3, tanpa timun" = **query string**, opsi tambahan setelah tanda `?`,
+- daftar pesanan lengkap yang kamu isi di formulir = **body**, isi kiriman.
+
+Semua informasi itu terkumpul di `req` (request). Makanan yang diantar ke kamu adalah `res` (response).
+
+</Callout>
+
+Setiap handler menerima dua objek. `req` berisi semua yang dikirim client. `res` dipakai untuk membalas.
+
+| Bagian | Isi | Contoh |
+| --- | --- | --- |
+| `req.params` | Bagian dinamis path, ditulis `:nama` | `/api/halo/:nama` → `{ nama: "Andi" }` |
+| `req.query` | Query string setelah `?` | `?q=basis%20data` → `{ q: "basis data" }` |
+| `req.body` | Isi body request (butuh parser) | `{ title: "Belajar Express" }` |
+| `res.json(data)` | Kirim JSON, status bawaan 200 | `res.json({ data: task })` |
+| `res.status(code)` | Atur [status code](/glosarium#status-code), bisa dirangkai | `res.status(201).json(...)` |
+
+**Status code** adalah angka tiga digit yang memberi tahu hasil request, mirip status resi paket. 200 artinya berhasil, 201 artinya data baru berhasil dibuat, dan 404 artinya alamat tidak ditemukan. **Parser** di kolom `req.body` adalah pengubah teks menjadi objek, dibahas sebentar lagi.
+
+Supaya paham ketiganya, tambahkan tiga **route latihan** di bawah route health. Route ini hanya untuk coba-coba dan akan kita hapus di akhir pelajaran.
+
+### req.params: bagian path yang berubah-ubah
+
+```js title="src/server.js (tambahan)"
+app.get("/api/halo/:nama", (req, res) => {
+  res.json({ data: { pesan: `Halo, ${req.params.nama}!` } });
+});
+```
+
+Tanda titik dua di `:nama` artinya "bagian ini boleh diisi teks apa saja". Buka `http://localhost:3000/api/halo/Andi`, hasilnya `{"data":{"pesan":"Halo, Andi!"}}`. Express menaruh teks `Andi` ke `req.params.nama`.
+
+Satu hal yang sering bikin bingung: **semua nilai dari URL bertipe string** (teks). Kalau butuh angka, misalnya id tugas, ubah dulu dengan `Number(req.params.id)`.
+
+### req.query: filter dan opsi tambahan
+
+```js title="src/server.js (tambahan)"
+app.get("/api/cari", (req, res) => {
+  const { q, limit } = req.query;
+  res.json({ data: { q, limit, tipeLimit: typeof limit } });
+});
+```
+
+Query string adalah bagian URL setelah tanda `?`, berisi pasangan `nama=nilai` yang dipisah `&`. Baris 2 mengambil `q` dan `limit` dari `req.query`. Baris 3 mengirim balik nilainya beserta tipe data `limit`.
+
+Request ke `/api/cari?q=basis%20data&limit=5` membalas `{"data":{"q":"basis data","limit":"5","tipeLimit":"string"}}`. (`%20` adalah cara URL menulis spasi.) Lihat, `limit` bernilai `"5"` (string), bukan angka `5`. Tanpa query string, hasilnya hanya `{"data":{"tipeLimit":"undefined"}}`. Properti yang bernilai `undefined` dibuang saat diubah menjadi JSON.
+
+### req.body dan express.json()
+
+Request `POST` dipakai untuk mengirim data baru, dan datanya ditaruh di body. Coba route ini:
+
+```js title="src/server.js (tambahan)"
+app.post("/api/echo", (req, res) => {
+  const { title } = req.body;
+  res.status(201).json({ data: { title, diterima: req.body } });
+});
+```
+
+Route ini mengambil `title` dari body, lalu membalas dengan status 201 sambil menunjukkan isi body yang diterima. Kirim body JSON ke route itu (caranya ada di bagian pengujian di bawah). Server langsung membalas 500 dan terminal menampilkan:
+
+```txt
+TypeError: Cannot destructure property 'title' of 'req.body' as it is undefined.
+```
+
+<Callout type="analogi" title="Paket yang belum dibuka">
+
+Body datang ke server seperti paket kardus yang masih dilakban. Isinya ada, tetapi belum bisa dipakai. Harus ada petugas yang membuka kardus dan menata barangnya di meja. Di Express, petugas itu adalah `express.json()`. Ia membuka "kardus" teks JSON dan menaruh hasilnya di `req.body` sebagai objek.
+
+</Callout>
+
+Express tidak membaca body secara otomatis. Body datang sebagai aliran teks, dan perlu ada yang mengubahnya menjadi objek JavaScript. Itu tugas **middleware** `express.json()`. Pasang tepat di bawah `const PORT`:
+
+```js title="src/server.js" {6}
+import express from "express";
+
+const app = express();
+const PORT = process.env.PORT ?? 3000;
+
+app.use(express.json());
+```
+
+Kirim ulang request tadi. Sekarang balasannya `201 Created` dengan isi `{"data":{"title":"Belajar Express","diterima":{"title":"Belajar Express"}}}`.
+
+Ada satu syarat lagi. Client harus mengirim **header** `Content-Type: application/json`. Header adalah keterangan tambahan di luar body, mirip label "isi: dokumen" di kardus paket. Tanpa label itu, `express.json()` tidak tahu isinya JSON. Ia melewati request, dan `req.body` tetap `undefined`.
+
+## Middleware: fungsi di tengah jalan
+
+<Callout type="analogi" title="Satpam di gerbang kampus">
+
+Sebelum sampai ke ruang kelas, kamu melewati satpam di gerbang. Satpam bisa mencatat jam kedatanganmu, mengecek kartu mahasiswa, lalu mempersilakan masuk. Kalau ada yang tidak beres, satpam bisa menyuruhmu pulang saat itu juga.
+
+- satpam = **middleware**,
+- ruang kelas tujuan = route handler,
+- "silakan masuk" = `next()`,
+- "kamu tidak boleh masuk" = membalas langsung dengan `res`.
+
+Di kampus biasanya hanya ada satu satpam. Di Express, kamu bisa memasang beberapa middleware yang berjaga berurutan.
+
+</Callout>
+
+**Middleware** adalah fungsi `(req, res, next)` yang dijalankan berurutan sebelum route handler. Setiap middleware boleh membaca atau mengubah `req`. Setelah itu ia harus memilih satu dari dua hal:
+
+1. memanggil `next()` untuk lanjut ke fungsi berikutnya, atau
+2. langsung membalas dengan `res`.
+
+`app.use(fn)` memasang middleware untuk semua method dan semua path.
+
+<Flow nodes={["Request", "logger", "express.json()", "app.get(...)", "Respons"]} labels={["next()", "next()", "cocok?", "res.json()"]} caption="Express menjalankan middleware dan route dari atas ke bawah" />
+
+Mari buat middleware sendiri: logger yang mencatat setiap request. Taruh **di atas** `express.json()` supaya request dengan body rusak pun tetap tercatat.
+
+```js title="src/server.js" {6-13}
+import express from "express";
+
+const app = express();
+const PORT = process.env.PORT ?? 3000;
+
+app.use((req, res, next) => {
+  const mulai = Date.now();
+  res.on("finish", () => {
+    const durasi = Date.now() - mulai;
+    console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${durasi} ms)`);
+  });
+  next();
+});
+
+app.use(express.json());
+```
+
+`res.on("finish", ...)` menunda pencatatan sampai respons selesai dikirim, sehingga status code sudah diketahui. Setelah beberapa request, terminal server terlihat seperti ini:
+
+```txt
+GET /api/health -> 200 (6 ms)
+GET /api/halo/Andi -> 200 (1 ms)
+GET /api/cari?q=basis%20data&limit=5 -> 200 (0 ms)
+POST /api/echo -> 201 (4 ms)
+```
+
+<Callout type="warning" title="Lupa next() = request menggantung">
+
+Kalau middleware tidak memanggil `next()` dan tidak membalas dengan `res`, request berhenti di tengah jalan. Browser terus "loading" dan curl menunggu sampai timeout. Setiap jalur di middleware harus berakhir dengan `next()` atau `res.*`.
+
+</Callout>
+
+## Menguji API: browser, terminal, dan REST Client
+
+**Browser** adalah cara tercepat, tetapi hanya untuk `GET`: cukup ketik URL di address bar. Untuk `POST`, `PUT`, `PATCH`, dan `DELETE` kamu butuh alat lain. Pilih tab sesuai sistem operasimu. Di Windows, `curl` di PowerShell adalah alias `Invoke-WebRequest`, jadi panggil curl asli dengan `curl.exe`.
+
+<Tabs items={["PowerShell (Invoke-RestMethod)", "Windows (curl.exe)", "macOS / Linux (curl)"]}>
+<Tab>
+
+```powershell
+Invoke-RestMethod http://localhost:3000/api/health | ConvertTo-Json -Depth 5
+Invoke-RestMethod "http://localhost:3000/api/cari?q=basis%20data&limit=5" | ConvertTo-Json -Depth 5
+
+$body = @{ title = "Belajar Express" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/echo -ContentType "application/json" -Body $body | ConvertTo-Json -Depth 5
+```
+
+`Invoke-RestMethod` otomatis mengubah JSON menjadi objek PowerShell. Tanpa `| ConvertTo-Json`, objek bersarang tampil kurang jelas seperti `@{status=ok}`.
+
+</Tab>
+<Tab>
+
+```powershell
+curl.exe -i http://localhost:3000/api/health
+curl.exe "http://localhost:3000/api/cari?q=basis%20data&limit=5"
+
+'{"title":"Belajar Express"}' | curl.exe -X POST http://localhost:3000/api/echo -H "Content-Type: application/json" --data-binary "@-"
+```
+
+Body JSON dikirim lewat pipe (`--data-binary "@-"` artinya "baca dari input"). Kalau JSON ditulis langsung setelah `-d`, PowerShell bisa merusak tanda kutipnya dan server membalas 400 dengan pesan seperti `Unterminated string in JSON`.
+
+</Tab>
+<Tab>
+
+```bash
+curl -i http://localhost:3000/api/health
+curl "http://localhost:3000/api/cari?q=basis%20data&limit=5"
+
+curl -X POST http://localhost:3000/api/echo \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Belajar Express"}'
+```
+
+Flag `-i` menampilkan status dan header respons, `-X` memilih method, `-H` menambah header, dan `-d` mengirim body.
+
+</Tab>
+</Tabs>
+
+### REST Client di VS Code
+
+Cara paling nyaman adalah menyimpan request di file. Instal ekstensi **REST Client** (penerbit Huachao Mao) di VS Code, lalu buat file `requests.http` di root proyek:
+
+```http title="requests.http"
+@baseUrl = http://localhost:3000/api
+
+### Cek server hidup
+GET {{baseUrl}}/health
+
+### Params
+GET {{baseUrl}}/halo/Sari
+
+### Query string
+GET {{baseUrl}}/cari?q=basis%20data&limit=5
+
+### Body JSON
+POST {{baseUrl}}/echo
+Content-Type: application/json
+
+{
+  "title": "Belajar Express"
+}
+```
+
+Di atas setiap request muncul tautan kecil **Send Request**. Klik, dan respons lengkap (status, header, body) tampil di panel samping. Tanda `###` memisahkan request, sedangkan baris kosong memisahkan header dari body. Thunder Client dan Postman bekerja mirip; pakai yang paling kamu suka.
+
+## 404 catch-all: balas route nyasar dengan JSON
+
+Coba buka `http://localhost:3000/api/tidak-ada`. Express membalas status 404, tetapi isinya HTML:
+
+```html
+<pre>Cannot GET /api/tidak-ada</pre>
+```
+
+Aplikasi HP yang mengharapkan JSON akan gagal mem-parse balasan seperti ini. Solusinya: middleware tanpa path di **paling bawah**, setelah semua route. Karena Express mencocokkan dari atas ke bawah, middleware ini hanya tercapai kalau tidak ada route lain yang cocok.
+
+```js title="src/server.js (sebelum app.listen)"
+app.use((req, res) => {
+  res.status(404).json({
+    error: { message: "Route tidak ditemukan", code: "ROUTE_NOT_FOUND" },
+  });
+});
+```
+
+Sekarang `curl.exe -i http://localhost:3000/api/tidak-ada` membalas `HTTP/1.1 404 Not Found` dengan body `{"error":{"message":"Route tidak ditemukan","code":"ROUTE_NOT_FOUND"}}`. Format `{ error: { message, code } }` ini akan dipakai untuk semua error di API kita.
+
+<Callout type="danger" title='app.get("*") error di Express 5'>
+
+Tutorial lama sering menulis `app.get("*", ...)` untuk 404. Di Express 5, server langsung berhenti dengan `PathError [TypeError]: Missing parameter name at index 1: *`. Pakai `app.use((req, res) => ...)` tanpa path seperti di atas.
+
+</Callout>
+
+## Merapikan: kode akhir pelajaran ini
+
+Route latihan (`/api/halo/:nama`, `/api/cari`, `/api/echo`) sudah selesai tugasnya. Hapus ketiganya agar pelajaran berikutnya dimulai dari keadaan yang bersih. Hapus juga request latihannya dari `requests.http` dan sisakan request health. Isi akhir `src/server.js`:
+
+```js title="src/server.js" showLineNumbers
+import express from "express";
+
+const app = express();
+const PORT = process.env.PORT ?? 3000;
+
+// Middleware logger buatan sendiri
+app.use((req, res, next) => {
+  const mulai = Date.now();
+  res.on("finish", () => {
+    const durasi = Date.now() - mulai;
+    console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${durasi} ms)`);
+  });
+  next();
+});
+
+// Ubah body JSON menjadi objek di req.body
+app.use(express.json());
+
+app.get("/api/health", (req, res) => {
+  res.json({ data: { status: "ok" } });
+});
+
+// 404 catch-all: harus paling bawah, setelah semua route
+app.use((req, res) => {
+  res.status(404).json({
+    error: { message: "Route tidak ditemukan", code: "ROUTE_NOT_FOUND" },
+  });
+});
+
+app.listen(PORT, (error) => {
+  if (error) throw error; // misalnya EADDRINUSE: port sudah dipakai
+  console.log(`Server jalan di http://localhost:${PORT}`);
+});
+```
+
+<FileTree title="belajar-api" tree={`
+node_modules/
+src/
+  * server.js # satu-satunya file kode untuk sekarang
+package-lock.json
+package.json # "type": "module", script dev & start
+requests.http # opsional, untuk REST Client
+`} />
+
+## Kesalahan umum
+
+Pesan error di bawah ini diambil dari server sungguhan, jadi kamu akan mengenalinya saat muncul.
+
+| Pesan / gejala | Penyebab | Cara memperbaiki |
+| --- | --- | --- |
+| `Error: listen EADDRINUSE: address already in use :::3000` | Port 3000 sudah dipakai, biasanya server lama di terminal lain | Tekan <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd> di terminal lama, atau jalankan di port lain |
+| Halaman HTML `Cannot GET /api/helth` | Path salah ketik, method salah, atau 404 catch-all belum dipasang | Cek ejaan path dan method; pasang catch-all JSON |
+| `Cannot destructure property 'title' of 'req.body' as it is undefined` | `express.json()` belum dipasang atau header `Content-Type` bukan JSON | Pasang `app.use(express.json())` sebelum route dan kirim header yang benar |
+| 400 dengan `SyntaxError: ... in JSON at position ...` | Body bukan JSON valid, misalnya `{title:x}` tanpa tanda kutip | Perbaiki body; nama properti dan string JSON wajib memakai tanda kutip ganda |
+| `Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'express'` | Belum `npm install` atau terminal berada di folder lain | Jalankan `npm install express@5` di folder `belajar-api` |
+| Request "loading" terus | Middleware lupa `next()` atau handler tidak membalas | Pastikan setiap jalur memanggil `next()` atau `res.*` |
+
+Kalau kamu lupa terminal mana yang menjalankan server lama, cari prosesnya lewat nomor port:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+Get-NetTCPConnection -LocalPort 3000 -State Listen | Select-Object OwningProcess
+Stop-Process -Id 12345   # ganti dengan angka OwningProcess
+
+# atau jalankan sementara di port lain
+$env:PORT = 4000; npm run dev
+```
+
+</Tab>
+<Tab>
+
+```bash
+lsof -i :3000          # lihat kolom PID
+kill 12345             # ganti dengan PID tadi
+
+# atau jalankan sementara di port lain
+PORT=4000 npm run dev
+```
+
+</Tab>
+</Tabs>
+
+## Latihan
+
+<Exercise title="Kalkulator lewat params" difficulty="mudah" hints={["Ambil `a` dan `b` dari `req.params`.", "Ingat, nilai dari URL selalu string. Coba lihat hasil `\"2\" + \"3\"`."]}>
+
+Tambahkan route `GET /api/hitung/:a/:b` yang membalas jumlah kedua angka. Request ke `/api/hitung/2/3` harus menghasilkan `{"data":{"a":2,"b":3,"hasil":5}}`, bukan `"23"`.
+
+<Solution>
+
+```js title="src/server.js (sebelum 404 catch-all)"
+app.get("/api/hitung/:a/:b", (req, res) => {
+  const a = Number(req.params.a);
+  const b = Number(req.params.b);
+  res.json({ data: { a, b, hasil: a + b } });
+});
+```
+
+Tanpa `Number()`, `req.params.a + req.params.b` menggabungkan dua string menjadi `"23"`. Route ini juga harus ditulis **di atas** 404 catch-all; kalau di bawahnya, request tidak akan pernah sampai. Hapus lagi setelah mencoba.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Middleware khusus satu route" difficulty="sedang" hints={["Middleware bisa ditaruh di antara path dan handler: `app.get(path, cekToken, handler)`.", "Jangan lupa `return` saat membalas 401."]}>
+
+Buat middleware `cekToken` yang hanya dipasang di route `GET /api/rahasia`. Kalau query `token` bukan `kampus123`, balas 401 dengan `{ error: { message: "Token salah atau tidak ada", code: "UNAUTHORIZED" } }`. Kalau benar, lanjut ke handler yang membalas `{ data: { pesan: "Selamat datang di area rahasia" } }`.
+
+<Solution>
+
+```js title="src/server.js (sebelum 404 catch-all)"
+function cekToken(req, res, next) {
+  if (req.query.token !== "kampus123") {
+    return res.status(401).json({
+      error: { message: "Token salah atau tidak ada", code: "UNAUTHORIZED" },
+    });
+  }
+  next();
+}
+
+app.get("/api/rahasia", cekToken, (req, res) => {
+  res.json({ data: { pesan: "Selamat datang di area rahasia" } });
+});
+```
+
+`/api/rahasia` membalas 401, sedangkan `/api/rahasia?token=kampus123` membalas 200. Middleware yang dipasang per route seperti ini nanti dipakai untuk validasi dan login. Token di query string hanya untuk latihan; API sungguhan mengirim token lewat header. Hapus route ini setelah selesai.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Request `GET /api/tasks/7` masuk ke route `/api/tasks/:id`. Kenapa `req.params.id` perlu dibungkus `Number()`?",
+    options: ["Karena Express mengirimnya sebagai objek Date", "Karena semua nilai dari URL bertipe string", "Karena JSON tidak mendukung angka", "Supaya route berjalan lebih cepat"],
+    answer: 1,
+    explain: "Params dan query selalu string (`\"7\"`). Tanpa `Number()`, perbandingan `task.id === req.params.id` selalu gagal karena `7 !== \"7\"`.",
+  },
+  {
+    q: "Client mengirim body JSON, tetapi `req.body` bernilai `undefined`. Penyebab paling mungkin adalah…",
+    options: ["`express.json()` belum dipasang atau header `Content-Type` bukan `application/json`", "Port server salah", "Handler memakai `res.json` alih-alih `res.send`", "Server tidak dijalankan dengan `--watch`"],
+    answer: 0,
+    explain: "Express tidak mem-parse body sendiri. `express.json()` mengisi `req.body`, tetapi hanya untuk request ber-header `Content-Type: application/json`. Port, `res.json`, dan `--watch` tidak berhubungan dengan body.",
+  },
+  {
+    q: "Di mana middleware 404 catch-all `app.use((req, res) => ...)` harus didaftarkan?",
+    options: ["Paling atas, sebelum logger", "Tepat setelah `express.json()`", "Setelah semua route", "Di dalam callback `app.listen`"],
+    answer: 2,
+    explain: "Express mencocokkan dari atas ke bawah. Kalau catch-all ditaruh di atas, semua request dibalas 404 sebelum sempat mencapai route yang benar.",
+  },
+  {
+    q: "Apa yang terjadi pada request ketika middleware berikut terpasang?",
+    code: "app.use((req, res, next) => {\n  console.log(req.method, req.url);\n});",
+    options: ["Express otomatis lanjut ke route berikutnya", "Server langsung crash", "Client mendapat 404", "Request menggantung sampai timeout"],
+    answer: 3,
+    explain: "Middleware ini tidak memanggil `next()` dan tidak membalas, jadi request tidak pernah selesai. Express tidak melanjutkan secara otomatis.",
+  },
+  {
+    q: "Terminal menampilkan `Error: listen EADDRINUSE: address already in use :::3000`. Artinya…",
+    options: ["Ada salah ketik di `server.js`", "Express belum terinstal", "Port 3000 sedang dipakai proses lain", "Route `/api/health` tidak ditemukan"],
+    answer: 2,
+    explain: "EADDRINUSE berarti alamat atau port sudah dipakai, biasanya oleh server lama yang masih jalan. Hentikan prosesnya atau jalankan di port lain dengan `PORT`.",
+  },
+]} />
+
+## Ringkasan
+
+- Proyek Node dimulai dengan `npm init -y`, lalu `npm pkg set type=module` dan `npm install express@5`.
+- `app.get(path, handler)` mendaftarkan route, dan `app.listen(PORT, ...)` membuka port. `npm run dev` memakai `node --watch` agar server restart otomatis.
+- `req.params`, `req.query`, dan `req.body` adalah tiga sumber input. Nilai dari URL selalu string, sedangkan body butuh `express.json()` dan header `Content-Type: application/json`.
+- `res.json()` mengirim JSON, dan `res.status(kode)` mengatur status code.
+- Middleware adalah fungsi `(req, res, next)` yang berjalan berurutan; panggil `next()` atau balas dengan `res`.
+- 404 catch-all dipasang paling bawah dan membalas `{ error: { message, code } }`.
+- Uji API dengan browser (khusus GET), `Invoke-RestMethod`/`curl.exe`/`curl`, atau REST Client.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Server `belajar-api` dengan health check, logger, dan 404 JSON ini adalah kerangka backend Aplikasi Tugas & Catatan Kuliah. Di pelajaran berikutnya, [CRUD API dengan Data In-Memory](/belajar/crud-backend/crud-in-memory), kamu menambahkan endpoint `/api/tasks` lengkap: membuat, membaca, mengubah, dan menghapus tugas. Simpan `requests.http`, karena kita akan terus menambah request ke sana.
+
+</Callout>

@@ -1,0 +1,820 @@
+## Pengantar
+
+Setelah pelajaran [Validasi & Error Handling](/belajar/crud-backend/validasi-error-handling), API tugas kuliah kita sudah rapi. Input diperiksa Zod, dan setiap error dibalas dalam format JSON yang sama. Masih ada satu masalah: `GET /api/tasks` selalu mengirim semua tugas.
+
+Dengan 4 tugas contoh, hal itu belum terasa. Sekarang bayangkan satu semester penuh, dengan tugas dari 8 mata kuliah. Aplikasi HP harus mengunduh ratusan baris, padahal layarnya hanya memuat sekitar 10. Aplikasi juga harus menyaring "yang belum selesai" atau mencari kata "kuis" sendiri. Hasilnya boros kuota dan lambat di HP kelas menengah.
+
+<Callout type="analogi" title="Seperti minta buku di perpustakaan kampus">
+
+Kamu tidak meminta petugas perpustakaan membawa 10.000 buku ke mejamu. Kamu bilang, "Buku yang judulnya ada kata 'basis data', yang sedang tidak dipinjam, urut dari judul, tunjukkan 10 dulu."
+
+- "Judulnya ada kata 'basis data'" = search (pencarian).
+- "Yang sedang tidak dipinjam" = filter (penyaring).
+- "Urut dari judul" = sort (pengurutan).
+- "Tunjukkan 10 dulu" = pagination (pembagian per halaman).
+
+Bedanya, petugas bisa menebak maksudmu kalau permintaanmu kurang jelas. Server tidak menebak. Permintaan yang tidak sesuai aturan akan ditolak.
+
+</Callout>
+
+Di pelajaran ini, server belajar menjawab permintaan yang lebih spesifik lewat **query string**:
+
+```http
+GET /api/tasks?page=2&limit=5&done=false&q=kuis&sort=title HTTP/1.1
+Host: localhost:3000
+```
+
+Artinya: "Beri aku halaman ke-2, isi 5 tugas per halaman. Hanya yang belum selesai, judulnya mengandung kata kuis, diurutkan berdasarkan judul." Server membalas potongan data itu, ditambah **metadata** (data tentang data, misalnya jumlah total dan jumlah halaman). Dari metadata, aplikasi tahu apakah masih ada halaman berikutnya.
+
+<Flow nodes={["Query string", "validate({ query })", "where, orderBy, skip, take", "$transaction", "{ data, meta }"]} labels={["string mentah", "angka & boolean", "findMany + count", "kirim JSON"]} caption="Alur GET /api/tasks yang baru" />
+
+Cara membaca diagram di atas: query string masuk sebagai teks mentah. Middleware `validate` mengubahnya menjadi angka dan boolean. Nilai itu disusun menjadi pilihan query Prisma. Prisma lalu mengambil data dan menghitung totalnya sekaligus, dan server mengirim keduanya sebagai JSON.
+
+Kita mulai dari kode akhir pelajaran validasi: `src/server.js`, `src/schemas.js`, `src/middleware/validate.js`, `src/lib/http-error.js`, dan `src/middleware/error-handler.js`. Database dan Prisma 7 tetap sama seperti di pelajaran [Prisma & SQLite](/belajar/crud-backend/prisma-sqlite).
+
+## Query string: semua nilainya teks
+
+<Callout type="analogi" title="Seperti catatan di pesanan GoFood">
+
+Saat memesan GoFood, kamu menulis catatan: "level 2, tanpa sambal". Catatan itu selalu berupa tulisan. Penjual yang harus membaca "2" sebagai angka level pedas.
+
+- Catatan pesanan = query string.
+- Penjual yang menafsirkan catatan = server yang memvalidasi dan mengubah nilainya.
+
+Bedanya, penjual bisa menelepon kalau catatanmu aneh. Server langsung membalas error 400.
+
+</Callout>
+
+[Query string](/glosarium#query-string) adalah bagian URL setelah tanda `?`. Setiap pasangan `kunci=nilai` dipisahkan tanda `&`. Express 5 memakai pembaca query string bawaan Node (`node:querystring`). Untuk URL di atas, `req.query` berisi:
+
+```js
+{ page: "2", limit: "5", done: "false", q: "kuis", sort: "title" }
+```
+
+Perhatikan bahwa semua nilainya string (teks), termasuk `"2"` dan `"false"`. Kalau satu kunci muncul dua kali, misalnya `?done=true&done=false`, nilainya berubah menjadi array `["true", "false"]`. Karena itu query string harus divalidasi dan diubah ke tipe yang benar sebelum dipakai. Caranya sama seperti memvalidasi body di pelajaran sebelumnya.
+
+Berikut parameter yang akan kita dukung:
+
+| Parameter | Contoh | Arti | Default |
+| --- | --- | --- | --- |
+| `page` | `page=2` | Nomor halaman, mulai dari 1 | `1` |
+| `limit` | `limit=5` | Jumlah tugas per halaman, maksimal 50 | `10` |
+| `done` | `done=false` | Filter status selesai | semua |
+| `priority` | `priority=tinggi` | Filter prioritas: `rendah`, `sedang`, `tinggi` | semua |
+| `courseId` | `courseId=1` | Filter mata kuliah | semua |
+| `q` | `q=kuis` | Cari kata di judul | tanpa pencarian |
+| `sort` | `sort=title` | `createdAt`, `-createdAt`, `title`, atau `priority` | `-createdAt` |
+
+Tanda minus di depan `-createdAt` berarti urutan menurun (terbaru dulu). Cara ini umum dipakai API publik. Cukup satu parameter untuk menyebut kolom sekaligus arah urutannya.
+
+## Offset pagination: skip dan take
+
+<Callout type="analogi" title="Seperti membuka katalog belanja">
+
+Katalog minimarket berisi 5 produk per halaman. Untuk melihat halaman 3, kamu melewati 2 halaman pertama, yaitu 10 produk. Lalu kamu membaca 5 produk berikutnya.
+
+- Nomor halaman = `page`.
+- Jumlah produk per halaman = `limit`.
+- Produk yang dilewati = `skip`.
+- Produk yang dibaca = `take`.
+
+Bedanya, halaman katalog sudah dicetak tetap. Halaman API dihitung ulang setiap kali diminta. Kalau ada data baru, isi tiap halaman bisa bergeser.
+
+</Callout>
+
+[Pagination](/glosarium#pagination) memecah hasil menjadi halaman-halaman kecil. Cara paling sederhana disebut **offset pagination**: lewati sejumlah baris, lalu ambil sejumlah baris berikutnya. Di Prisma, "lewati" ditulis `skip` dan "ambil" ditulis `take`:
+
+```txt
+skip = (page - 1) * limit
+take = limit
+```
+
+Contoh: untuk `page=2` dan `limit=5`, `skip` bernilai (2 - 1) × 5 = 5. Jadi 5 tugas pertama dilewati, lalu 5 tugas berikutnya diambil. Berikut hasilnya untuk 20 tugas yang diurutkan dari terbaru:
+
+| `page` | `limit` | `skip` | Tugas yang diambil |
+| --- | --- | --- | --- |
+| 1 | 5 | 0 | urutan ke-1 sampai 5 |
+| 2 | 5 | 5 | urutan ke-6 sampai 10 |
+| 4 | 5 | 15 | urutan ke-16 sampai 20 |
+| 5 | 5 | 20 | kosong, datanya sudah habis |
+
+Client perlu tahu kapan harus berhenti memuat atau kapan menampilkan tombol "Berikutnya". Karena itu server juga mengirim jumlah total data yang cocok dengan filter. Jumlah halaman dihitung dengan `Math.ceil(total / limit)`. `Math.ceil` membulatkan ke atas. Contohnya, 20 tugas dengan `limit=5` menjadi 4 halaman. 11 tugas dengan `limit=3` juga menjadi 4 halaman, dan halaman terakhir berisi 2 tugas.
+
+## Memvalidasi query dengan Zod
+
+Query string harus diperiksa dan diubah tipenya sebelum dipakai. Kita memakai Zod, sama seperti saat memvalidasi body. Sebelum menulis schema-nya, kenali dulu satu jebakan yang sering membuat filter `done` terbalik.
+
+### Jebakan z.coerce.boolean
+
+<Callout type="analogi" title="Seperti petugas yang hanya melihat kotak terisi">
+
+Di formulir ada kotak "Sudah bayar UKT?". Petugas yang malas hanya mengecek apakah kotak itu ada tulisannya. Mahasiswa yang menulis "belum" pun dianggap sudah bayar, karena kotaknya tidak kosong.
+
+- Petugas malas = `z.coerce.boolean()`.
+- Tulisan "belum" = string `"false"`.
+
+Bedanya, petugas sungguhan mungkin sadar ada yang aneh. JavaScript tidak sadar, dan tidak memunculkan error apa pun.
+
+</Callout>
+
+Untuk `page` dan `limit`, kita sudah kenal `z.coerce.number()`. Fungsi ini mengubah `"2"` menjadi angka `2`. Godaannya adalah memakai `z.coerce.boolean()` untuk `done`. Ini hasil aslinya di Zod 4.6.7:
+
+```js
+import { z } from "zod";
+
+z.coerce.boolean().parse("true"); // true
+z.coerce.boolean().parse("false"); // true  ← salah!
+z.coerce.boolean().parse("0"); // true
+z.coerce.boolean().parse(""); // false
+Boolean("false"); // true
+```
+
+`z.coerce.boolean()` hanya memanggil `Boolean(input)`. Di JavaScript, setiap string yang tidak kosong dianggap *truthy* (bernilai benar), termasuk `"false"` dan `"0"`. Akibatnya, `?done=false` malah menampilkan tugas yang sudah selesai. Parahnya, bug ini tidak memunculkan error apa pun.
+
+Zod 4 punya `z.stringbool()` yang dibuat khusus untuk teks seperti ini. Bawaannya menerima `true/1/yes/on/y/enabled` dan `false/0/no/off/n/disabled`, tanpa peduli huruf besar atau kecil. Kita persempit menjadi `"true"` dan `"false"` saja supaya aturan API jelas:
+
+```js
+const done = z.stringbool({ truthy: ["true"], falsy: ["false"], error: "done harus true atau false" });
+
+done.parse("false"); // false
+done.parse("true"); // true
+done.parse("1"); // ZodError: done harus true atau false
+```
+
+Dengan pengaturan ini, hanya `"true"` dan `"false"` yang diterima. Nilai lain, seperti `"1"`, ditolak dengan pesan error yang kita tulis.
+
+Alternatif yang sama amannya adalah `z.enum(["true", "false"]).transform((v) => v === "true")`. Pilih salah satu dan pakai secara konsisten.
+
+### Schema query yang lengkap
+
+Tambahkan schema berikut di bagian bawah `src/schemas.js`. Konstanta `priority` sudah ada dari pelajaran validasi, jadi tinggal dipakai ulang.
+
+```js title="src/schemas.js (tambahan)"
+export const TASK_SORTS = ["createdAt", "-createdAt", "title", "priority"];
+
+export const listTasksQuerySchema = z.object({
+  page: z.coerce
+    .number({ error: "page harus berupa angka" })
+    .int("page harus bilangan bulat")
+    .min(1, "page minimal 1")
+    .default(1),
+  limit: z.coerce
+    .number({ error: "limit harus berupa angka" })
+    .int("limit harus bilangan bulat")
+    .min(1, "limit minimal 1")
+    .max(50, "limit maksimal 50")
+    .default(10),
+  done: z
+    .stringbool({ truthy: ["true"], falsy: ["false"], error: "done harus true atau false" })
+    .optional(),
+  priority: priority.optional(),
+  courseId: z.coerce
+    .number({ error: "courseId harus berupa angka" })
+    .int("courseId harus bilangan bulat")
+    .positive("courseId harus lebih dari 0")
+    .optional(),
+  q: z.string({ error: "q harus berupa teks" }).trim().max(100, "q maksimal 100 karakter").optional(),
+  sort: z
+    .enum(TASK_SORTS, { error: `sort harus salah satu dari: ${TASK_SORTS.join(", ")}` })
+    .default("-createdAt"),
+});
+```
+
+Cara membaca schema ini:
+
+- `page` dan `limit` diubah dari teks menjadi angka bulat. `page` minimal 1. `limit` antara 1 dan 50.
+- `done` memakai `z.stringbool()` tadi. `.optional()` artinya parameter ini boleh tidak dikirim.
+- `courseId` harus angka bulat lebih dari 0.
+- `q` adalah kata pencarian, maksimal 100 karakter.
+- `sort` hanya boleh salah satu isi `TASK_SORTS`.
+
+Beberapa keputusan penting di schema ini:
+
+- `.default()` hanya dipakai kalau parameternya tidak dikirim (`undefined`). Contohnya, `listTasksQuerySchema.parse({})` menghasilkan `{ page: 1, limit: 10, sort: '-createdAt' }`.
+- `limit` dibatasi maksimal 50. Tanpa batas, siapa pun bisa meminta `limit=1000000` dan memaksa server membaca seluruh tabel. Nilai di atas 50 kita tolak dengan status 400. Kita tidak diam-diam menurunkannya ke 50, supaya client sadar ada yang salah.
+- `q` di-trim (spasi di awal dan akhir dibuang), jadi `"  kuis "` menjadi `"kuis"`. Hasil `parse({ page: "2", limit: "5", done: "false", q: "  kuis ", sort: "title" })` adalah `{ page: 2, limit: 5, done: false, q: 'kuis', sort: 'title' }`.
+- `page=` yang kosong ditolak dengan pesan "page minimal 1", karena `Number("")` bernilai 0. `page=2.5` ditolak dengan pesan "page harus bilangan bulat".
+
+<Callout type="info" title="validate() sudah siap untuk query">
+
+Middleware `validate` dari pelajaran sebelumnya sudah bisa memvalidasi `query`. Di Express 5, `req.query` adalah getter, yaitu properti yang hanya bisa dibaca dan tidak bisa ditimpa dengan `=`. Karena itu `validate` memakai `Object.defineProperty` untuk menggantinya. Setelah lolos validasi, `req.query.page` sudah berupa number dan `req.query.done` berupa boolean.
+
+</Callout>
+
+## Dari query ke Prisma: where, orderBy, skip, take
+
+Sekarang ganti route list tugas di `src/server.js`. Jangan lupa menambahkan `listTasksQuerySchema` ke import.
+
+```diff title="src/server.js"
+ import {
+   idParamsSchema,
+   createTaskSchema,
+   replaceTaskSchema,
+   updateTaskSchema,
+   createCourseSchema,
++  listTasksQuerySchema,
+ } from "./schemas.js";
+@@
+ // ---------- Tasks ----------
+-app.get("/api/tasks", async (req, res) => {
+-  const tasks = await prisma.task.findMany({ orderBy: { id: "asc" } });
+-  res.json({ data: tasks, meta: { total: tasks.length } });
+-});
++const TASK_ORDER_BY = {
++  createdAt: [{ createdAt: "asc" }, { id: "asc" }],
++  "-createdAt": [{ createdAt: "desc" }, { id: "desc" }],
++  title: [{ title: "asc" }, { id: "asc" }],
++  priority: [{ priority: "asc" }, { id: "asc" }],
++};
++
++app.get("/api/tasks", validate({ query: listTasksQuerySchema }), async (req, res) => {
++  const { page, limit, done, priority, courseId, q, sort } = req.query;
++
++  const where = {
++    done,
++    priority,
++    courseId,
++    title: q ? { contains: q } : undefined,
++  };
++
++  const [tasks, total] = await prisma.$transaction([
++    prisma.task.findMany({
++      where,
++      orderBy: TASK_ORDER_BY[sort],
++      skip: (page - 1) * limit,
++      take: limit,
++    }),
++    prisma.task.count({ where }),
++  ]);
++
++  res.json({
++    data: tasks,
++    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
++  });
++});
+```
+
+Baris yang diawali `-` dihapus, dan baris yang diawali `+` ditambahkan. Route baru ini bekerja dalam empat langkah:
+
+1. `validate({ query: listTasksQuerySchema })` memeriksa query string dan mengubah nilainya ke tipe yang benar.
+2. Objek `where` menyusun filter dari nilai query.
+3. `prisma.$transaction` mengambil satu halaman data dan menghitung total data sekaligus.
+4. `res.json` mengirim data beserta metadata halaman.
+
+Berikut penjelasan tiap bagiannya.
+
+**Filter dengan `where`.** Prisma mengabaikan properti yang bernilai `undefined`, sama seperti saat PATCH di pelajaran Prisma. Kalau client tidak mengirim `priority`, objek `where` tetap berisi `priority: undefined`, dan filter itu tidak dipakai. Lain halnya dengan `done: false`. Nilai `false` bukan `undefined`, jadi Prisma benar-benar menyaring tugas yang belum selesai. Semua filter digabung dengan AND, artinya tugas harus memenuhi semuanya.
+
+**Urutan dengan `orderBy`.** Objek `TASK_ORDER_BY` menerjemahkan nilai `sort` menjadi `orderBy` Prisma. Setiap urutan punya kolom kedua, yaitu `id`, sebagai *tie-breaker* (penentu urutan kalau nilainya seri). Mirip lomba lari: kalau dua pelari finis bersamaan, juri butuh aturan tambahan untuk menentukan siapa di depan. Tanpa `id`, dua tugas dengan `createdAt` yang sama bisa muncul dalam urutan acak. Akibatnya, satu tugas bisa tampil di halaman 1 sekaligus halaman 2. Kasus ini benar-benar terjadi di proyek kita. `createMany` di seed nanti membuat 16 tugas dengan `createdAt` yang persis sama sampai milidetik. Urutan `priority` kebetulan cocok secara abjad, karena `rendah < sedang < tinggi`.
+
+**Total dengan `$transaction`.** [Transaction](/glosarium#transaction) adalah sekelompok query yang dijalankan sebagai satu paket. `prisma.$transaction([...])` menjalankan `findMany` dan `count` dalam satu paket, lalu mengembalikan hasilnya sebagai array dengan urutan yang sama. Keduanya memakai `where` yang sama. Jadi `total` selalu sesuai dengan data yang difilter, bukan jumlah seluruh tabel.
+
+**Metadata.** Respons kini berbentuk `{ data, meta: { page, limit, total, totalPages } }`. Kalau tidak ada data yang cocok, `total` bernilai 0 dan `totalPages` juga 0.
+
+### Melihat SQL yang dihasilkan
+
+Kamu bisa mengintip SQL yang sebenarnya dikirim ke SQLite. Untuk sementara, ubah `src/lib/prisma.js` menjadi `new PrismaClient({ adapter, log: ["query"] })`. Opsi `log` menyuruh Prisma mencetak setiap query ke terminal. Untuk request `?done=false&q=kuis&limit=2&page=2`, terminal server mencetak baris berikut (daftar kolom dipangkas supaya pendek):
+
+```txt
+prisma:query SELECT `main`.`Task`.`id`, `main`.`Task`.`title`, ... FROM `main`.`Task` WHERE (`main`.`Task`.`done` = ? AND `main`.`Task`.`title` LIKE ('%' || ? || '%')) ORDER BY `main`.`Task`.`createdAt` DESC, `main`.`Task`.`id` DESC LIMIT ? OFFSET ?
+prisma:query SELECT COUNT(*) AS `_count$_all` FROM (SELECT `main`.`Task`.`id` FROM `main`.`Task` WHERE (`main`.`Task`.`done` = ? AND `main`.`Task`.`title` LIKE ('%' || ? || '%')) LIMIT ? OFFSET ?) AS `sub`
+prisma:query COMMIT
+```
+
+Cara membaca log ini:
+
+- `skip` dan `take` menjadi `LIMIT ? OFFSET ?`.
+- `contains` menjadi `LIKE '%...%'`.
+- Nilai dari client dikirim sebagai parameter `?`, bukan ditempel langsung ke teks SQL. Cara ini membuat query aman dari SQL injection (serangan dengan menyisipkan perintah SQL lewat input).
+
+Kembalikan `log` seperti semula setelah selesai mengintip, karena log ini sangat ramai.
+
+## Search dengan contains di SQLite
+
+Filter `title: { contains: q }` mencari judul yang mengandung teks `q` di posisi mana pun. Cara kerjanya mirip <Kbd>Ctrl</Kbd> + <Kbd>F</Kbd> di browser: kata "kuis" ditemukan di awal, tengah, atau akhir judul. Ada tiga hal yang perlu kamu tahu khusus untuk SQLite.
+
+Pertama, `LIKE` di SQLite tidak membedakan huruf besar dan kecil untuk huruf ASCII (huruf Latin biasa A–Z). `?q=kuis` dan `?q=KUIS` sama-sama menemukan 8 tugas "Kuis mingguan". Huruf di luar ASCII, misalnya `É`, tetap dibedakan besar-kecilnya. Judul tugas berbahasa Indonesia jarang terkena masalah ini.
+
+Kedua, di PostgreSQL kamu akan melihat `contains: q, mode: "insensitive"`. Opsi `mode` tidak ada untuk SQLite. Kalau dicoba, Prisma 7 langsung menolak sebelum query dikirim (daftar opsi dipangkas):
+
+```txt
+PrismaClientValidationError:
+Invalid `prisma.task.findMany()` invocation:
+
+{
+  where: {
+    title: {
+      contains: "kuis",
+      mode: "insensitive",
+      ~~~~
+?     equals?: String | StringFieldRefInput,
+?     startsWith?: String | StringFieldRefInput,
+?     endsWith?: String | StringFieldRefInput,
+      ...
+    }
+  }
+}
+
+Unknown argument `mode`. Did you mean `lte`? Available options are marked with ?.
+```
+
+Ketiga, karakter `%` dan `_` adalah wildcard di `LIKE`. Wildcard adalah karakter yang cocok dengan teks apa saja, mirip kartu joker. Saat diuji dengan Prisma 7.10 dan SQLite, `contains: "%"` maupun `contains: "_"` sama-sama mengembalikan 20 tugas, karena keduanya tidak di-escape (tidak diperlakukan sebagai huruf biasa). Untuk aplikasi tugas kuliah, akibatnya hanya hasil pencarian yang terlalu luas, bukan celah keamanan. Kalau kelak butuh pencarian persis, kamu bisa menolak kedua karakter itu di schema `q`. Pilihan lain, pakai query SQL mentah dengan klausa `ESCAPE`.
+
+## Menambah data contoh
+
+Empat tugas terlalu sedikit untuk mencoba pagination. Tambahkan 16 tugas di `prisma/seed.js`, tepat setelah tugas "Daftar ulang semester":
+
+```diff title="prisma/seed.js"
+ await prisma.task.create({ data: { title: "Daftar ulang semester" } });
+ 
++const tambahan = [];
++for (let minggu = 1; minggu <= 8; minggu++) {
++  tambahan.push({
++    title: `Rangkuman pertemuan ${minggu} Basis Data`,
++    courseId: basisData.id,
++    done: minggu <= 5,
++    priority: minggu % 3 === 0 ? "tinggi" : "sedang",
++  });
++  tambahan.push({
++    title: `Kuis mingguan ${minggu} Pemrograman Mobile`,
++    courseId: mobile.id,
++    done: minggu <= 3,
++    priority: minggu % 4 === 0 ? "tinggi" : "rendah",
++  });
++}
++await prisma.task.createMany({ data: tambahan });
++
+ const total = await prisma.task.count();
+```
+
+Cara membaca tambahan ini:
+
+- Perulangan `for` berjalan 8 kali, satu kali untuk tiap minggu kuliah.
+- Setiap putaran menambah dua tugas: satu rangkuman Basis Data dan satu kuis Pemrograman Mobile.
+- `done` dan `priority` diisi berdasarkan nomor minggu, supaya datanya bervariasi. Contohnya, `minggu % 3 === 0` bernilai benar untuk minggu 3 dan 6.
+- `createMany` menyisipkan semua 16 baris dalam satu perintah.
+
+Supaya `id` kembali mulai dari 1, reset database development, lalu jalankan seed:
+
+```bash
+npx prisma migrate reset
+npx prisma db seed
+```
+
+```txt
+Seed selesai: 2 mata kuliah (Basis Data, Pemrograman Mobile), 20 tugas
+```
+
+`migrate reset` menghapus semua data, jadi pakai hanya di database development. Tugas `id` 1 sampai 4 sama seperti sebelumnya. Tugas `id` 5 sampai 20 adalah tugas baru. Dari 20 tugas itu, 11 belum selesai, 5 berprioritas tinggi, dan 10 milik Basis Data (`courseId` 1).
+
+## Mencoba hasilnya
+
+Jalankan `npm run dev`, lalu coba beberapa kombinasi dari terminal kedua. Tanda `&` punya arti khusus di PowerShell maupun bash. Karena itu, URL wajib diapit tanda kutip.
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+curl.exe -s "http://localhost:3000/api/tasks?page=2&limit=2&done=false&sort=title"
+curl.exe -s "http://localhost:3000/api/tasks?page=2&limit=5"
+curl.exe -s "http://localhost:3000/api/tasks?q=KUIS&limit=2"
+curl.exe -s "http://localhost:3000/api/tasks?courseId=1&limit=2"
+curl.exe -s "http://localhost:3000/api/tasks?priority=tinggi&sort=title"
+```
+
+</Tab>
+<Tab>
+
+```bash
+curl -s "http://localhost:3000/api/tasks?page=2&limit=2&done=false&sort=title"
+curl -s "http://localhost:3000/api/tasks?page=2&limit=5"
+curl -s "http://localhost:3000/api/tasks?q=KUIS&limit=2"
+curl -s "http://localhost:3000/api/tasks?courseId=1&limit=2"
+curl -s "http://localhost:3000/api/tasks?priority=tinggi&sort=title"
+```
+
+</Tab>
+</Tabs>
+
+Respons asli perintah pertama, dirapikan agar mudah dibaca:
+
+```json
+{
+  "data": [
+    {
+      "id": 12,
+      "title": "Kuis mingguan 4 Pemrograman Mobile",
+      "done": false,
+      "priority": "tinggi",
+      "courseId": 2,
+      "createdAt": "2026-10-30T22:30:29.419Z",
+      "updatedAt": "2026-10-30T22:30:29.419Z"
+    },
+    {
+      "id": 14,
+      "title": "Kuis mingguan 5 Pemrograman Mobile",
+      "done": false,
+      "priority": "rendah",
+      "courseId": 2,
+      "createdAt": "2026-10-30T22:30:29.419Z",
+      "updatedAt": "2026-10-30T22:30:29.419Z"
+    }
+  ],
+  "meta": { "page": 2, "limit": 2, "total": 11, "totalPages": 6 }
+}
+```
+
+Halaman 1 berisi "Daftar ulang semester" dan "Install Expo dan Android Studio". Halaman 2 melanjutkan dengan dua judul berikutnya menurut abjad. "Kuis mingguan 1" sampai 3 tidak muncul karena sudah selesai. Berikut ringkasan `meta` dan `id` tugas yang kembali untuk perintah lainnya:
+
+```txt
+?page=2&limit=5           meta {"page":2,"limit":5,"total":20,"totalPages":4}   id 15, 14, 13, 12, 11
+?q=KUIS&limit=2           meta {"page":1,"limit":2,"total":8,"totalPages":4}    id 20, 18
+?courseId=1&limit=2       meta {"page":1,"limit":2,"total":10,"totalPages":5}   id 19, 17
+?priority=tinggi&sort=title  meta {"page":1,"limit":10,"total":5,"totalPages":1}  id 12, 20, 1, 9, 15
+```
+
+Perhatikan hasil `priority=tinggi&sort=title`: "Kuis mingguan 4" (`id` 12) muncul sebelum "Membuat ERD perpustakaan" (`id` 1), karena urutannya mengikuti judul, bukan `id`.
+
+### Kasus tepi
+
+Kasus tepi (edge case) adalah permintaan di pinggir aturan, misalnya halaman yang tidak ada atau `limit=0`. Sekarang uji batas-batasnya:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+curl.exe -i "http://localhost:3000/api/tasks?page=99&limit=5"
+curl.exe -s "http://localhost:3000/api/tasks?limit=0"
+curl.exe -s "http://localhost:3000/api/tasks?limit=100"
+curl.exe -s "http://localhost:3000/api/tasks?page=abc&limit=0&done=ya&priority=urgent&sort=nama"
+```
+
+</Tab>
+<Tab>
+
+```bash
+curl -i "http://localhost:3000/api/tasks?page=99&limit=5"
+curl -s "http://localhost:3000/api/tasks?limit=0"
+curl -s "http://localhost:3000/api/tasks?limit=100"
+curl -s "http://localhost:3000/api/tasks?page=abc&limit=0&done=ya&priority=urgent&sort=nama"
+```
+
+</Tab>
+</Tabs>
+
+```txt
+HTTP/1.1 200 OK
+{"data":[],"meta":{"page":99,"limit":5,"total":20,"totalPages":4}}
+
+{"error":{"message":"Data yang dikirim tidak valid","code":"VALIDATION_ERROR","details":[{"field":"limit","message":"limit minimal 1"}]}}
+
+{"error":{"message":"Data yang dikirim tidak valid","code":"VALIDATION_ERROR","details":[{"field":"limit","message":"limit maksimal 50"}]}}
+
+{"error":{"message":"Data yang dikirim tidak valid","code":"VALIDATION_ERROR","details":[{"field":"page","message":"page harus berupa angka"},{"field":"limit","message":"limit minimal 1"},{"field":"done","message":"done harus true atau false"},{"field":"priority","message":"Prioritas harus rendah, sedang, atau tinggi"},{"field":"sort","message":"sort harus salah satu dari: createdAt, -createdAt, title, priority"}]}}
+```
+
+Halaman di luar jangkauan bukan error. Permintaannya valid, hanya hasilnya kosong. Jadi server membalas 200 dengan `data: []`, dan `meta.totalPages` memberi tahu client bahwa halaman terakhir adalah 4. Lain halnya dengan `limit=0`. Nilai ini tidak masuk akal, karena jumlah halamannya tidak bisa dihitung. Jadi server menolaknya dengan 400 `VALIDATION_ERROR` lewat error handler yang sama. `?done=true&done=false` juga ditolak dengan "done harus true atau false", karena nilainya berupa array.
+
+Mau mencoba tanpa menjalankan server? Lab berikut memakai API tiruan yang mendukung `page`, `limit` (maksimal 50), `done`, dan `q`. Coba ganti `page=1` menjadi `page=99`, lalu `limit=0`, dan bandingkan `meta`-nya.
+
+<HttpExplorer initialMethod="GET" initialPath="/api/tasks?page=1&limit=3" />
+
+## Index: membantu database mencari lebih cepat
+
+<Callout type="analogi" title="Seperti indeks di belakang buku">
+
+Kamu mencari kata "normalisasi" di buku Basis Data setebal 500 halaman. Tanpa indeks, kamu membalik halaman satu per satu. Dengan indeks di belakang buku, kamu langsung tahu kata itu ada di halaman 112.
+
+- Indeks di belakang buku = index database.
+- Membalik halaman satu per satu = database membaca seluruh tabel baris demi baris.
+
+Bedanya, indeks buku ditulis sekali saat dicetak. Index database harus diperbarui setiap kali ada data baru atau data berubah.
+
+</Callout>
+
+Filter `courseId` dan urutan `createdAt` akan dipakai setiap kali aplikasi dibuka. Tanpa [index](/glosarium#index), SQLite harus membaca seluruh tabel `Task` baris demi baris. Index adalah daftar terurut yang menunjuk langsung ke baris yang dicari. Migrasi `init` kita hanya membuat index untuk primary key. SQLite tidak otomatis membuat index untuk foreign key, begitu juga Prisma untuk SQLite.
+
+Tambahkan dua index di model `Task`:
+
+```diff title="prisma/schema.prisma"
+ model Task {
+   id        Int      @id @default(autoincrement())
+   title     String
+   done      Boolean  @default(false)
+   priority  String   @default("sedang") // rendah | sedang | tinggi
+   courseId  Int?
+   course    Course?  @relation(fields: [courseId], references: [id], onDelete: SetNull)
+   createdAt DateTime @default(now())
+   updatedAt DateTime @updatedAt
++
++  @@index([courseId])
++  @@index([createdAt])
+ }
+```
+
+`@@index([courseId])` artinya "buatkan index untuk kolom `courseId`". Baris kedua melakukan hal yang sama untuk `createdAt`. Hentikan server dulu, lalu buat migrasi dan generate ulang client:
+
+```bash
+npx prisma migrate dev --name tambah-index
+npx prisma generate
+```
+
+Prisma mengganti tanda minus di nama menjadi garis bawah, jadi foldernya bernama seperti `20261030231252_tambah_index`. Isi `migration.sql` yang dihasilkan:
+
+```sql
+-- CreateIndex
+CREATE INDEX "Task_courseId_idx" ON "Task"("courseId");
+
+-- CreateIndex
+CREATE INDEX "Task_createdAt_idx" ON "Task"("createdAt");
+```
+
+Dengan 20 baris, kamu tidak akan merasakan bedanya. Bedanya baru terasa saat datanya ribuan. Ada dua catatan:
+
+- Index tidak membantu `contains`. Pola `LIKE '%kuis%'` diawali wildcard, jadi database tetap harus memeriksa setiap judul. Ibaratnya, indeks buku tidak membantu kalau kamu mencari kata yang bisa muncul di tengah kata lain.
+- Setiap index sedikit memperlambat `INSERT` dan `UPDATE`, karena index-nya ikut diperbarui. Jadi buat index hanya untuk kolom yang sering difilter atau diurutkan.
+
+## Offset vs cursor pagination
+
+<Callout type="analogi" title="Nomor halaman vs pembatas buku">
+
+Kamu membaca novel sampai halaman 100, lalu menutupnya. Ada dua cara melanjutkan besok:
+
+- Ingat "halaman 101" = offset pagination. Kalau penerbit menyisipkan 3 halaman baru di depan, halaman 101 kini berisi bagian yang sudah kamu baca.
+- Selipkan pembatas buku = cursor pagination. Pembatas tetap menempel di kertas terakhir yang kamu baca, berapa pun halaman yang disisipkan di depan.
+
+Bedanya, pembatas buku tidak bisa dipakai untuk langsung melompat ke halaman 300. Cursor pagination juga begitu.
+
+</Callout>
+
+Offset pagination mudah dipahami dan bisa langsung melompat ke halaman 7. Kelemahannya muncul saat data berubah di tengah jalan. Misalnya kamu membuka halaman 1 (tugas `id` 20 sampai 11, `limit=10`). Lalu temanmu menambah tugas `id` 21. Saat kamu meminta halaman 2, `OFFSET 10` kini menunjuk ke tugas `id` 11, jadi tugas itu tampil dua kali. Selain itu, `OFFSET 10000` tetap memaksa database melewati 10.000 baris satu per satu.
+
+[Cursor pagination](/glosarium#cursor-pagination) memakai cara lain. Client tidak meminta "lewati N baris". Client mengirim penanda (cursor) baris terakhir yang sudah ia terima, lalu server mengambil baris setelah penanda itu.
+
+<Compare>
+<CompareItem title="Offset (page & limit)" tone="neutral">
+
+- URL mudah dibaca: `?page=3&limit=10`.
+- Bisa lompat ke halaman mana pun dan menampilkan "halaman 3 dari 6".
+- Data bisa dobel atau terlewat jika ada tambahan atau hapus di tengah jalan.
+- Makin lambat untuk halaman yang sangat jauh.
+- Cocok untuk tabel admin dan daftar dengan nomor halaman.
+
+</CompareItem>
+<CompareItem title="Cursor (after id)" tone="neutral">
+
+- URL berisi penanda: `?cursor=15&limit=6`.
+- Tidak bisa lompat ke halaman tertentu, hanya "muat berikutnya".
+- Stabil walaupun data baru terus masuk.
+- Kecepatannya sama untuk halaman ke berapa pun, karena memakai index.
+- Cocok untuk feed (daftar postingan yang terus bertambah) dan infinite scroll di aplikasi HP. Infinite scroll artinya data baru dimuat otomatis saat kamu menggulir ke bawah.
+
+</CompareItem>
+</Compare>
+
+Prisma mendukung keduanya. Coba cursor pagination lewat script terpisah di root proyek:
+
+```js title="coba-cursor.js"
+import { prisma } from "./src/lib/prisma.js";
+
+async function ambilFeed({ cursor, take = 6 } = {}) {
+  const rows = await prisma.task.findMany({
+    take: take + 1,
+    skip: cursor ? 1 : 0,
+    cursor: cursor ? { id: cursor } : undefined,
+    orderBy: { id: "desc" },
+    select: { id: true, title: true },
+  });
+
+  const hasMore = rows.length > take;
+  const data = hasMore ? rows.slice(0, take) : rows;
+  const nextCursor = hasMore ? data.at(-1).id : null;
+  return { data, meta: { nextCursor, hasMore } };
+}
+
+let cursor;
+let halaman = 1;
+do {
+  const { data, meta } = await ambilFeed({ cursor });
+  console.log(`Halaman ${halaman}: id ${data.map((t) => t.id).join(", ")} | nextCursor=${meta.nextCursor}`);
+  cursor = meta.nextCursor;
+  halaman++;
+} while (cursor);
+
+await prisma.$disconnect();
+```
+
+```bash
+node coba-cursor.js
+```
+
+```txt
+Halaman 1: id 20, 19, 18, 17, 16, 15 | nextCursor=15
+Halaman 2: id 14, 13, 12, 11, 10, 9 | nextCursor=9
+Halaman 3: id 8, 7, 6, 5, 4, 3 | nextCursor=3
+Halaman 4: id 2, 1 | nextCursor=null
+```
+
+Cara membaca kode `ambilFeed`:
+
+- `cursor: { id }` menunjuk baris penanda, yaitu baris terakhir yang sudah dikirim.
+- `skip: 1` melewati baris penanda itu sendiri, supaya tidak tampil dua kali.
+- `take + 1` mengambil satu baris ekstra. Kalau baris ekstra itu ada, berarti masih ada halaman berikutnya. Dengan trik ini, server tidak perlu menjalankan `count`.
+- `nextCursor` adalah `id` baris terakhir di halaman ini. Client mengirimnya kembali untuk meminta halaman berikutnya.
+
+Field cursor harus unik, di sini `id`. Kalau kamu ingin cursor yang diurutkan berdasarkan judul, penandanya harus memuat judul sekaligus `id`, dan itu jauh lebih rumit. Karena itu, aplikasi tugas kita tetap memakai offset. Cursor lebih cocok untuk feed yang tidak pernah berhenti.
+
+## Memanggil dari client dengan URLSearchParams
+
+Di sisi client, jangan merangkai query string dengan menyambung string sendiri. Kata pencarian bisa berisi spasi, `&`, atau `#`, dan karakter itu akan merusak URL. Contohnya, `q=tugas & kuis` terbaca sebagai dua parameter.
+
+Pakai `URLSearchParams`, yang tersedia di browser, Node, dan aplikasi Expo. Ia meng-encode nilai dengan benar. **Encode** artinya mengubah karakter khusus menjadi bentuk yang aman di URL, misalnya spasi menjadi `+`.
+
+Kita memakai method `append` karena method itu juga didukung polyfill React Native versi lama. **Polyfill** adalah kode tambahan yang menyediakan fitur yang belum ada di sebuah lingkungan. Coba script berikut di root proyek, dengan server masih berjalan:
+
+```js title="coba-client.mjs"
+const API_URL = "http://localhost:3000";
+
+function buatQuery(params) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    search.append(key, String(value));
+  }
+  const teks = search.toString();
+  return teks ? `?${teks}` : "";
+}
+
+async function ambilTasks(params = {}) {
+  const res = await fetch(`${API_URL}/api/tasks${buatQuery(params)}`);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error.message);
+  return body;
+}
+
+console.log(buatQuery({ page: 2, limit: 5, done: false, q: "rangkuman pertemuan", priority: "" }));
+console.log(buatQuery({}));
+
+const { data, meta } = await ambilTasks({ q: "rangkuman pertemuan", done: false, limit: 2 });
+console.log(meta);
+console.log(data.map((t) => t.title));
+```
+
+```bash
+node coba-client.mjs
+```
+
+```txt
+?page=2&limit=5&done=false&q=rangkuman+pertemuan
+
+{ page: 1, limit: 2, total: 3, totalPages: 2 }
+[
+  'Rangkuman pertemuan 8 Basis Data',
+  'Rangkuman pertemuan 7 Basis Data'
+]
+```
+
+Cara membaca hasilnya:
+
+- `buatQuery` melewati nilai kosong seperti `priority: ""`. Jadi filter yang tidak dipilih di layar tidak ikut terkirim.
+- `done: false` tetap terkirim, karena `false` bukan string kosong.
+- `buatQuery({})` menghasilkan string kosong, jadi URL tidak berakhir dengan `?` yang menggantung.
+- Spasi di-encode menjadi `+`, lalu parser Express mengubahnya kembali menjadi spasi.
+- `ambilTasks` melempar error berisi pesan dari server kalau status respons bukan 2xx.
+
+`fetch` global tersedia di Node 18 ke atas, jadi script ini berjalan tanpa paket tambahan.
+
+## Kesalahan umum
+
+Tabel ini berisi gejala yang paling sering muncul saat membuat pagination, filter, dan search. Cari gejala yang mirip dengan masalahmu di kolom pertama.
+
+| Pesan / gejala | Penyebab | Cara memperbaiki |
+| --- | --- | --- |
+| `?done=false` malah menampilkan tugas yang sudah selesai | Memakai `z.coerce.boolean()`, padahal `Boolean("false")` hasilnya `true` | Pakai `z.stringbool({ truthy: ["true"], falsy: ["false"] })` |
+| `Unknown argument mode` | Menyalin `mode: "insensitive"` dari contoh PostgreSQL | Hapus `mode`. Di SQLite, `contains` sudah tidak membedakan huruf besar-kecil untuk huruf ASCII |
+| Tugas yang sama muncul di halaman 1 dan 2 | `orderBy` hanya memakai satu kolom yang nilainya kembar, misalnya `createdAt` dari `createMany` | Tambahkan `id` sebagai urutan kedua |
+| `meta.total` selalu 20 walaupun difilter | `count()` dipanggil tanpa `where` | Pakai objek `where` yang sama untuk `findMany` dan `count` |
+| Di PowerShell muncul error tentang `&`, atau hanya `page` yang terbaca | URL tidak diapit tanda kutip | Tulis `curl.exe -s "http://...?page=2&limit=5"` |
+| `skip` bernilai `NaN` atau Prisma mengeluh soal tipe | Memakai `req.query.page` mentah (masih string) tanpa `validate` | Pasang `validate({ query: listTasksQuerySchema })` di route |
+
+<Callout type="warning" title="Jangan biarkan limit tanpa batas">
+
+API tanpa batas `limit` sama saja dengan API tanpa pagination. Satu request `limit=1000000` bisa membuat server membaca seluruh tabel. Respons yang dikirim pun bisa berukuran megabyte. Selalu beri batas atas. Lalu tolak (400) atau turunkan nilai yang melewati batas itu.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Urutan menurun untuk judul dan prioritas" difficulty="mudah" hints={["Tambahkan dua nilai baru ke `TASK_SORTS` di `src/schemas.js`.", "`tinggi` > `sedang` > `rendah` secara abjad, jadi urutan `desc` menaruh `tinggi` di depan."]}>
+
+Aplikasi HP ingin menampilkan tugas berprioritas tinggi lebih dulu. Langkahnya:
+
+1. Tambahkan dua nilai `sort` baru: `-title` (judul Z ke A) dan `-priority` (prioritas tinggi dulu).
+2. Tambahkan pasangan `orderBy` untuk kedua nilai itu di `TASK_ORDER_BY`.
+3. Uji dengan `?sort=-priority&limit=3`. Hasilnya harus diawali tugas berprioritas `tinggi`.
+
+<Solution>
+
+```js title="src/schemas.js"
+export const TASK_SORTS = ["createdAt", "-createdAt", "title", "-title", "priority", "-priority"];
+```
+
+```js title="src/server.js"
+const TASK_ORDER_BY = {
+  createdAt: [{ createdAt: "asc" }, { id: "asc" }],
+  "-createdAt": [{ createdAt: "desc" }, { id: "desc" }],
+  title: [{ title: "asc" }, { id: "asc" }],
+  "-title": [{ title: "desc" }, { id: "desc" }],
+  priority: [{ priority: "asc" }, { id: "asc" }],
+  "-priority": [{ priority: "desc" }, { id: "desc" }],
+};
+```
+
+Pesan error `sort` ikut berubah sendiri, karena pesan itu dibuat dari `TASK_SORTS.join(", ")`. Dengan data seed, `?sort=-priority&limit=3` mengembalikan `id` 20, 15, dan 12. Ketiganya berprioritas `tinggi`.
+
+Trik ini hanya berhasil karena urutan abjadnya kebetulan pas. Kalau kelak prioritas disimpan sebagai `LOW`, `MEDIUM`, `HIGH`, urutan abjadnya menjadi `HIGH`, `LOW`, `MEDIUM`. API pendamping mengatasinya dengan query khusus untuk urutan prioritas.
+
+</Solution>
+</Exercise>
+
+<Exercise title="hasNextPage dan hasPrevPage" difficulty="mudah" hints={["Semua yang dibutuhkan sudah ada di `page` dan `totalPages`.", "Halaman pertama tidak punya halaman sebelumnya."]}>
+
+Supaya aplikasi tidak perlu menghitung sendiri, server bisa memberi tahu apakah masih ada halaman berikutnya dan sebelumnya. Langkahnya:
+
+1. Tambahkan `hasNextPage` (masih ada halaman berikutnya?) ke `meta`.
+2. Tambahkan `hasPrevPage` (ada halaman sebelumnya?) ke `meta`.
+3. Uji dengan `?page=99&limit=5`. Nilainya harus `false` dan `true`.
+
+<Solution>
+
+```js title="src/server.js"
+const totalPages = Math.ceil(total / limit);
+
+res.json({
+  data: tasks,
+  meta: {
+    page,
+    limit,
+    total,
+    totalPages,
+    hasNextPage: page < totalPages,
+    hasPrevPage: page > 1,
+  },
+});
+```
+
+Untuk `page=99` dengan `totalPages` 4, `99 < 4` bernilai `false`, dan `99 > 1` bernilai `true`. Kalau tidak ada data sama sekali, `totalPages` bernilai 0. Akibatnya `hasNextPage` tetap `false`, dan itu memang benar.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Schema memakai `done: z.coerce.boolean().optional()`. Apa yang terjadi saat client memanggil `GET /api/tasks?done=false`?",
+    options: ["Server membalas 400 karena tipe salah", "Hanya tugas yang belum selesai yang tampil", "Yang tampil justru tugas yang sudah selesai", "Filter `done` diabaikan"],
+    answer: 2,
+    explain: "`z.coerce.boolean()` memanggil `Boolean(\"false\")`, yang bernilai `true` karena string tidak kosong. Tidak ada error 400, filternya tidak diabaikan, tetapi hasilnya terbalik. Pakai `z.stringbool()` agar `\"false\"` menjadi `false`.",
+  },
+  {
+    q: "Dengan `page=3` dan `limit=5`, berapa nilai `skip` dan `take` yang dikirim ke Prisma?",
+    options: ["`skip: 10, take: 5`", "`skip: 15, take: 5`", "`skip: 3, take: 5`", "`skip: 5, take: 15`"],
+    answer: 0,
+    explain: "`skip = (page - 1) * limit = 2 * 5 = 10`, dan `take = limit = 5`. Nilai 15 adalah posisi akhir halaman 3, bukan jumlah baris yang dilewati.",
+  },
+  {
+    q: "Ada 20 tugas, lalu client meminta `?page=99&limit=5`. Respons apa yang paling tepat?",
+    options: ["404 `NOT_FOUND`", "400 `VALIDATION_ERROR` karena page terlalu besar", "Halaman terakhir (page 4) dikirim sebagai gantinya", "200 dengan `data: []` dan `meta.totalPages` 4"],
+    answer: 3,
+    explain: "Permintaannya valid, hanya hasilnya kosong. Balasan 200 dengan array kosong membuat client mudah berhenti memuat, dan `totalPages` memberi tahu halaman terakhir. Mengganti halaman diam-diam membuat client bingung. 400 dan 404 juga tidak cocok, karena tidak ada input yang salah.",
+  },
+  {
+    q: "Kenapa `TASK_ORDER_BY` selalu menambahkan `{ id: \"asc\" }` atau `{ id: \"desc\" }` sebagai urutan kedua?",
+    options: ["Agar query lebih cepat", "Agar urutan pasti saat nilai kolom pertama kembar, sehingga tidak ada tugas dobel antarhalaman", "Karena Prisma mewajibkan minimal dua kolom di `orderBy`", "Agar `count` menghasilkan angka yang benar"],
+    answer: 1,
+    explain: "Tugas dari `createMany` punya `createdAt` yang sama persis. Tanpa tie-breaker, database bebas mengembalikannya dalam urutan apa pun, sehingga satu tugas bisa muncul di dua halaman. Prisma tidak mewajibkan dua kolom, dan `count` tidak dipengaruhi `orderBy`.",
+  },
+  {
+    q: "Aplikasi HP menampilkan feed tugas dengan infinite scroll, dan tugas baru sering ditambahkan. Pagination mana yang lebih cocok?",
+    options: ["Offset, karena bisa lompat ke halaman tertentu", "Tidak perlu pagination, kirim semua data", "Cursor, karena penandanya stabil walaupun ada data baru", "Offset dengan `limit` 1000"],
+    answer: 2,
+    explain: "Cursor melanjutkan dari baris terakhir yang sudah diterima, seperti pembatas buku. Data baru tidak menggeser halaman berikutnya. Infinite scroll tidak butuh lompat halaman. Mengirim semua data atau memakai `limit` besar justru masalah yang ingin kita hindari.",
+  },
+]} />
+
+## Ringkasan
+
+- Semua nilai query string berupa teks. Validasi dan ubah tipenya dengan Zod lewat `validate({ query })`. Pakai `z.coerce.number()` untuk angka dan `z.stringbool()` untuk boolean. Jangan pakai `z.coerce.boolean()`.
+- Offset pagination memakai rumus `skip = (page - 1) * limit` dan `take = limit`. `limit` dibatasi maksimal 50, dan `limit=0` ditolak dengan 400.
+- Filter disusun di objek `where`. Prisma mengabaikan properti `undefined`, tetapi `false` tetap menyaring. `contains` menjadi `LIKE`, dan di SQLite tidak mendukung `mode: "insensitive"`.
+- Nilai `sort` yang sudah divalidasi diterjemahkan menjadi `orderBy`, selalu dengan `id` sebagai penentu urutan kalau nilainya seri.
+- `prisma.$transaction([findMany, count])` mengambil data dan total dengan `where` yang sama. Respons berbentuk `{ data, meta: { page, limit, total, totalPages } }`. Halaman di luar jangkauan dibalas 200 dengan `data: []`.
+- `@@index` mempercepat filter dan urutan yang sering dipakai, tetapi tidak membantu `contains`.
+- Cursor pagination lebih stabil untuk feed. Di client, susun query string dengan `URLSearchParams`.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Endpoint daftar tugas kini siap dipakai layar daftar tugas di aplikasi Expo. Di Track 3, fungsi `apiFetch` akan memakai helper yang mirip `buatQuery`. TanStack Query menyimpan hasil tiap kombinasi filter sebagai cache (catatan jawaban yang bisa dipakai ulang) tersendiri. API pendamping memakai pola yang sama di `api/src/lib/pagination.ts` dan `tasks.service.ts`. Simpan [cheatsheet Prisma](/cheatsheet/prisma) untuk melihat sintaks `where` dan `orderBy`. Berikutnya, [Struktur Proyek Backend](/belajar/crud-backend/struktur-proyek-backend) memindahkan route yang mulai panjang ini ke folder modul yang lebih rapi.
+
+</Callout>

@@ -1,0 +1,895 @@
+## Pengantar
+
+Aplikasi tugasmu sudah bisa menampilkan, menambah, dan mengubah data. Tinggal satu huruf CRUD: **D**elete
+(menghapus). Kedengarannya sepele, tetapi ada dua hal yang membuatnya rawan.
+
+1. Hapus di server **tidak bisa dibatalkan**. API kuliah juga ikut menghapus file lampiran tugas dari disk.
+2. Jaringan HP sering lambat. Kalau daftar baru berubah setelah server menjawab 1–2 detik kemudian, aplikasi terasa
+macet. Pengguna lalu mengetuk tombol berkali-kali.
+
+Targetnya: menghapus tugas terasa secepat menghapus kontak di HP. Di pelajaran ini kamu akan:
+
+- memanggil `DELETE /api/tasks/:id` dan memahami balasan `204 No Content`;
+- meminta konfirmasi dengan `Alert.alert`, termasuk cadangan (*fallback*) untuk versi web;
+- menerapkan **optimistic update**, yaitu tampilan aplikasi (UI) berubah duluan sebelum server menjawab. Kalau
+server menolak, tampilan dikembalikan ke keadaan semula (*rollback*);
+- membuat toggle status (selesai/belum) secara optimistis lewat `PATCH`;
+- memberi tombol **Urungkan** (undo) dan gestur geser (*swipe*) untuk menghapus;
+- mengenali *race condition* (request yang saling balap) dan kapan optimistic UI justru berbahaya.
+
+Semua kode ditambahkan ke proyek `kuliah-app` dari pelajaran [Menampilkan Data](/belajar/fullstack/read-data) dan
+[Create & Update](/belajar/fullstack/create-update). Fitur yang sudah ada tetap dipakai.
+
+## Endpoint DELETE dan status 204
+
+<Callout type="analogi" title="Seperti minta mata kuliah dicoret dari KRS">
+
+Kamu minta petugas akademik mencoret Basis Data dari KRS-mu. Petugas mencoret, lalu cukup mengangguk tanpa memberi
+kertas apa pun. Kalau mata kuliah itu tidak ada di KRS-mu, ia bilang "Tidak ditemukan".
+
+Loket akademik = **endpoint** `DELETE /api/tasks/:id` (alamat tujuan request). Anggukan = status `204 No Content`
+(berhasil, tanpa isi balasan). "Tidak ditemukan" = `404`. Bedanya, coretan petugas masih bisa dibatalkan, sedangkan
+data yang dihapus server hilang permanen.
+
+</Callout>
+
+Route (aturan penanganan alamat) untuk hapus di API pendamping sangat pendek. Ini kode aslinya di
+`api/src/modules/tasks/tasks.routes.ts`:
+
+```js
+tasksRouter.delete("/:id", validate({ params: taskIdParamsSchema }), async (req, res) => {
+  await tasksService.deleteTask(getUserId(req), req.params.id);
+  res.status(204).end();
+});
+```
+
+`validate` memastikan `:id` berupa angka (kalau bukan, jawabannya `400`). `deleteTask` mencari tugasnya dulu. Kalau
+tugas tidak ada **atau milik pengguna lain**, jawabannya `404` dengan code `NOT_FOUND`. Kalau berhasil,
+`res.status(204).end()` mengirim `204` lalu menutup respons **tanpa body** (isi balasan) sama sekali.
+
+```http
+DELETE /api/tasks/12 HTTP/1.1
+Host: localhost:3000
+Authorization: Bearer <access-token>
+
+HTTP/1.1 204 No Content
+```
+
+| Situasi | Status | Body |
+| --- | --- | --- |
+| Berhasil dihapus | `204 No Content` | kosong |
+| Tugas tidak ada / bukan milikmu | `404 Not Found` | `{ "error": { "message": "Tugas tidak ditemukan", "code": "NOT_FOUND" } }` |
+| Token hilang atau kedaluwarsa | `401 Unauthorized` | objek `error` |
+
+Ada satu jebakan di sini. Karena body-nya kosong, memanggil `res.json()` pada respons 204 akan melempar error
+`SyntaxError`. `res.json()` ingin membaca JSON, padahal tidak ada isi yang bisa dibaca. Itu sebabnya `apiFetch` di
+`src/lib/api.js` tidak membaca body kalau statusnya 204. Detail status code lain ada di
+[glosarium](/glosarium#status-code) dan [cheatsheet HTTP](/cheatsheet/http).
+
+Sekarang coba hapus satu tugas dari terminal. Pastikan API berjalan. Perintah di bawah login dulu untuk mendapatkan
+token, lalu mengirim DELETE.
+
+<Tabs items={["Windows (PowerShell)", "macOS/Linux (bash)"]}>
+<Tab>
+
+```powershell
+$login = Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/auth/login -ContentType "application/json" -Body '{"email":"demo@kampus.ac.id","password":"password123"}'
+$token = $login.data.accessToken
+$res = Invoke-WebRequest -Method Delete -Uri http://localhost:3000/api/tasks/1 -Headers @{ Authorization = "Bearer $token" } -UseBasicParsing
+$res.StatusCode
+```
+
+Output yang diharapkan: `204`. Jalankan lagi baris ketiga (`$res = Invoke-WebRequest ...`). Kali ini perintahnya
+gagal dengan error 404, karena tugasnya sudah tidak ada.
+
+</Tab>
+<Tab>
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"demo@kampus.ac.id","password":"password123"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.accessToken')
+
+curl -i -X DELETE http://localhost:3000/api/tasks/1 -H "Authorization: Bearer $TOKEN"
+```
+
+Baris pertama output: `HTTP/1.1 204 No Content`. Jalankan perintah `curl -i -X DELETE ...` sekali lagi, maka hasilnya
+`404 Not Found`.
+
+</Tab>
+</Tabs>
+
+Mau mencoba tanpa terminal? Lab di bawah memakai data latihan `belajar-api`, bukan database kuliah-app. Jadi kamu bebas
+menghapus apa saja di sana.
+
+<HttpExplorer initialMethod="DELETE" initialPath="/api/tasks/1" />
+
+## Konfirmasi sebelum menghapus
+
+<Callout type="analogi" title="Seperti WhatsApp bertanya sebelum menghapus chat">
+
+Saat kamu menekan "Hapus chat" di WhatsApp, muncul pertanyaan "Hapus chat ini?" dengan tombol **Batal** dan
+**Hapus**. Pertanyaan itu ada karena chat yang terhapus tidak bisa kembali. Jari yang terpeleset tidak boleh langsung
+menghapus sesuatu yang penting.
+
+</Callout>
+
+Aksi yang tidak bisa dibatalkan perlu konfirmasi. React Native punya `Alert.alert(title, message, buttons, options)`
+untuk menampilkan dialog seperti itu.
+
+Masalahnya, `Alert.alert` memakai gaya *callback*: kamu menitipkan fungsi yang baru dipanggil nanti, saat tombol
+ditekan. Kode kita memakai `async/await`, yang lebih enak dibaca dari atas ke bawah. Solusinya, bungkus `Alert.alert`
+dengan `Promise` (janji yang nanti berisi jawaban) di file baru `src/lib/confirm.js`:
+
+```js
+// src/lib/confirm.js
+import { Alert, Platform } from "react-native";
+
+export function confirmAsync({ title, message, confirmText = "Hapus", cancelText = "Batal" }) {
+  if (Platform.OS === "web") {
+    return Promise.resolve(window.confirm(`${title}\n\n${message}`));
+  }
+
+  return new Promise((resolve) => {
+    Alert.alert(
+      title,
+      message,
+      [
+        { text: cancelText, style: "cancel", onPress: () => resolve(false) },
+        { text: confirmText, style: "destructive", onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) }
+    );
+  });
+}
+```
+
+Di HP, tombol "Batal" memanggil `resolve(false)` dan tombol "Hapus" memanggil `resolve(true)`. Di browser, fungsi ini
+memakai `window.confirm`. `style: "destructive"` membuat tombol merah di iOS, sedangkan `onDismiss` (khusus Android)
+menganggap ketukan di luar dialog sebagai "Batal".
+
+Pemakaiannya cukup `const ok = await confirmAsync(...)`. Kode menunggu di baris itu sampai pengguna memilih.
+
+<Callout type="warning" title="Alert.alert tidak melakukan apa-apa di web">
+
+Di React Native Web, `Alert.alert` adalah fungsi kosong. Tidak ada dialog, tidak ada error, dan tombol "Hapus" seolah
+mati. Karena itu `confirmAsync` memakai `window.confirm` saat berjalan di web. Kamu bisa membuat modal sendiri untuk
+tampilan yang lebih rapi, tetapi `window.confirm` sudah cukup untuk belajar.
+
+</Callout>
+
+## Pesimistis vs optimistis
+
+<Callout type="analogi" title="Seperti mencentang daftar kas kelas">
+
+Kamu bendahara kelas. Andi bilang, "Aku sudah transfer uang kas." Cara **pesimistis**: tunggu notifikasi m-banking,
+baru centang nama Andi. Cara **optimistis**: langsung centang karena Andi biasanya jujur. Kalau ternyata uangnya
+belum masuk, hapus centangnya dan tulis ulang di **baris yang sama**.
+
+Daftar kas = state aplikasi. Notifikasi m-banking = jawaban server. Menghapus centang = *rollback*.
+
+</Callout>
+
+Dua cara itu juga berlaku saat pengguna menekan "Hapus" di aplikasi.
+
+<Compare>
+<CompareItem title="Pesimistis: tunggu server" tone="neutral">
+
+1. Tampilkan loading.
+2. Kirim `DELETE` dan tunggu jawabannya.
+3. Kalau `204`, hapus item dari state.
+
+Aman dan sederhana. Sayangnya, di jaringan 3G pengguna menatap ikon loading (*spinner*) 1–2 detik untuk setiap aksi.
+
+</CompareItem>
+<CompareItem title="Optimistis: percaya dulu, koreksi kemudian" tone="good">
+
+1. Ingat posisi item. Catatan posisi ini disebut *snapshot*.
+2. Hapus dari state **seketika**.
+3. Kirim `DELETE` di belakang layar.
+4. Kalau gagal, kembalikan item ke posisi semula dan beri tahu pengguna.
+
+Terasa instan, karena hampir semua request memang berhasil.
+
+</CompareItem>
+</Compare>
+
+Pilihan optimistis masuk akal karena request `DELETE` atau toggle status jarang gagal. Jadi kita membuat kasus yang
+paling sering terjadi terasa cepat, sambil tetap menyiapkan jalan pulang kalau gagal.
+
+<Flow nodes={["Simpan snapshot", "Ubah UI", "Kirim request", "Sukses: selesai", "Gagal: rollback + pesan"]} labels={["seketika", "di latar", "2xx", "4xx/5xx/offline"]} caption="Siklus optimistic update" />
+
+## Menyiapkan swipe-to-delete
+
+Gestur geser (*swipe*) akrab di HP, misalnya saat kamu menggeser notifikasi untuk membuangnya. Bayangkan setiap
+baris tugas seperti laci meja. Tarik sedikit, laci menutup lagi. Tarik cukup jauh, isinya terlihat: tombol hijau
+"Selesai" atau tombol merah "Hapus".
+
+Komponen yang dipakai adalah `ReanimatedSwipeable` dari `react-native-gesture-handler` versi 3. Pustaka ini
+mengenali gerakan jari, sedangkan `react-native-reanimated` menggerakkan baris dengan mulus. Template Expo SDK 58
+biasanya sudah menyertakan keduanya. Jalankan perintah ini untuk memastikan versinya cocok dengan SDK:
+
+```bash
+npx expo install react-native-gesture-handler react-native-reanimated react-native-worklets
+```
+
+`react-native-worklets` dibutuhkan Reanimated untuk menjalankan kode animasi langsung di jalur tampilan, supaya
+gerakan tetap mulus. `babel-preset-expo` sudah mengatur plugin worklets secara otomatis, jadi `babel.config.js` tidak
+perlu diubah.
+
+Syarat wajibnya: seluruh aplikasi dibungkus `GestureHandlerRootView`, si "penangkap sentuhan" utama. Gestur di luar
+pembungkus ini tidak dikenali. Ubah `src/app/_layout.js`:
+
+```diff
+ import { Stack } from "expo-router";
++import { GestureHandlerRootView } from "react-native-gesture-handler";
+
+ export default function RootLayout() {
+   return (
+-    <Stack />
++    <GestureHandlerRootView style={{ flex: 1 }}>
++      <Stack />
++    </GestureHandlerRootView>
+   );
+ }
+```
+
+Kalau `_layout.js` milikmu sudah berisi opsi `screenOptions` atau provider lain, cukup bungkus elemen terluarnya.
+Lalu buat `src/components/swipe-row.js`. Komponen ini membungkus isi baris (`children`) dan menerima dua fungsi:
+`onDelete` dan `onToggle`.
+
+```jsx
+// src/components/swipe-row.js
+import { useRef } from "react";
+import { StyleSheet, Text, View } from "react-native";
+import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
+
+export default function SwipeRow({ children, onDelete, onToggle, toggleLabel }) {
+  const swipeRef = useRef(null);
+
+  function handleOpen(direction) {
+    if (direction === "left") {
+      onDelete();
+    } else {
+      swipeRef.current?.close();
+      onToggle();
+    }
+  }
+
+  return (
+    <Swipeable
+      ref={swipeRef}
+      friction={2}
+      leftThreshold={80}
+      rightThreshold={80}
+      onSwipeableOpen={handleOpen}
+      renderLeftActions={() => (
+        <View style={[styles.action, styles.toggle]}>
+          <Text style={styles.actionText}>{toggleLabel}</Text>
+        </View>
+      )}
+      renderRightActions={() => (
+        <View style={[styles.action, styles.delete]}>
+          <Text style={styles.actionText}>Hapus</Text>
+        </View>
+      )}
+    >
+      {children}
+    </Swipeable>
+  );
+}
+
+const styles = StyleSheet.create({
+  action: { width: 96, justifyContent: "center", alignItems: "center", borderRadius: 12, marginVertical: 4 },
+  toggle: { backgroundColor: "#16a34a" },
+  delete: { backgroundColor: "#dc2626" },
+  actionText: { color: "#ffffff", fontWeight: "700" },
+});
+```
+
+`renderLeftActions` dan `renderRightActions` menggambar panel di balik baris: hijau (toggle) di kiri, merah (hapus)
+di kanan. `leftThreshold` dan `rightThreshold` bernilai 80 artinya jari harus menggeser minimal 80 titik layar
+sebelum aksi terbuka. `friction={2}` membuat baris terasa lebih berat ditarik, seperti laci yang agak seret. Keduanya
+mencegah aksi terbuka karena geseran kecil. `swipeRef` adalah `ref`, yaitu pegangan ke komponen supaya baris bisa
+disuruh menutup lagi.
+
+Hati-hati dengan arti `direction` di `onSwipeableOpen`. Nilainya adalah arah **gerakan jari**, bukan letak panel.
+Geser ke kiri (`"left"`) memperlihatkan panel kanan, yaitu "Hapus". Geser ke kanan (`"right"`) memperlihatkan panel
+kiri untuk toggle status, lalu baris kita tutup lagi dengan `swipeRef.current?.close()`.
+
+<Callout type="info" title="Aksesibilitas">
+
+Pengguna pembaca layar (*screen reader*, aplikasi yang membacakan isi layar untuk tunanetra) tidak bisa memakai
+gestur geser. Selalu sediakan jalan lain, misalnya tombol "Hapus" di layar detail. Kamu akan membuatnya di Latihan 1.
+
+</Callout>
+
+## Hapus optimistis dengan rollback
+
+Ingat daftar kas tadi: centang yang salah ditulis ulang di **baris yang sama**. Begitu juga di aplikasi, item yang
+gagal dihapus harus kembali ke posisi aslinya. Buka `src/app/index.js` dan tambahkan helper (fungsi pembantu kecil)
+ini **di luar** komponen:
+
+```js
+// src/app/index.js (di luar komponen)
+function insertAt(list, index, item) {
+  if (list.some((t) => t.id === item.id)) return list;
+  const next = [...list];
+  const at = index >= 0 ? Math.min(index, next.length) : next.length;
+  next.splice(at, 0, item);
+  return next;
+}
+```
+
+`insertAt` menolak item ganda (`list.some`), menyalin daftar karena state React tidak boleh diubah langsung
+(`[...list]`), menjaga posisi agar tidak melewati panjang daftar (`Math.min`), lalu menyisipkan item di posisi itu
+(`splice`).
+
+Lalu, di dalam komponen, tambahkan dua fungsi pasangan dan satu `ref`:
+
+```js
+// src/app/index.js (di dalam komponen, setelah useState tasks)
+const hiddenIds = useRef(new Set());
+
+function removeLocal(task) {
+  const index = tasks.findIndex((t) => t.id === task.id);
+  hiddenIds.current.add(task.id);
+  setTasks((prev) => prev.filter((t) => t.id !== task.id));
+  return index;
+}
+
+function restoreLocal(task, index) {
+  hiddenIds.current.delete(task.id);
+  setTasks((prev) => insertAt(prev, index, task));
+}
+```
+
+`removeLocal` menyembunyikan item dan mengembalikan posisinya. `restoreLocal` memunculkannya lagi di posisi itu.
+`hiddenIds` adalah `ref` berisi `Set` (kumpulan id tanpa duplikat) untuk tugas yang sedang disembunyikan. Nilai `ref`
+bertahan antar-render tanpa memicu render ulang. Kegunaannya dibahas di bagian *race condition*.
+
+Versi pertama hapus optimistis, dengan konfirmasi:
+
+```js
+async function deleteTask(task) {
+  const ok = await confirmAsync({
+    title: "Hapus tugas?",
+    message: `"${task.title}" dan lampirannya akan dihapus permanen.`,
+  });
+  if (!ok) return;
+
+  const index = removeLocal(task);
+  try {
+    await apiFetch(`/api/tasks/${task.id}`, { method: "DELETE" });
+  } catch (err) {
+    if (err.status === 404) return; // sudah tidak ada di server: tujuan tercapai
+    restoreLocal(task, index);
+    Alert.alert("Gagal menghapus", err.message);
+  }
+}
+```
+
+Urutannya: tanya, sembunyikan, kirim DELETE, kembalikan kalau gagal. Dua keputusan penting:
+
+1. **404 dianggap sukses.** Tujuan pengguna adalah "tugas ini tidak ada lagi", dan itu sudah tercapai.
+2. **Rollback memakai posisi asli.** Item yang tiba-tiba muncul di paling bawah membuat pengguna mengira datanya
+teracak.
+
+Jangan lupa menambahkan import `useRef`, `Alert`, `apiFetch`, dan `confirmAsync` dari `../lib/confirm` jika belum ada.
+
+## Toggle status optimistis lewat PATCH
+
+Menandai tugas selesai mirip mencentang buku agenda, tanpa menunggu siapa pun. Polanya sama dengan hapus. API
+menerima body parsial (hanya field yang berubah), jadi cukup kirim `{ status }`:
+
+```js
+function nextStatus(status) {
+  return status === "DONE" ? "TODO" : "DONE";
+}
+
+async function toggleStatus(task) {
+  const previous = task.status;
+  const next = nextStatus(previous);
+  setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: next } : t)));
+
+  try {
+    const json = await apiFetch(`/api/tasks/${task.id}`, {
+      method: "PATCH",
+      body: { status: next },
+    });
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, ...json.data } : t)));
+  } catch (err) {
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: previous } : t)));
+    Alert.alert("Gagal mengubah status", err.message);
+  }
+}
+```
+
+Status lama disimpan di `previous`, lalu tampilan langsung diubah. Kalau PATCH sukses, item digabung dengan
+`json.data` supaya `updatedAt` dan field lain mengikuti versi server. Kalau gagal, hanya **field `status`** yang
+dikembalikan, bukan seluruh daftar. Alasannya ada di bagian *race condition*.
+
+## Undo snackbar: tunda hapus sungguhan
+
+Dialog konfirmasi di setiap hapus terasa mengganggu kalau pengguna sering membersihkan daftar. Ada cara lain yang
+lebih halus: *snackbar*, yaitu bar kecil di bawah layar yang muncul sebentar lalu hilang sendiri.
+
+<Callout type="analogi" title="Seperti surat yang dititipkan di pos satpam">
+
+Kamu menitipkan surat di pos satpam kampus, dan kurir baru mengambilnya sore nanti. Sebelum kurir datang, kamu masih
+bisa bilang, "Pak, suratnya batal dikirim."
+
+Menitipkan surat = item hilang dari layar, DELETE belum dikirim. Jadwal kurir = timer 5 detik. "Batal dikirim" =
+tombol **URUNGKAN**. Kurir datang = DELETE benar-benar dikirim.
+
+</Callout>
+
+Jadi alurnya: hapus langsung dari layar, tampilkan bar "Tugas dihapus · URUNGKAN" selama 5 detik, dan **baru kirim
+DELETE kalau waktunya habis**. Karena request belum terkirim, "urungkan" cukup membatalkan timer.
+
+<Compare>
+<CompareItem title="Dialog konfirmasi" tone="neutral">
+
+Menghentikan alur setiap kali. Cocok untuk aksi jarang dan berdampak besar, misalnya hapus dari layar detail.
+
+</CompareItem>
+<CompareItem title="Undo snackbar" tone="good">
+
+Tidak memotong alur dan kesalahan tetap bisa diperbaiki. Cocok untuk aksi cepat berulang seperti swipe-to-delete.
+
+</CompareItem>
+</Compare>
+
+Buat komponen bar di `src/components/undo-snackbar.js`. Komponen ini hanya tampilan: teks pesan dan tombol
+URUNGKAN. `accessibilityLiveRegion="polite"` membuat pembaca layar di Android ikut membacakan pesan saat bar muncul.
+
+```jsx
+// src/components/undo-snackbar.js
+import { Pressable, StyleSheet, Text, View } from "react-native";
+
+export default function UndoSnackbar({ message, onUndo }) {
+  return (
+    <View style={styles.bar} accessibilityLiveRegion="polite">
+      <Text style={styles.text} numberOfLines={1}>
+        {message}
+      </Text>
+      <Pressable onPress={onUndo} hitSlop={12} accessibilityRole="button">
+        <Text style={styles.undo}>URUNGKAN</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  bar: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: "#1f2937",
+  },
+  text: { flex: 1, color: "#ffffff" },
+  undo: { color: "#93c5fd", fontWeight: "700" },
+});
+```
+
+Lalu logikanya di `src/app/index.js`. Hanya ada **satu** penghapusan tertunda pada satu waktu. Kalau pengguna menghapus
+tugas kedua saat bar masih tampil, penghapusan pertama langsung dikirim saat itu juga.
+
+```js
+const UNDO_MS = 5000; // di luar komponen
+
+// di dalam komponen
+const pendingRef = useRef(null);
+const [undoTask, setUndoTask] = useState(null);
+
+function deleteWithUndo(task) {
+  if (pendingRef.current) commitDelete(pendingRef.current);
+
+  const index = removeLocal(task);
+  const pending = { task, index, timer: null };
+  pending.timer = setTimeout(() => commitDelete(pending), UNDO_MS);
+  pendingRef.current = pending;
+  setUndoTask(task);
+}
+
+function undoDelete() {
+  const pending = pendingRef.current;
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingRef.current = null;
+  setUndoTask(null);
+  restoreLocal(pending.task, pending.index);
+}
+
+async function commitDelete(pending) {
+  clearTimeout(pending.timer);
+  if (pendingRef.current === pending) {
+    pendingRef.current = null;
+    setUndoTask(null);
+  }
+  try {
+    await apiFetch(`/api/tasks/${pending.task.id}`, { method: "DELETE" });
+  } catch (err) {
+    if (err.status === 404) return;
+    restoreLocal(pending.task, pending.index);
+    Alert.alert("Gagal menghapus", err.message);
+  }
+}
+
+useEffect(() => {
+  // layar ditutup saat masih ada hapus tertunda: kirim sekarang
+  return () => {
+    if (pendingRef.current) commitDelete(pendingRef.current);
+  };
+}, []);
+```
+
+`deleteWithUndo` menyembunyikan item dan memasang timer (`setTimeout`) yang memanggil `commitDelete` setelah 5 detik.
+`undoDelete` mematikan timer (`clearTimeout`) dan memunculkan item lagi. `commitDelete` mengirim DELETE sungguhan dan
+melakukan rollback kalau gagal. Fungsi *cleanup* di `useEffect` (dijalankan saat layar ditutup) mengirim hapus yang
+masih tertunda.
+
+Terakhir, pasang semuanya di `FlatList` dan render bar di bawah daftar:
+
+```jsx
+renderItem={({ item }) => (
+  <SwipeRow
+    toggleLabel={item.status === "DONE" ? "Buka lagi" : "Selesai"}
+    onToggle={() => toggleStatus(item)}
+    onDelete={() => deleteWithUndo(item)}
+  >
+    <TaskCard task={item} />
+  </SwipeRow>
+)}
+```
+
+Label panel kiri mengikuti status tugas. Bar undo hanya dirender selama `undoTask` berisi tugas:
+
+```jsx
+{undoTask ? <UndoSnackbar message={`"${undoTask.title}" dihapus`} onUndo={undoDelete} /> : null}
+```
+
+Tambahkan import `SwipeRow` dari `../components/swipe-row` dan `UndoSnackbar` dari `../components/undo-snackbar`.
+Pastikan `View` pembungkus layar memakai `flex: 1`. Tanpa itu, posisi bar yang `absolute` tidak dihitung dari layar
+penuh dan bar bisa muncul di tempat aneh.
+
+<Callout type="note" title="Bagaimana kalau aplikasi ditutup?">
+
+Timer JavaScript berhenti saat aplikasi masuk latar belakang, dan hilang kalau aplikasi dimatikan paksa. Akibatnya
+tugas **tidak jadi terhapus** dan muncul lagi saat aplikasi dibuka. Ini kegagalan yang aman: lebih baik data masih ada
+daripada hilang tanpa sengaja.
+
+</Callout>
+
+## Race condition
+
+Dengan optimistic UI, beberapa request bisa "terbang" bersamaan, dan urutan jawabannya tidak dijamin. Keadaan ketika
+hasil akhir bergantung pada siapa yang tiba duluan disebut *race condition* (kondisi balapan). Ada tiga jebakan yang
+perlu kamu kenali.
+
+### 1. Jawaban datang tidak berurutan
+
+<Callout type="analogi" title="Seperti titip absen lewat chat">
+
+Kamu chat teman: "Tolong tulis aku HADIR." Semenit kemudian: "Eh, tulis IZIN saja." Karena sinyal jelek, balasan
+"Oke, IZIN" sampai duluan dan "Oke, HADIR" menyusul. Kalau kamu percaya balasan terakhir, kamu mengira tercatat
+HADIR. Begitu juga jawaban server yang telat bisa menimpa jawaban yang lebih baru.
+
+</Callout>
+
+Di aplikasi, kejadiannya seperti ini. Pengguna mengetuk toggle dua kali dengan cepat:
+
+```txt
+t=0ms    ketuk 1: UI -> DONE, kirim PATCH {status: DONE}   (request A)
+t=80ms   ketuk 2: UI -> TODO, kirim PATCH {status: TODO}   (request B)
+t=150ms  jawaban B tiba: data.status = TODO   -> UI TODO  (benar)
+t=400ms  jawaban A tiba: data.status = DONE   -> UI DONE  (salah, niat terakhir pengguna TODO)
+```
+
+Request A (`t=0ms`, milidetik ke-0) dikirim duluan, tetapi jawabannya tiba paling akhir dan menimpa jawaban B. Ada
+dua solusi: abaikan jawaban yang bukan milik request terakhir (Latihan 2), atau nonaktifkan tombol selama request
+berjalan.
+
+### 2. Rollback memakai snapshot seluruh daftar
+
+<Callout type="analogi" title="Seperti menulis ulang papan tulis dari foto lama">
+
+Pagi hari kamu memotret jadwal piket di papan tulis kelas. Siang harinya Sari menghapus jadwal yang batal. Sore
+harinya kamu salah menghapus satu nama, lalu menyalin ulang **seluruh** papan dari foto pagi. Namamu kembali, tetapi
+jadwal yang sudah dihapus Sari juga ikut muncul lagi.
+
+Foto pagi = snapshot seluruh daftar. Hapusan Sari = DELETE lain yang sudah sukses. Cara yang benar: tulis ulang
+**hanya** nama yang salah dihapus.
+
+</Callout>
+
+Menyimpan salinan **seluruh** daftar untuk rollback terlihat praktis, tetapi berbahaya.
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+```js
+const snapshot = tasks;
+setTasks((prev) => prev.filter((t) => t.id !== task.id));
+try {
+  await apiFetch(url, { method: "DELETE" });
+} catch {
+  setTasks(snapshot);
+}
+```
+
+Snapshot ini juga menyimpan versi lama item **lain**. Misalnya tugas B sudah sukses dihapus selagi DELETE A berjalan.
+Saat A gagal, rollback memasang snapshot lama, sehingga B ikut hidup lagi.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+```js
+const index = removeLocal(task);
+try {
+  await apiFetch(url, { method: "DELETE" });
+} catch {
+  restoreLocal(task, index);
+}
+```
+
+Rollback hanya menyentuh item yang gagal, sedangkan perubahan lain tetap utuh.
+
+</CompareItem>
+</Compare>
+
+Kalau beberapa rollback terjadi bersamaan, urutan item bisa sedikit bergeser. Itu jauh lebih ringan daripada data
+yang sudah dihapus hidup kembali.
+
+### 3. Refetch saat penghapusan masih tertunda
+
+*Refetch* artinya mengambil ulang data dari server. Layar daftar biasanya melakukannya saat kembali fokus (misalnya
+dengan `useFocusEffect`) atau saat ditarik ke bawah untuk refresh. Kalau refetch terjadi dalam jendela undo 5 detik,
+server masih punya tugas tersebut, karena DELETE belum dikirim. Akibatnya item "zombie" muncul lagi. Dalam contoh pos
+satpam tadi, suratmu masih tergeletak di meja satpam selama kurir belum datang. Siapa pun yang melihat meja itu
+(refetch) tentu masih menemukannya.
+
+Di sinilah `hiddenIds` berguna. Ubah fungsi pemuat datamu supaya membuang tugas yang sedang disembunyikan:
+
+```diff
+-      setTasks(json.data);
++      setTasks(json.data.filter((t) => !hiddenIds.current.has(t.id)));
+```
+
+Terapkan filter yang sama di setiap tempat yang mengisi `tasks` dengan data server, termasuk saat memuat halaman
+berikutnya. Id yang sudah sukses dihapus boleh tetap tersimpan di `hiddenIds`, karena server tidak memakai ulang id.
+
+Pustaka seperti [TanStack Query](/belajar/fullstack/tanstack-query) menyelesaikan masalah ini dengan `cancelQueries`
+dan `onMutate`. Kamu akan merasakan bedanya di pelajaran berikutnya.
+
+## Kapan tidak memakai optimistic UI
+
+<Callout type="analogi" title="Centang daftar belanja vs transfer uang">
+
+Saat belanja di minimarket, kamu langsung mencoret "beli susu" di daftar belanja, tanpa menunggu siapa pun. Kalau
+salah, tinggal tulis lagi. Tapi saat transfer uang kos, kamu tidak bilang ke ibu kos "Sudah terkirim, Bu" sebelum
+m-banking menampilkan "Transfer berhasil". Kesalahan di sana merugikan orang lain dan tidak bisa dibalik dengan
+mudah.
+
+</Callout>
+
+<Compare>
+<CompareItem title="Cocok dibuat optimistis" tone="good">
+
+- Toggle status, favorit, atau like.
+- Hapus **dengan** undo.
+- Mengubah urutan atau label.
+- Aksi yang hampir selalu berhasil dan mudah dibalik.
+
+</CompareItem>
+<CompareItem title="Tunggu server" tone="bad">
+
+- Pembayaran, transfer, atau pengumpulan tugas resmi.
+- Aksi yang sering ditolak validasi, misalnya email duplikat (409).
+- Data yang dibuat server dan dibutuhkan segera, misalnya id untuk navigasi.
+- Efek samping ke orang lain (mengirim email atau notifikasi) tanpa undo.
+
+</CompareItem>
+</Compare>
+
+Pertanyaan penentunya: *kalau UI sempat menampilkan hasil yang salah selama dua detik lalu dikoreksi, apakah pengguna
+dirugikan?* Kalau ya, pilih cara pesimistis dengan indikator loading yang jelas.
+
+## Kesalahan umum
+
+| Gejala | Penyebab | Perbaikan |
+| --- | --- | --- |
+| `GestureDetector must be used as a descendant of GestureHandlerRootView. Otherwise the gestures will not be recognized.` | Root belum dibungkus | Tambahkan `GestureHandlerRootView style={{ flex: 1 }}` di `_layout.js` |
+| Tombol "Hapus" di web tidak memunculkan apa pun | `Alert.alert` kosong di React Native Web | Pakai `confirmAsync` dengan fallback `window.confirm` |
+| `SyntaxError: JSON Parse error: ...` setelah DELETE | `res.json()` dipanggil pada respons 204 | Lewati parsing body saat status 204 di `apiFetch` |
+| Item gagal hapus muncul di paling bawah | Rollback memakai `[...prev, task]` | Simpan indeks, kembalikan dengan `insertAt` |
+| Item terhapus muncul lagi sebentar lalu hilang | Refetch saat DELETE belum terkirim | Filter hasil fetch dengan `hiddenIds` |
+| Pesan "Tugas tidak ditemukan" padahal item sudah hilang | 404 diperlakukan sebagai error | Anggap 404 pada DELETE sebagai sukses |
+| Swipe kanan tidak menutup kembali | Lupa memanggil `close()` | Simpan `ref` dan panggil `swipeRef.current?.close()` |
+
+<Callout type="warning" title="Jangan lupa menguji jalur gagal">
+
+Jalur rollback jarang terpakai, jadi bug di sana sering lolos tanpa ketahuan. Uji dengan sengaja:
+
+1. Matikan API dengan <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd> di terminal API.
+2. Geser salah satu tugas untuk menghapusnya.
+3. Tunggu 5 detik. Item harus kembali ke posisi semula dan alert "Gagal menghapus" muncul.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Tombol hapus di layar detail" difficulty="sedang" hints={["Pakai `confirmAsync` dari `src/lib/confirm.js`.", "Layar detail tidak menampilkan daftar, jadi cara pesimistis sudah cukup.", "Setelah sukses panggil `router.back()`; layar daftar memuat ulang saat fokus."]}>
+
+Tambahkan tombol "Hapus tugas" di layar detail `src/app/tasks/[id]/index.js`.
+
+1. Saat tombol diketuk, minta konfirmasi dengan `confirmAsync`.
+2. Kalau pengguna setuju, kirim DELETE ke `/api/tasks/:id`.
+3. Selama request berjalan, buat tombol nonaktif dan bertuliskan "Menghapus...".
+4. Kalau sukses, kembali ke layar daftar.
+5. Kalau gagal, tampilkan alert berisi pesan error.
+
+<Solution>
+
+```jsx
+// src/app/tasks/[id]/index.js (bagian yang ditambahkan)
+import { useState } from "react";
+import { Alert, Pressable, Text } from "react-native";
+import { router } from "expo-router";
+import { apiFetch } from "../../../lib/api";
+import { confirmAsync } from "../../../lib/confirm";
+
+// di dalam komponen, setelah data task tersedia
+const [deleting, setDeleting] = useState(false);
+
+async function handleDelete() {
+  const ok = await confirmAsync({
+    title: "Hapus tugas?",
+    message: `"${task.title}" dan lampirannya akan dihapus permanen.`,
+  });
+  if (!ok) return;
+
+  setDeleting(true);
+  try {
+    await apiFetch(`/api/tasks/${task.id}`, { method: "DELETE" });
+    router.back();
+  } catch (err) {
+    if (err.status === 404) {
+      router.back();
+      return;
+    }
+    Alert.alert("Gagal menghapus", err.message);
+  } finally {
+    setDeleting(false);
+  }
+}
+
+// di JSX
+<Pressable onPress={handleDelete} disabled={deleting} accessibilityRole="button">
+  <Text style={{ color: "#dc2626", fontWeight: "700" }}>
+    {deleting ? "Menghapus..." : "Hapus tugas"}
+  </Text>
+</Pressable>
+```
+
+Di layar detail kita memilih cara pesimistis. Setelah hapus, pengguna langsung pindah layar, jadi tidak ada daftar
+yang perlu dibuat terasa instan. State `deleting` mencegah ketukan ganda, dan `finally` memastikan tombol aktif lagi
+apa pun hasilnya.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Abaikan jawaban PATCH yang basi" difficulty="sulit" hints={["Simpan penghitung per id di `useRef({})`.", "Tambah penghitung setiap kali `toggleStatus` dipanggil, lalu simpan nilainya di variabel lokal.", "Setelah `await`, cek apakah nilainya masih yang terbaru sebelum mengubah state."]}>
+
+Perbaiki `toggleStatus` supaya jawaban dari request lama tidak menimpa hasil ketukan terbaru pada tugas yang sama.
+Ini skenario "titip absen" di bagian race condition.
+
+1. Beri setiap panggilan `toggleStatus` sebuah nomor urut per id tugas.
+2. Setelah `await`, cek apakah nomor itu masih yang terbaru.
+3. Kalau bukan yang terbaru, abaikan jawabannya, baik sukses maupun gagal.
+
+<Solution>
+
+```js
+const toggleSeq = useRef({});
+
+async function toggleStatus(task) {
+  const seq = (toggleSeq.current[task.id] ?? 0) + 1;
+  toggleSeq.current[task.id] = seq;
+  const isLatest = () => toggleSeq.current[task.id] === seq;
+
+  const previous = task.status;
+  const next = nextStatus(previous);
+  setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: next } : t)));
+
+  try {
+    const json = await apiFetch(`/api/tasks/${task.id}`, {
+      method: "PATCH",
+      body: { status: next },
+    });
+    if (!isLatest()) return;
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, ...json.data } : t)));
+  } catch (err) {
+    if (!isLatest()) return;
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: previous } : t)));
+    Alert.alert("Gagal mengubah status", err.message);
+  }
+}
+```
+
+Setiap panggilan mendapat nomor urut, seperti nomor antrean. Hanya panggilan dengan nomor terbaru yang boleh mengubah
+state. Jawaban basi diabaikan karena UI sudah menampilkan pilihan terakhir pengguna. Kalau perlu koreksi, request
+terbarulah yang akan melakukannya.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Apa balasan API kuliah kalau `DELETE /api/tasks/12` berhasil?",
+    options: ["`200 OK` dengan `{ data: task }`", "`201 Created`", "`204 No Content` tanpa body", "`404 Not Found`"],
+    answer: 2,
+    explain: "Route menutup respons dengan `res.status(204).end()`, jadi tidak ada isi balasan. 200 dengan data dipakai GET dan PATCH, 201 dipakai saat membuat data baru, dan 404 muncul kalau tugas tidak ada atau bukan milikmu.",
+  },
+  {
+    q: "Kamu menguji tombol hapus di browser (Expo web), tetapi tidak terjadi apa-apa. Apa penyebab yang paling mungkin?",
+    options: ["Token sudah kedaluwarsa", "`GestureHandlerRootView` belum dipasang", "Server membalas 204", "`Alert.alert` tidak melakukan apa-apa di React Native Web"],
+    answer: 3,
+    explain: "Di web, `Alert.alert` adalah fungsi kosong. Dialog tidak pernah muncul, jadi request juga tidak terkirim. Token kedaluwarsa akan memunculkan pesan 401, `GestureHandlerRootView` hanya berpengaruh ke gestur, dan 204 justru tanda sukses.",
+  },
+  {
+    q: "Pengguna menghapus tugas A lalu B dengan cepat. DELETE A gagal, DELETE B sukses. Dengan kode berikut, apa yang terlihat setelah rollback A?",
+    code: `const snapshot = tasks;
+setTasks((prev) => prev.filter((t) => t.id !== task.id));
+try {
+  await apiFetch(url, { method: "DELETE" });
+} catch {
+  setTasks(snapshot);
+}`,
+    options: ["Hanya A yang kembali", "A dan B sama-sama muncul lagi, padahal B sudah terhapus di server", "Daftar menjadi kosong", "Aplikasi crash"],
+    answer: 1,
+    explain: "Snapshot A diambil saat B masih ada di daftar. Jadi `setTasks(snapshot)` ikut memunculkan B lagi. Rollback yang tepat hanya mengembalikan item yang gagal, misalnya dengan `insertAt`.",
+  },
+  {
+    q: "Pada pola undo snackbar di pelajaran ini, kapan request DELETE benar-benar dikirim ke server?",
+    options: ["Setelah 5 detik tanpa undo, atau lebih cepat saat ada hapus lain atau layar ditutup", "Seketika saat swipe, lalu undo mengirim POST untuk membuat ulang", "Hanya saat pengguna menekan URUNGKAN", "Saat aplikasi dibuka kembali"],
+    answer: 0,
+    explain: "Seperti surat yang baru dibawa kurir sore hari, DELETE ditunda oleh `setTimeout`. Undo cukup membatalkan timer. Membuat ulang lewat POST akan menghasilkan id baru, dan lampiran yang sudah terhapus tidak bisa kembali.",
+  },
+  {
+    q: "Aksi mana yang paling TIDAK cocok dibuat optimistis?",
+    options: ["Menandai tugas selesai", "Menghapus tugas dengan undo", "Membayar biaya praktikum", "Memberi bintang favorit"],
+    answer: 2,
+    explain: "Pembayaran berdampak besar dan bisa ditolak server, jadi pengguna harus melihat hasil yang pasti, sama seperti menunggu tulisan \"Transfer berhasil\" di m-banking. Tiga aksi lainnya jarang gagal dan mudah dibalik.",
+  },
+]} />
+
+## Ringkasan
+
+- `DELETE /api/tasks/:id` membalas `204` tanpa body. Jangan panggil `res.json()` untuk respons ini. `404` pada DELETE
+boleh dianggap sukses, karena tugasnya memang sudah tidak ada.
+- `Alert.alert` dibungkus menjadi `confirmAsync` yang memakai Promise, dengan `window.confirm` sebagai cadangan di web.
+- Optimistic update: catat posisi item, ubah UI seketika, kirim request, dan kalau gagal kembalikan **hanya item itu**
+ke posisi aslinya.
+- Undo snackbar menunda DELETE sungguhan selama 5 detik, jadi "urungkan" cukup membatalkan timer.
+- `ReanimatedSwipeable` butuh `GestureHandlerRootView` di root. Nilai `direction` adalah arah gerakan jari.
+- Waspadai tiga jebakan race condition: jawaban datang tidak berurutan, rollback dengan snapshot seluruh daftar, dan
+refetch saat hapus masih tertunda.
+- Aksi berisiko tinggi seperti pembayaran harus menunggu jawaban server.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Di aplikasi Tugas & Catatan Kuliah, pasang tiga hal: swipe-to-delete dengan undo di daftar tugas, toggle status
+optimistis lewat swipe kanan, dan tombol hapus pesimistis di layar detail. Uji jalur gagalnya dengan mematikan API.
+
+</Callout>

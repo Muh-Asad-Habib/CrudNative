@@ -1,0 +1,37 @@
+# Lapisan pengaman tambahan. Aturan detail ada di web/.gitignore dan api/.gitignore.
+
+# Dependensi dan hasil build
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Rahasia dan data lokal
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Netlify / Vercel lokal
+.netlify/
+.vercel/
+
+# Editor dan sistem operasi
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Log
+*.log
+npm-debug.log*

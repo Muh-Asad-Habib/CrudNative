@@ -1,0 +1,901 @@
+## Pengantar
+
+Bayangkan malam sebelum demo capstone. Kamu mengubah sedikit cara `sort=-priority` bekerja. Kamu mencoba satu request di Postman, hasilnya benar, lalu tidur tenang. Besok pagi di depan dosen, tugas milik Sari ikut muncul di akun Andi. Penyebabnya satu kondisi `userId` hilang dari query. Postman tidak menangkapnya karena kamu hanya mencoba satu skenario dengan satu akun.
+
+<Callout type="analogi" title="Seperti mencicipi masakan sebelum disajikan">
+
+Juru masak warung yang baik mencicipi masakannya sebelum piring keluar ke pembeli. Kalau kurang garam, ketahuannya di dapur, bukan saat pembeli sudah komplain. Test otomatis adalah "lidah" yang mencicipi API-mu setiap kali kodenya berubah.
+
+Bedanya, lidah manusia capek setelah lima kali mencicipi. Test bisa mencicipi puluhan skenario dalam beberapa detik, dan telitinya sama setiap kali.
+
+</Callout>
+
+**Test otomatis** adalah kode yang menjalankan kode aplikasimu lalu memeriksa hasilnya. API pendamping `api/` (companion) sudah punya 55 test di folder `api/tests/`. Cakupannya mulai dari register sampai rotasi refresh token, CRUD mata kuliah dan tugas, pagination, filter, upload lampiran, dan isolasi data antar user. Isolasi artinya user A tidak bisa melihat atau mengubah data user B.
+
+Di pelajaran ini kita bedah test-test itu. Setelah itu kita tambah hal yang belum ada di companion, ditandai **saran pengembangan**: unit test untuk service, laporan coverage, dan satu fitur baru yang dibangun dengan TDD.
+
+Prasyarat: kamu sudah paham `createApp()` dari [Struktur Proyek Backend](/belajar/crud-backend/struktur-proyek-backend), validasi Zod dari [Validasi & Error Handling](/belajar/crud-backend/validasi-error-handling), dan alur JWT dari [Autentikasi](/belajar/fullstack/autentikasi). Test untuk aplikasi Expo dibahas terpisah di [Testing Mobile](/belajar/expert/testing-mobile).
+
+## Piramida testing untuk API
+
+<Callout type="analogi" title="Tiga cara mencicipi di dapur warung">
+
+- **Unit test** = mencicipi sambalnya saja di sendok kecil. Cepat, dan kalau kurang pedas kamu langsung tahu sumbernya.
+- **Integration test** = mencicipi satu piring nasi goreng lengkap: nasi, bumbu, telur, dan sambal sekaligus. Di sini ketahuan kalau tiap bahan enak sendiri-sendiri tapi aneh saat dicampur.
+- **E2E test** = teman duduk di meja, memesan lewat pelayan, lalu makan seperti pembeli sungguhan. Paling mirip kenyataan, tapi paling lama.
+
+Kamu tidak mungkin menyuruh teman makan seratus kali sehari. Karena itu cicip kecil dilakukan sering, makan lengkap hanya sesekali.
+
+</Callout>
+
+Tiga istilah ini akan sering muncul:
+
+- **Unit test** menguji satu bagian kecil kode, misalnya satu fungsi atau satu service, secara terpisah. Bagian luar seperti database diganti tiruan, atau memang tidak dibutuhkan.
+- **Integration test** menguji beberapa lapisan sekaligus. Untuk API, artinya kamu mengirim request HTTP sungguhan ke aplikasi Express. Request itu melewati middleware, validasi, service, Prisma, sampai database khusus test.
+- **End-to-end (E2E) test** menguji sistem utuh dari sudut pengguna. Contohnya aplikasi Expo di emulator yang memanggil API yang sedang berjalan.
+
+| Lapisan | Contoh di proyek kita | Kecepatan | Yang ditangkap | Jumlah ideal |
+| --- | --- | --- | --- | --- |
+| Unit | `paginationMeta(1, 2, 5)` menghasilkan `totalPages: 3` | milidetik | logika murni, cabang `if` | banyak |
+| Integration | `POST /api/tasks` lewat Supertest ke `test.db` | puluhan milidetik | validasi, auth, query, format respons | banyak (untuk API) |
+| E2E | login di aplikasi lalu membuat tugas | detik sampai menit | alur pengguna lintas sistem | sedikit, alur kritis saja |
+
+Piramida testing klasik berbentuk segitiga. Dasarnya lebar (banyak unit test), puncaknya sempit (sedikit E2E). Namun pada API CRUD, kebanyakan bug muncul di **sambungan** antarlapisan. Contohnya skema Zod yang terlalu longgar, middleware auth yang lupa dipasang, atau `where` Prisma yang kehilangan `userId`. Unit test tidak melihat sambungan itu.
+
+Karena itu companion menjadikan **integration test sebagai tulang punggung**. Test-nya tetap cepat karena SQLite hanya sebuah file di laptopmu. Unit test dipakai untuk logika murni yang rumit.
+
+Diagram di bawah menunjukkan perjalanan satu integration test, dari Vitest sampai file database.
+
+<Flow nodes={["Vitest", "Supertest", "createApp()", "Middleware + Zod", "Service + Prisma", "test.db"]} labels={["menjalankan it()", "request HTTP", "Express", "data valid", "SQL"]} caption="Perjalanan satu integration test di api/tests" />
+
+## Vitest + Supertest melawan createApp()
+
+<Callout type="analogi" title="Pembeli bayangan di dapur yang belum buka">
+
+Kamu ingin menguji warung tanpa membuka pintu untuk umum. Kamu minta teman jadi pembeli bayangan. Ia memesan langsung ke dapur, menerima piringnya, lalu juri menilai hasilnya dengan lembar penilaian.
+
+- Juri dengan lembar penilaian = **Vitest** (menjalankan test dan memeriksa hasil).
+- Pembeli bayangan = **Supertest** (mengirim request ke aplikasi).
+- Dapur yang bisa dipakai tanpa membuka pintu = `createApp()` (aplikasi Express yang belum `listen()` di port mana pun).
+
+</Callout>
+
+**Vitest** adalah *test runner*, yaitu program yang mencari lalu menjalankan test. Ia mencari file `*.test.ts`, menjalankan blok `describe`/`it`, dan menyediakan fungsi `expect` untuk memeriksa hasil. Vitest langsung mendukung ESM dan TypeScript tanpa konfigurasi tambahan. **Supertest** adalah library untuk mengirim request HTTP ke aplikasi Express. Server tidak perlu dinyalakan di port 3000.
+
+```json title="api/package.json (cuplikan)"
+{
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.3.1",
+    "vitest": "^5.0.5"
+  }
+}
+```
+
+Cuplikan ini artinya: perintah `npm test` menjalankan `vitest run`. Ketiga paket di `devDependencies` hanya dipakai saat pengembangan dan tidak ikut terpasang di production.
+
+`vitest run` menjalankan semua test sekali lalu berhenti. Ini cocok untuk CI (pemeriksaan otomatis di server setiap kali kode dikirim). Tanpa kata `run`, Vitest masuk mode *watch*: ia terus berjaga dan mengulang test setiap kali kamu menyimpan file.
+
+Yang membuat API bisa diuji adalah fungsi `createApp()`. Fungsi ini merakit middleware dan route, lalu **mengembalikan** `app` tanpa memanggil `listen()`. Aplikasinya sudah lengkap, hanya belum membuka pintu di port mana pun:
+
+```ts title="api/src/app.ts (cuplikan)"
+// App dibuat lewat fungsi (bukan langsung listen) agar bisa dipakai Supertest di test.
+export function createApp() {
+  const app = express();
+  // ... helmet, cors, express.json(), /api/auth, /api/courses, /api/tasks
+  app.use(notFound);
+  app.use(errorHandler);
+  return app;
+}
+```
+
+`app.listen()` hanya ada di `src/server.ts`, dan test tidak pernah meng-import file itu. Supertest menerima `app`, menyalakannya di port sementara secara otomatis, mengirim request, lalu mematikannya lagi. Companion membungkus Supertest dalam helper kecil:
+
+```ts title="api/tests/helpers.ts (cuplikan)"
+import request from "supertest";
+import { createApp } from "../src/app.ts";
+
+export const app = createApp();
+
+export function api() {
+  return request(app);
+}
+```
+
+Dengan helper ini, setiap test cukup menulis `api().get(...)` atau `api().post(...)`. Semua test memakai satu objek `app` yang sama.
+
+Test paling sederhana ada di `app.test.ts`:
+
+```ts title="api/tests/app.test.ts (cuplikan)"
+import { describe, expect, it } from "vitest";
+import { api } from "./helpers.ts";
+
+describe("App", () => {
+  it("GET /api/health → 200 { status: 'ok' }", async () => {
+    const res = await api().get("/api/health").expect(200);
+    expect(res.body).toEqual({ status: "ok" });
+  });
+
+  it("route yang tidak dikenal → 404 ROUTE_NOT_FOUND", async () => {
+    const res = await api().get("/api/tidak-ada").expect(404);
+    expect(res.body.error.code).toBe("ROUTE_NOT_FOUND");
+    expect(res.body.error.message).toContain("/api/tidak-ada");
+  });
+});
+```
+
+Cara membacanya:
+
+- `describe` mengelompokkan test. `it` adalah satu skenario. Nama skenario ditulis seperti kalimat aturan, jadi laporan test sekaligus menjadi dokumentasi.
+- `.expect(200)` adalah *assertion* (pernyataan "hasilnya harus begini") milik Supertest untuk status code. Kalau meleset, pesannya jelas, misalnya `expected 200 "OK", got 404 "Not Found"`.
+- `res.body` sudah berupa objek hasil parse JSON. Isinya diperiksa dengan `expect(...)` milik Vitest.
+- Callback memakai `async`, dan setiap request di-`await`. Tanpa `await`, test bisa selesai sebelum response datang, seperti juri yang memberi nilai sebelum piringnya sampai.
+
+Jalankan dari folder `api/`:
+
+```bash
+npm test                               # semua file test
+npx vitest run tests/auth.test.ts      # satu file saja
+npx vitest run -t "refresh"            # hanya test yang namanya mengandung "refresh"
+```
+
+```txt
+ ✓ tests/app.test.ts (4 tests)
+ ✓ tests/auth.test.ts (18 tests)
+ ✓ tests/courses.test.ts (9 tests)
+ ✓ tests/tasks.test.ts (24 tests)
+
+ Test Files  4 passed (4)
+      Tests  55 passed (55)
+```
+
+Artinya keempat file test lulus, dengan total 55 skenario.
+
+## Database test yang terisolasi
+
+<Callout type="analogi" title="Latihan di dapur cadangan">
+
+Sebelum lomba masak, kamu berlatih di dapur cadangan dengan bahan sendiri. Bahan jualan hari ini di dapur utama tidak disentuh. Sebelum tiap sesi latihan, meja dibersihkan supaya sisa adonan kemarin tidak mengacaukan hasil.
+
+- Dapur utama berisi bahan jualan = `dev.db` dengan data seed-mu.
+- Dapur cadangan = `test.db`, dibuat khusus untuk test.
+- Membersihkan meja sebelum latihan = `resetDatabase()` di awal tiap file test.
+
+</Callout>
+
+Test companion **menghapus semua tabel** di awal setiap file. Kalau test memakai `dev.db`, akun demo `demo@kampus.ac.id` dan semua data seed-mu ikut lenyap. Solusinya ada tiga lapis.
+
+**Lapis 1: environment khusus test.** *Environment variable* (env) adalah pengaturan yang dibaca aplikasi dari luar kode, misalnya alamat database. Semua nilai untuk test disimpan di satu file:
+
+```ts title="api/tests/test-env.ts"
+// Environment khusus test: database & folder upload terpisah dari development.
+export const testEnv = {
+  NODE_ENV: "test",
+  DATABASE_URL: "file:./test.db",
+  JWT_ACCESS_SECRET: "rahasia-khusus-test-yang-panjangnya-lebih-dari-32-karakter",
+  CORS_ORIGIN: "*",
+  UPLOAD_DIR: "uploads-test",
+} as const;
+```
+
+`DATABASE_URL` menunjuk ke file `test.db`, bukan `dev.db`. Folder upload juga terpisah (`uploads-test`). Secret JWT sengaja dibuat panjang karena aplikasi menolak secret yang terlalu pendek.
+
+**Lapis 2: konfigurasi Vitest.** File ini menyuntikkan env tadi dan mendaftarkan *global setup*, yaitu kode persiapan yang berjalan sekali sebelum semua test:
+
+```ts title="api/vitest.config.ts"
+import { defineConfig } from "vitest/config";
+import { testEnv } from "./tests/test-env.ts";
+
+export default defineConfig({
+  test: {
+    environment: "node",
+    include: ["tests/**/*.test.ts"],
+    env: testEnv,
+    globalSetup: ["tests/global-setup.ts"],
+    // Semua file test memakai satu test.db, jadi dijalankan berurutan.
+    fileParallelism: false,
+    hookTimeout: 60_000,
+    testTimeout: 15_000,
+  },
+});
+```
+
+Isi konfigurasinya, satu per satu:
+
+- `include` memberi tahu Vitest file mana yang dianggap test.
+- `env: testEnv` memasukkan nilai dari Lapis 1 ke `process.env`.
+- `globalSetup` menunjuk file persiapan di Lapis 3.
+- `fileParallelism: false` menjalankan file test bergantian, tidak bersamaan.
+- `hookTimeout` dan `testTimeout` memberi batas waktu (dalam milidetik) sebelum test dianggap macet.
+
+Opsi `test.env` mengisi `process.env` sebelum file test meng-import kode aplikasi. `src/config/env.ts` memang memanggil `import "dotenv/config"` untuk membaca file `.env`. Tetapi dotenv **tidak menimpa** variabel yang sudah ada, mirip kolom formulir yang sudah terisi tidak ditimpa isian cadangan. Hasilnya `DATABASE_URL` tetap `file:./test.db`, bukan nilai dari `.env`. `src/lib/prisma.ts` pun membuat koneksi ke file test itu. Bonusnya, `env.ts` memvalidasi semua variabel dengan Zod, jadi secret test yang terlalu pendek langsung ketahuan.
+
+**Lapis 3: global setup.** File ini berjalan sekali di proses utama, sebelum file test mana pun:
+
+```ts title="api/tests/global-setup.ts"
+import { execSync } from "node:child_process";
+import { rmSync } from "node:fs";
+import { testEnv } from "./test-env.ts";
+
+const TEST_FILES = ["test.db", "test.db-journal", "uploads-test"];
+
+function cleanup() {
+  for (const file of TEST_FILES) {
+    rmSync(file, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+}
+
+// Dijalankan sekali sebelum semua file test: buat test.db baru lalu terapkan migrasi.
+export function setup() {
+  cleanup();
+  execSync("npx prisma migrate deploy", {
+    env: { ...process.env, ...testEnv },
+    stdio: "pipe",
+  });
+}
+
+export function teardown() {
+  try {
+    cleanup();
+  } catch (error) {
+    // Di Windows file .db kadang masih terkunci sesaat; tidak perlu menggagalkan test.
+    console.warn("Gagal membersihkan file test:", error);
+  }
+}
+```
+
+Dalam bahasa sehari-hari:
+
+- `cleanup()` menghapus sisa `test.db` dan folder `uploads-test` dari percobaan sebelumnya.
+- `setup()` membersihkan dulu, lalu menjalankan `npx prisma migrate deploy` agar `test.db` yang baru punya semua tabel.
+- `teardown()` membersihkan lagi setelah semua test selesai. Kalau gagal, misalnya file masih terkunci di Windows, cukup tampilkan peringatan.
+
+Kenapa `migrate deploy`, bukan `migrate dev`? `deploy` hanya menerapkan file migrasi yang sudah ada di `prisma/migrations`. Ia tidak bertanya apa pun dan tidak membuat migrasi baru. Perilaku ini yang dibutuhkan mesin otomatis, sama seperti saat deploy ke production. Prisma CLI membaca `DATABASE_URL` lewat `prisma.config.ts`, dan nilainya datang dari `env` yang dioper ke `execSync`.
+
+Terakhir, setiap file test mengosongkan tabel sendiri di awal dengan `beforeAll(resetDatabase)`. `beforeAll` artinya "jalankan sekali sebelum semua test di file ini":
+
+```ts title="api/tests/helpers.ts (cuplikan)"
+// Kosongkan semua tabel (anak dulu, baru induk) beserta file lampirannya.
+export async function resetDatabase() {
+  const attachments = await prisma.attachment.findMany({ select: { url: true } });
+  await Promise.all(attachments.map((attachment) => removeUploadedFile(attachment.url)));
+
+  await prisma.attachment.deleteMany();
+  await prisma.task.deleteMany();
+  await prisma.course.deleteMany();
+  await prisma.refreshToken.deleteMany();
+  await prisma.user.deleteMany();
+}
+```
+
+Urutannya dari **anak ke induk**: Attachment → Task → Course → RefreshToken → User. Tabel anak menyimpan *foreign key*, yaitu ID milik tabel lain, seperti NIM yang tertulis di lembar KRS. Kalau induk dihapus duluan, data anak menunjuk ke sesuatu yang sudah tidak ada, dan database menolaknya. Di akhir file, `afterAll(() => prisma.$disconnect())` menutup koneksi agar proses test bisa selesai dengan bersih.
+
+<FileTree title="api" tree={`
+tests/
+  * test-env.ts # env khusus test
+  * global-setup.ts # buat test.db + migrate deploy
+  helpers.ts # api(), resetDatabase(), registerUser()
+  app.test.ts
+  auth.test.ts
+  courses.test.ts
+  tasks.test.ts
+test.db # dibuat saat test, dihapus saat teardown
+uploads-test/ # lampiran selama test
+vitest.config.ts
+`} />
+
+<Callout type="warning" title="Harga dari satu database bersama">
+
+`fileParallelism: false` membuat file test berjalan bergantian, karena keempatnya berbagi satu `test.db`. Cara ini aman dan sederhana. Kekurangannya, makin banyak file, makin lama total waktunya. Kalau suatu saat terasa lambat, ini **saran pengembangan**-nya: buat satu file database per *worker* (proses Vitest yang berjalan paralel), dengan nama file dari `process.env.VITEST_POOL_ID`. Pilihan lain adalah server database di Docker untuk tiap pipeline CI.
+
+</Callout>
+
+## Factory dan helper data
+
+Test yang enak dibaca mengikuti pola **Arrange–Act–Assert**: siapkan data (Arrange), lakukan aksi (Act), lalu periksa hasil (Assert). Bagian "siapkan data" paling sering berulang. Di situlah **factory** membantu. Factory adalah fungsi pembuat data test, mirip cetakan kue: sekali punya cetakan, kamu bisa mencetak kue yang sama berkali-kali dan menghiasnya sedikit berbeda bila perlu.
+
+```ts title="api/tests/helpers.ts (cuplikan)"
+let userCounter = 0;
+
+// Daftarkan user baru lewat API dan kembalikan token + header Authorization siap pakai.
+export async function registerUser(overrides: { name?: string; email?: string } = {}): Promise<TestUser> {
+  userCounter += 1;
+  const password = "password123";
+  const res = await api()
+    .post("/api/auth/register")
+    .send({
+      name: overrides.name ?? `User ${userCounter}`,
+      email: overrides.email ?? `user${userCounter}-${Date.now()}@kampus.ac.id`,
+      password,
+    })
+    .expect(201);
+
+  const { user, accessToken, refreshToken } = res.body.data;
+  return { user, accessToken, refreshToken, password, auth: { Authorization: `Bearer ${accessToken}` } };
+}
+```
+
+Fungsi ini mendaftarkan user baru lewat `POST /api/auth/register` dan memastikan statusnya 201. Hasilnya berisi data user, token, dan header `auth` yang siap ditempel ke request berikutnya.
+
+Ada tiga keputusan desain yang patut kamu tiru:
+
+- **Email selalu unik.** Isinya gabungan penghitung dan `Date.now()` (waktu sekarang dalam milidetik). Jadi test bisa diulang dan diacak urutannya tanpa bentrok `409 Email sudah terdaftar`.
+- **`overrides` opsional.** Parameter ini hanya diisi bila test butuh nilai tertentu, misalnya test login yang perlu tahu email-nya.
+- **`auth` siap pakai.** Test cukup menulis `.set(user.auth)`.
+
+`tasks.test.ts` punya factory sendiri untuk tugas, plus fungsi tanggal relatif:
+
+```ts title="api/tests/tasks.test.ts (cuplikan)"
+function daysFromNow(days: number) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+async function createTask(user: TestUser, body: Record<string, unknown>) {
+  const res = await api().post("/api/tasks").set(user.auth).send(body).expect(201);
+  return res.body.data;
+}
+```
+
+`daysFromNow(-1)` menghasilkan tanggal kemarin, `daysFromNow(1)` tanggal besok. Karena dihitung dari hari ini, test tidak "basi" bulan depan. `createTask` membuat tugas lewat API dan langsung mengembalikan datanya.
+
+`.expect(201)` di dalam factory punya tugas jelas. Kalau pembuatan data gagal, test langsung berhenti di baris yang benar. Tanpa itu, test baru gagal tiga langkah kemudian dengan pesan yang membingungkan. Ada juga `TINY_PNG`, yaitu gambar PNG 1×1 piksel dalam bentuk `Buffer` (data biner di memori). Test upload jadi tidak butuh file gambar di disk.
+
+Membuat data lewat API memang sedikit lebih lambat daripada `prisma.user.create(...)` langsung. Namun hasilnya lebih jujur: password benar-benar di-hash dan token benar-benar diterbitkan. Membuat data lewat Prisma langsung cocok untuk kondisi yang tidak bisa dibuat lewat API. Syaratnya, kamu sadar aturan bisnis di service ikut terlewati.
+
+## Menguji alur auth dan kepemilikan
+
+<Callout type="analogi" title="Satpam kos dan kamar orang lain">
+
+Andi dan Bob sama-sama penghuni kos. Bob datang ke satpam dan minta kunci kamar nomor 7, padahal itu kamar Andi. Satpam yang bijak cukup bilang "kamar itu tidak ada di daftarmu". Ia tidak bilang "kamar 7 ada, tapi bukan punyamu", karena kalimat itu memberi tahu Bob bahwa kamar 7 berpenghuni.
+
+- Datang tanpa kartu penghuni = **401** (belum login).
+- Kartu penghuni sudah lewat masa berlaku = **401** dengan kode `TOKEN_EXPIRED`.
+- Minta kunci kamar orang lain = **404** (diperlakukan seperti kamar itu tidak ada).
+
+</Callout>
+
+Mulai dari yang paling dasar. *Endpoint* terlindungi (alamat API yang hanya boleh dipakai setelah login) wajib menolak request tanpa token.
+
+```ts title="api/tests/tasks.test.ts (cuplikan)"
+it("wajib login → 401", async () => {
+  await api().get("/api/tasks").expect(401);
+});
+```
+
+*Access token* (tiket login berumur pendek, mirip gelang tiket konser) di companion berlaku 15 menit. Untuk menguji token kedaluwarsa, kamu tidak perlu menunggu 15 menit. Buat saja token yang **sudah** kedaluwarsa dengan secret test:
+
+```ts title="api/tests/auth.test.ts (cuplikan)"
+it("token kedaluwarsa → 401 TOKEN_EXPIRED", async () => {
+  const { user } = await registerUser();
+  const expired = jwt.sign({}, env.JWT_ACCESS_SECRET, { subject: String(user.id), expiresIn: -10 });
+  const res = await api().get("/api/auth/me").set("Authorization", `Bearer ${expired}`).expect(401);
+  expect(res.body.error.code).toBe("TOKEN_EXPIRED");
+});
+```
+
+`expiresIn: -10` artinya token ini sudah habis 10 detik yang lalu. Server harus menolaknya dengan 401 dan kode `TOKEN_EXPIRED`.
+
+Kode error yang berbeda (`TOKEN_EXPIRED`, bukan `UNAUTHORIZED`) adalah kontrak dengan aplikasi mobile. Hanya kode itu yang memicu refresh token otomatis di aplikasi. Test ini menjaga agar kontrak tersebut tidak berubah diam-diam.
+
+Berikutnya test keamanan yang paling berharga: **isolasi antar user**. Alice membuat tugas, lalu Bob mencoba melihat, mengubah, dan menghapusnya.
+
+```ts title="api/tests/tasks.test.ts (cuplikan)"
+describe("Tasks isolasi antar user", () => {
+  it("user lain tidak bisa melihat, mengubah, atau menghapus tugas", async () => {
+    const alice = await registerUser({ name: "Alice" });
+    const bob = await registerUser({ name: "Bob" });
+    const task = await createTask(alice, { title: "Milik Alice" });
+
+    const list = await api().get("/api/tasks").set(bob.auth).expect(200);
+    expect(list.body.data).toEqual([]);
+    expect(list.body.meta.total).toBe(0);
+
+    await api().get(`/api/tasks/${task.id}`).set(bob.auth).expect(404);
+    await api().patch(`/api/tasks/${task.id}`).set(bob.auth).send({ title: "Dibajak" }).expect(404);
+    await api().delete(`/api/tasks/${task.id}`).set(bob.auth).expect(404);
+
+    const stillThere = await api().get(`/api/tasks/${task.id}`).set(alice.auth).expect(200);
+    expect(stillThere.body.data.title).toBe("Milik Alice");
+  });
+});
+```
+
+Langkah demi langkah:
+
+1. Alice dan Bob mendaftar. Alice membuat satu tugas.
+2. Daftar tugas Bob harus kosong, dengan `total` 0.
+3. Bob mencoba `GET`, `PATCH`, dan `DELETE` tugas Alice. Ketiganya harus 404.
+4. Alice membuka tugasnya lagi. Judulnya harus masih "Milik Alice".
+
+Langkah 4 sering terlupa. Status 404 saja belum cukup, karena bisa saja server mengubah data **dulu**, baru membalas error. Langkah ini memastikan data Alice benar-benar utuh.
+
+Kenapa 404, bukan **403 Forbidden**? Jawabannya ada di service:
+
+```ts title="api/src/modules/tasks/tasks.service.ts (cuplikan)"
+export async function getTask(userId: number, id: number) {
+  // Tugas milik user lain diperlakukan seperti tidak ada (404), bukan 403.
+  const task = await prisma.task.findFirst({ ...taskQueryArgs, where: { id, userId } });
+  if (!task) {
+    throw HttpError.notFound("Tugas tidak ditemukan");
+  }
+  return task;
+}
+```
+
+Kuncinya ada di `where: { id, userId }`. Prisma hanya mencari tugas yang ID-nya cocok **dan** pemiliknya user yang sedang login. Tugas milik orang lain tidak ketemu, jadi service melempar 404.
+
+Status 403 berarti "data ini ada, tapi bukan milikmu". Penyerang jadi bisa menebak ID mana saja yang ada. Status 404 tidak membocorkan apa pun. Keduanya desain yang sah, asalkan test **mengunci** pilihanmu. Kalau API-mu sengaja memakai 403 (misalnya panel admin dengan peran berbeda), tulis `.expect(403)` dan periksa kode `FORBIDDEN`. Celah mengakses data orang lain hanya dengan mengganti ID di URL disebut BOLA/IDOR, dibahas di [Keamanan API](/belajar/expert/keamanan-api).
+
+Aturan kepemilikan juga berlaku untuk relasi. Misalnya kamu membuat tugas dengan `courseId` milik user lain. API membalas 400 di field `courseId` dengan pesan `Mata kuliah tidak ditemukan`. Test companion memeriksanya dengan `toEqual` pada array `details`.
+
+## Menguji error validasi
+
+Error validasi adalah kontrak dengan layar form di aplikasi mobile. Layar itu menampilkan isi `details` di bawah tiap input, seperti petugas yang mengembalikan formulir dengan coretan merah di kolom yang salah. Companion menguji kelima field sekaligus:
+
+```ts title="api/tests/tasks.test.ts (cuplikan)"
+it("POST tidak valid → 400 dengan detail untuk setiap field", async () => {
+  const res = await api()
+    .post("/api/tasks")
+    .set(user.auth)
+    .send({ title: "", deadline: "besok", status: "SELESAI", priority: "URGENT", courseId: "abc" })
+    .expect(400);
+
+  expect(res.body.error.code).toBe("VALIDATION_ERROR");
+  expect(res.body.error.message).toEqual(expect.any(String));
+
+  const byField = Object.fromEntries(
+    res.body.error.details.map((detail: { field: string; message: string }) => [detail.field, detail.message]),
+  );
+  expect(Object.keys(byField).sort()).toEqual(["courseId", "deadline", "priority", "status", "title"]);
+  expect(byField.title).toBe("Judul wajib diisi");
+  expect(byField.deadline).toBe("Deadline harus berformat tanggal ISO 8601");
+  expect(byField.status).toBe("Status harus TODO, IN_PROGRESS, atau DONE");
+  expect(byField.priority).toBe("Prioritas harus LOW, MEDIUM, atau HIGH");
+});
+```
+
+Test ini mengirim lima nilai salah sekaligus: judul kosong, deadline "besok", status dan prioritas yang tidak dikenal, serta `courseId` berupa huruf. Hasilnya harus 400 dengan kode `VALIDATION_ERROR` dan satu pesan untuk tiap field.
+
+`details` diubah menjadi objek `field → message` dengan `Object.fromEntries`, supaya assertion tidak bergantung pada urutan error. Pesan yang tampil ke pengguna diperiksa persis, huruf demi huruf. Ada juga kasus yang hanya peduli **field mana** yang salah. Untuk itu companion memakai `expect.arrayContaining`, misalnya pada test query `limit > 50 atau page < 1 → 400`.
+
+*Matcher* adalah fungsi pembanding yang ditulis setelah `expect(...)`. Ini yang paling sering dipakai di `api/tests`:
+
+| Matcher | Arti | Contoh pemakaian |
+| --- | --- | --- |
+| `toEqual(x)` | sama persis secara rekursif | bentuk task dengan nilai default |
+| `toMatchObject(x)` | cocok sebagian, field lain diabaikan | POST lengkap dengan ringkasan course |
+| `expect.any(Number)` | nilai apa pun bertipe itu | `id`, `createdAt` |
+| `expect.arrayContaining([...])` | array memuat minimal elemen ini | daftar field yang error |
+| `expect.stringMatching(/re/)` | string cocok dengan regex | URL lampiran `/uploads/...png` |
+| `not.toHaveProperty("userId")` | properti tidak boleh ada | respons tidak membocorkan `userId` |
+
+## Mock atau database asli?
+
+<Callout type="analogi" title="Latihan sidang dengan teman yang pura-pura jadi dosen">
+
+Sebelum sidang skripsi, kamu latihan dengan teman yang berperan sebagai dosen penguji. Kamu bisa menyuruhnya bertanya apa saja, termasuk pertanyaan sulit yang jarang muncul. Latihannya cepat dan bisa diulang kapan pun. Kelemahannya, teman itu tidak tahu kebiasaan dosen asli. Kamu bisa lancar saat latihan, lalu tetap kaget di sidang sungguhan.
+
+- Teman yang pura-pura jadi dosen = **mock**.
+- Dosen penguji asli = database test sungguhan.
+
+</Callout>
+
+**Mock** adalah tiruan objek yang perilakunya kita atur sendiri di test. Contohnya `prisma.task.findFirst` yang dipaksa selalu mengembalikan `null`.
+
+<Compare>
+<CompareItem title="Mock Prisma" tone="neutral">
+
+- Sangat cepat, tanpa file database.
+- Mudah memaksa kondisi langka, misalnya database error atau data tidak ditemukan.
+- Bisa "berbohong". Mock tidak tahu soal `nulls: "last"`, unique constraint email, atau `onDelete: Cascade`. Test tetap hijau walau query-nya salah.
+- Terikat detail kode. Kalau query di-refactor (ditulis ulang tanpa mengubah hasil), test bisa patah walau perilakunya sama.
+
+</CompareItem>
+<CompareItem title="Database test asli (pilihan companion)" tone="good">
+
+- Menguji query, migrasi, dan constraint yang sebenarnya.
+- Test fokus pada perilaku (request masuk, response keluar), jadi kamu bebas merapikan kode di dalamnya.
+- Lebih lambat. Butuh reset data dan urutan yang terkendali.
+- Butuh mesin database yang sama dengan production agar hasilnya bisa dipercaya.
+
+</CompareItem>
+</Compare>
+
+Aturan praktisnya begini. Pakai mock untuk layanan luar yang bukan milikmu, lambat, atau tidak stabil: layanan email, payment gateway, push notification, dan jam sistem. Pakai **database asli untuk lapisan datamu sendiri**. Satu catatan: kalau production nanti memakai PostgreSQL, database test sebaiknya PostgreSQL juga. Perilaku seperti `contains` (peka huruf besar-kecil atau tidak) bisa berbeda dari SQLite.
+
+## Unit test untuk service (saran pengembangan)
+
+Companion belum punya unit test. Ada dua tingkat yang bisa kamu tambahkan: fungsi murni, lalu service dengan Prisma tiruan.
+
+### Fungsi murni
+
+*Fungsi murni* adalah fungsi yang hasilnya hanya bergantung pada input, tanpa menyentuh database, file, atau jam. Mirip kalkulator: `2 + 3` selalu `5`, kapan pun kamu menekannya. Fungsi seperti ini paling mudah diuji. Contohnya `src/lib/pagination.ts`:
+
+```ts title="api/src/lib/pagination.ts (cuplikan)"
+export function paginate(page: number, limit: number) {
+  return { skip: (page - 1) * limit, take: limit };
+}
+
+export function paginationMeta(page: number, limit: number, total: number) {
+  return { page, limit, total, totalPages: Math.ceil(total / limit) };
+}
+```
+
+`paginate` mengubah nomor halaman menjadi `skip` (berapa baris dilewati) dan `take` (berapa baris diambil). `paginationMeta` menghitung info halaman untuk respons. Test-nya cukup memanggil fungsi dan membandingkan hasil:
+
+```ts title="api/tests/unit/pagination.test.ts"
+import { describe, expect, it } from "vitest";
+import { paginate, paginationMeta } from "../../src/lib/pagination.ts";
+
+describe("pagination", () => {
+  it("paginate menghitung skip dan take", () => {
+    expect(paginate(1, 10)).toEqual({ skip: 0, take: 10 });
+    expect(paginate(3, 2)).toEqual({ skip: 4, take: 2 });
+  });
+
+  it("paginationMeta membulatkan totalPages ke atas", () => {
+    expect(paginationMeta(1, 2, 5)).toEqual({ page: 1, limit: 2, total: 5, totalPages: 3 });
+    expect(paginationMeta(1, 10, 0).totalPages).toBe(0);
+  });
+});
+```
+
+Test pertama memeriksa halaman 3 dengan 2 item per halaman: lewati 4 baris, ambil 2. Test kedua memeriksa 5 data dengan 2 per halaman, yang dibulatkan ke atas menjadi 3 halaman. File di `tests/unit/` otomatis ikut dijalankan karena pola `include` adalah `tests/**/*.test.ts`.
+
+### Service dengan Prisma tiruan
+
+`tasks.service.ts` meng-import objek `prisma` secara langsung. Jadi yang kita ganti adalah **modulnya** (satu file utuh), memakai `vi.mock`:
+
+```ts title="api/tests/unit/tasks.service.test.ts"
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createTask, getTask } from "../../src/modules/tasks/tasks.service.ts";
+
+const mocks = vi.hoisted(() => ({
+  taskFindFirst: vi.fn(),
+  taskCreate: vi.fn(),
+  courseFindFirst: vi.fn(),
+}));
+
+vi.mock("../../src/lib/prisma.ts", () => ({
+  prisma: {
+    task: { findFirst: mocks.taskFindFirst, create: mocks.taskCreate },
+    course: { findFirst: mocks.courseFindFirst },
+  },
+}));
+
+beforeEach(() => {
+  vi.resetAllMocks();
+});
+
+describe("tasks.service (unit)", () => {
+  it("getTask melempar 404 dan selalu memfilter userId", async () => {
+    mocks.taskFindFirst.mockResolvedValue(null);
+
+    await expect(getTask(1, 99)).rejects.toMatchObject({
+      status: 404,
+      code: "NOT_FOUND",
+      message: "Tugas tidak ditemukan",
+    });
+    expect(mocks.taskFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 99, userId: 1 } }),
+    );
+  });
+
+  it("createTask menolak course milik user lain tanpa menyentuh tabel task", async () => {
+    mocks.courseFindFirst.mockResolvedValue(null);
+
+    await expect(createTask(1, { title: "Curang", courseId: 7 })).rejects.toMatchObject({
+      status: 400,
+      details: [{ field: "courseId", message: "Mata kuliah tidak ditemukan" }],
+    });
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
+  });
+});
+```
+
+Cara membacanya:
+
+- `vi.hoisted` membuat tiga fungsi palsu (`vi.fn()`) yang hasilnya bisa kita atur.
+- `vi.mock` mengganti isi `src/lib/prisma.ts` dengan objek palsu yang memakai fungsi-fungsi tadi.
+- `vi.resetAllMocks()` di `beforeEach` menghapus pengaturan dan catatan panggilan sebelum tiap test.
+- Test pertama mengatur `findFirst` agar mengembalikan `null`. Lalu ia memastikan `getTask` melempar 404 dan memanggil Prisma dengan filter `userId`.
+- Test kedua memastikan `createTask` menolak course milik orang lain dan tidak pernah memanggil `task.create`.
+
+Vitest mengangkat (*hoist*) `vi.mock` ke paling atas file, bahkan sebelum `import`. Karena itu fungsi tiruannya dibuat dengan `vi.hoisted` agar sudah ada saat factory mock dijalankan. Test ini membuktikan logika cabang dalam hitungan milidetik. Test ini **tidak** membuktikan bahwa query Prisma-nya benar. Itu tetap tugas integration test.
+
+<Callout type="tip" title="Mock yang ribet adalah tanda desain perlu dirapikan">
+
+Kalau kamu harus memalsukan sepuluh method Prisma demi satu test, service-nya mungkin terlalu banyak tahu soal database. Pola repository dan *dependency injection* (dependensi diberikan dari luar, bukan di-import langsung) dibahas di [Arsitektur Bersih & Pola Desain](/belajar/expert/clean-architecture). Dengan pola itu, service bisa diuji memakai objek palsu sederhana tanpa `vi.mock`.
+
+</Callout>
+
+## Coverage: seberapa banyak kode tersentuh test
+
+**Coverage** adalah persentase baris, cabang (`if`/`else`), dan fungsi yang dijalankan selama test. Bayangkan daftar menu warung yang kamu centang setiap kali sebuah menu sudah dicicipi. Daftar itu menunjukkan menu mana yang belum pernah dicicipi sama sekali. Tapi centang tidak menjamin rasanya sudah dinilai dengan teliti.
+
+Companion belum memasang coverage. Langkah berikut adalah **saran pengembangan**. Paket provider (pengukur coverage) harus satu versi dengan Vitest:
+
+```bash
+npm install -D @vitest/coverage-v8@5.0.5
+```
+
+```diff title="api/vitest.config.ts"
+     hookTimeout: 60_000,
+     testTimeout: 15_000,
++    coverage: {
++      provider: "v8",
++      include: ["src/**/*.ts"],
++      exclude: ["src/generated/**", "src/server.ts"],
++      reporter: ["text", "html"],
++      thresholds: {
++        lines: 80,
++        functions: 80,
++        branches: 70,
++        statements: 80,
++      },
++    },
+   },
+ });
+```
+
+Artinya: ukur semua file di `src/`, kecuali kode hasil generate Prisma (bukan kode yang kamu tulis) dan `server.ts`. Tampilkan hasilnya di terminal (`text`) dan sebagai halaman web (`html`). Bagian `thresholds` berisi ambang minimum dalam persen.
+
+Jalankan dengan `npx vitest run --coverage`, atau tambahkan script `"test:coverage": "vitest run --coverage"`. Terminal menampilkan tabel per file. Laporan HTML yang bisa diklik ada di `coverage/index.html`. Jangan lupa menambahkan `coverage/` ke `.gitignore`.
+
+Kalau angka turun di bawah ambang (*threshold*), Vitest gagal dengan exit code 1, yaitu tanda "gagal" bagi mesin. Pipeline CI pun ikut merah. Bentuk pesannya seperti ini (angka hanya ilustrasi):
+
+```txt
+ERROR: Coverage for branches (64.2%) does not meet global threshold (70%)
+```
+
+Angka coverage menunjukkan **apa yang belum diuji**, bukan bukti bahwa kode yang tersentuh sudah benar. Baris yang dijalankan tanpa pemeriksaan tetap terhitung "tercakup". Jangan mengejar 100%. Pastikan jalur kritis (auth, kepemilikan, validasi, upload) tercakup, lalu biarkan ambang mencegah coverage turun diam-diam.
+
+## Test yang flaky dan cara mencegahnya
+
+Test **flaky** kadang lulus, kadang gagal, padahal kodenya tidak berubah. Mirip alarm motor yang sering bunyi sendiri tanpa ada maling. Lama-lama tetangga tidak peduli lagi, termasuk saat maling sungguhan datang. Tim yang terbiasa melihat test merah tanpa sebab juga mulai mengabaikannya. Karena itu test flaky lebih berbahaya daripada tidak punya test. Companion mengantisipasi banyak penyebabnya:
+
+| Penyebab | Gejala | Pencegahan di companion |
+| --- | --- | --- |
+| Beberapa file menulis ke database yang sama secara paralel | gagal acak saat dijalankan bersama | `fileParallelism: false` |
+| Test saling bergantung pada data test lain | lulus saat semua dijalankan, gagal saat `-t` | tiap `describe` membuat user sendiri via `registerUser()` |
+| Tanggal ditulis mati di kode | tiba-tiba gagal setelah tanggal tertentu | `daysFromNow()` |
+| Urutan hasil tidak pasti | dua baris dengan `createdAt` sama tertukar | `ORDER_BY` di service memakai `id` sebagai pengurut kedua |
+| Data unik bertabrakan | `409 Email sudah terdaftar` | email berisi penghitung + `Date.now()` |
+| Migrasi lambat di laptop pelan | `Hook timed out in 10000ms` | `hookTimeout: 60_000` |
+| Rate limiter ikut aktif | 429 setelah 20 kali login | `skip: () => isTest` di `src/middleware/rate-limit.ts` |
+| File terkunci di Windows | `EBUSY: resource busy or locked` | `rmSync` dengan `maxRetries`, teardown dengan `try/catch` |
+
+Untuk memburu test yang bergantung pada urutan, acak urutan test dengan `npx vitest run --sequence.shuffle`. Jangan "memperbaiki" test flaky hanya dengan opsi `retry` (mengulang test yang gagal). Cara itu menyembunyikan bug, termasuk *race condition*: dua proses berebut data yang sama, dan hasilnya tergantung siapa yang lebih cepat. Bug seperti itu suatu hari bisa muncul di production.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Pesan error yang sering muncul">
+
+- **`expected 200 "OK", got 401 "Unauthorized"`**: biasanya kamu lupa `.set(user.auth)`. Kalau `got 400`, cetak `res.body.error.details` untuk melihat field mana yang ditolak.
+- **``The table `main.Task` does not exist in the current database.``**: `test.db` belum dimigrasi. Penyebab umumnya, kamu mengubah `prisma/schema.prisma` tetapi belum membuat file migrasi. Jalankan `npx prisma migrate dev --name <nama-perubahan>` agar `migrate deploy` di global setup punya file untuk diterapkan.
+- **Test hijau padahal endpoint rusak**: ada request yang tidak di-`await`, atau `rejects` tanpa `await expect(...)`. Test selesai sebelum assertion sempat berjalan.
+- **Data development hilang**: test berjalan dengan `DATABASE_URL` milik development. Jalankan test lewat `npm test` dari folder `api/` agar `vitest.config.ts` terbaca.
+
+</Callout>
+
+Kalau `test.db` tertinggal dan terkunci setelah test dihentikan paksa, tutup dulu proses yang masih berjalan. Lalu hapus file-nya secara manual dari folder `api/`:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+Remove-Item -Recurse -Force test.db, test.db-journal, uploads-test -ErrorAction SilentlyContinue
+npm test
+```
+
+</Tab>
+<Tab>
+
+```bash
+rm -rf test.db test.db-journal uploads-test
+npm test
+```
+
+</Tab>
+</Tabs>
+
+## Latihan
+
+<Exercise title="TDD: filter tugas terlambat (overdue)" difficulty="sedang" hints={["Tulis test di `tests/tasks.test.ts` supaya bisa memakai `createTask`, `daysFromNow`, dan `titles`.", "Query string selalu berupa teks; Zod 4 punya `z.stringbool()` untuk mengubah \"true\"/\"false\" menjadi boolean.", "Jangan menimpa `where.status` karena filter `status` sudah memakainya; pakai `where.NOT`."]}>
+
+Tim mobile ingin menambah tab "Terlambat". Untuk itu, `GET /api/tasks?overdue=true` harus mengembalikan tugas yang memenuhi dua syarat: deadline-nya sudah lewat dan statusnya belum `DONE`. Kalau nilai `overdue` bukan `true` atau `false`, API harus menolak dengan 400 dan menyebut field `overdue`.
+
+Kerjakan dengan siklus TDD (*Test-Driven Development*). Artinya, test ditulis sebelum kodenya. Mirip menulis daftar "masakan dianggap jadi kalau..." sebelum mulai memasak. Daftar = test, masakan = kode. Bedanya, daftar ini bisa dicek ulang oleh mesin kapan saja.
+
+1. **Red**: tulis test-nya dulu, lalu jalankan. Pastikan test gagal karena alasan yang benar, yaitu fiturnya memang belum ada.
+2. **Green**: tulis kode paling sederhana di `tasks.schemas.ts` dan `tasks.service.ts` sampai test lulus.
+3. **Refactor**: rapikan kode bila perlu. Setelah itu, jalankan seluruh test sekali lagi.
+
+<Solution>
+
+**Red.** Tambahkan blok ini di bagian bawah `tests/tasks.test.ts`:
+
+```ts title="api/tests/tasks.test.ts (tambahan)"
+describe("Tasks filter overdue", () => {
+  let user: TestUser;
+
+  beforeAll(async () => {
+    user = await registerUser();
+    await createTask(user, { title: "Laporan Praktikum", status: "TODO", deadline: daysFromNow(-1) });
+    await createTask(user, { title: "Kuis SQL", status: "DONE", deadline: daysFromNow(-2) });
+    await createTask(user, { title: "Presentasi", status: "IN_PROGRESS", deadline: daysFromNow(1) });
+    await createTask(user, { title: "Baca Materi", status: "TODO" });
+  });
+
+  it("overdue=true → hanya tugas lewat deadline yang belum DONE", async () => {
+    const res = await api().get("/api/tasks").query({ overdue: "true" }).set(user.auth).expect(200);
+    expect(titles(res)).toEqual(["Laporan Praktikum"]);
+    expect(res.body.meta.total).toBe(1);
+  });
+
+  it("overdue bukan boolean → 400 di field overdue", async () => {
+    const res = await api().get("/api/tasks").query({ overdue: "mungkin" }).set(user.auth).expect(400);
+    expect(res.body.error.details).toEqual([{ field: "overdue", message: "overdue harus true atau false" }]);
+  });
+});
+```
+
+Blok ini membuat satu user dan empat tugas. Hanya "Laporan Praktikum" yang lolos dua syarat: deadline kemarin dan status `TODO`. "Kuis SQL" sudah lewat tetapi sudah `DONE`. "Presentasi" deadline-nya besok. "Baca Materi" tidak punya deadline. Test kedua mengirim nilai ngawur `"mungkin"` dan berharap ditolak.
+
+Jalankan `npx vitest run tests/tasks.test.ts -t "overdue"`. Opsi `-t` hanya menjalankan test yang namanya mengandung kata itu. Kedua test gagal. Penyebabnya, `z.object` membuang key yang tidak dikenal, jadi `overdue` diabaikan begitu saja:
+
+```txt
+FAIL  tests/tasks.test.ts > Tasks filter overdue > overdue=true → hanya tugas lewat deadline yang belum DONE
+AssertionError: expected [ 'Baca Materi', 'Presentasi', …(2) ] to deeply equal [ 'Laporan Praktikum' ]
+
+FAIL  tests/tasks.test.ts > Tasks filter overdue > overdue bukan boolean → 400 di field overdue
+Error: expected 400 "Bad Request", got 200 "OK"
+```
+
+**Green.** Tambahkan field di skema query dan kondisinya di `buildWhere`:
+
+```diff title="api/src/modules/tasks/tasks.schemas.ts"
+   courseId: z.coerce.number().int().positive().optional(),
++  overdue: z.stringbool({ error: "overdue harus true atau false" }).optional(),
+   q: z.string().trim().max(100).optional(),
+```
+
+```diff title="api/src/modules/tasks/tasks.service.ts"
+   if (query.courseId) where.courseId = query.courseId;
++  if (query.overdue) {
++    where.deadline = { lt: new Date() };
++    where.NOT = { status: "DONE" };
++  }
+   if (query.q) {
+```
+
+Penjelasan singkatnya:
+
+- `z.stringbool()` mengubah teks `"true"` atau `"false"` dari query string menjadi boolean. Teks lain ditolak dengan pesan yang kamu tulis.
+- `{ lt: new Date() }` berarti "deadline lebih kecil dari sekarang". `lt` singkatan dari *less than*.
+- `where.NOT = { status: "DONE" }` berarti "status apa saja selain `DONE`".
+
+`overdue=false` sengaja diperlakukan sama dengan tanpa filter. Kenapa `where.NOT` dan bukan `where.status`? Karena `where.status` sudah dipakai filter `status`. Kalau ditimpa, filter itu ikut rusak. Jalankan `npm test` sekali lagi. Semua test lama harus tetap hijau, ditambah dua test baru.
+
+**Refactor.** Kodenya sudah ringkas, jadi tidak perlu dirapikan. Yang tersisa hanya memperbarui dokumentasi query di `api/README.md`. Dengan begitu tim mobile tahu filter baru ini ada.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Lampiran milik orang lain tidak boleh dihapus" difficulty="mudah" hints={["Pakai `registerUser()` untuk membuat user kedua.", "Pastikan juga file fisiknya masih ada dengan `existsSync(storedPath(url))`."]}>
+
+Companion sudah menguji upload ke tugas orang lain. Yang belum diuji adalah orang lain mencoba **menghapus** lampiran. Tulis test-nya di dalam `describe("Lampiran (attachments)")` pada `tests/tasks.test.ts`:
+
+1. Pemilik tugas mengunggah `TINY_PNG` sebagai lampiran.
+2. Buat user kedua (orang asing) dengan `registerUser()`.
+3. Orang asing mengirim `DELETE` ke lampiran tadi.
+4. Pastikan responsnya 404.
+5. Pastikan file fisiknya masih ada di folder upload.
+
+<Solution>
+
+```ts title="api/tests/tasks.test.ts (tambahan)"
+it("hapus lampiran milik user lain → 404 dan file tetap ada", async () => {
+  const upload = await api()
+    .post(`/api/tasks/${taskId}/attachments`)
+    .set(user.auth)
+    .attach("file", TINY_PNG, { filename: "milik-pemilik.png", contentType: "image/png" })
+    .expect(201);
+  const attachment = upload.body.data;
+
+  const stranger = await registerUser();
+  const res = await api()
+    .delete(`/api/tasks/${taskId}/attachments/${attachment.id}`)
+    .set(stranger.auth)
+    .expect(404);
+
+  expect(res.body.error.message).toBe("Lampiran tidak ditemukan");
+  expect(existsSync(storedPath(attachment.url))).toBe(true);
+});
+```
+
+Test ini langsung lulus tanpa mengubah kode. Alasannya, `deleteAttachment` hanya mencari lampiran yang tugasnya milik user yang login (`task: { userId }`). Lampiran milik orang lain dianggap tidak ada.
+
+Test yang langsung lulus seperti ini tetap berguna. Namanya *characterization test*, yaitu test yang mengunci perilaku yang sudah benar. Kalau suatu hari ada yang mengubah `deleteAttachment` dan lupa mengecek pemilik, test ini akan merah dan memberi tahu.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Kenapa `createApp()` di `api/src/app.ts` tidak memanggil `app.listen()`?",
+    options: [
+      "Agar Supertest bisa memakai app tanpa server sungguhan di port 3000",
+      "Karena Express 5 tidak lagi punya method `listen`",
+      "Supaya middleware error handler berjalan lebih dulu",
+      "Karena Vitest otomatis menyalakan server di port 3000",
+    ],
+    answer: 0,
+    explain: "Supertest menerima objek `app`, lalu membukanya sendiri di port sementara. `listen()` hanya ada di `src/server.ts`, dan file itu tidak di-import oleh test. Express 5 masih punya `listen`. Vitest juga tidak menyalakan server apa pun.",
+  },
+  {
+    q: "Bagaimana test companion memastikan `dev.db` tidak ikut tersentuh?",
+    options: [
+      "`resetDatabase()` membuat salinan `dev.db` sebelum menghapus",
+      "Prisma otomatis memakai database lain saat `NODE_ENV=test`",
+      "`test.env` di `vitest.config.ts` mengisi `DATABASE_URL=file:./test.db`, dan dotenv tidak menimpanya",
+      "Global setup menjalankan `prisma migrate reset` di `dev.db`",
+    ],
+    answer: 2,
+    explain: "Nilai dari `tests/test-env.ts` masuk ke `process.env` lebih dulu. `dotenv/config` tidak menimpa variabel yang sudah terisi. Prisma tidak pernah berganti database sendiri. Global setup memakai `migrate deploy` ke `test.db`, bukan reset `dev.db`.",
+  },
+  {
+    q: "Bob meminta `GET /api/tasks/:id` untuk tugas milik Alice. Status apa yang diharapkan test companion, dan kenapa?",
+    options: [
+      "403, karena Bob sudah login tapi bukan pemilik",
+      "404, agar keberadaan ID milik user lain tidak bocor",
+      "401, karena token Bob tidak berlaku untuk tugas Alice",
+      "200 dengan `data: null`",
+    ],
+    answer: 1,
+    explain: "Service mencari dengan `where: { id, userId }`, jadi tugas orang lain dianggap tidak ada. Jawaban 403 justru memberi tahu bahwa ID itu ada. 401 artinya belum login. 200 dengan null tidak sesuai format error API.",
+  },
+  {
+    q: "Kapan mock Prisma lebih masuk akal daripada database test asli?",
+    options: [
+      "Untuk memastikan `sort=deadline` menaruh tugas tanpa deadline di akhir",
+      "Untuk menguji unique constraint email",
+      "Untuk menguji cascade delete lampiran",
+      "Untuk menguji cabang logika service, misalnya error 404 saat data tidak ada",
+    ],
+    answer: 3,
+    explain: "Mock cocok untuk menguji cabang `if` di service dengan cepat. Urutan `nulls: \"last\"`, unique constraint, dan cascade adalah perilaku database sungguhan. Mock tidak tahu apa-apa soal itu, jadi ketiganya harus diuji dengan database asli.",
+  },
+  {
+    q: "Sebuah test lulus saat seluruh suite dijalankan, tapi gagal saat dijalankan sendirian dengan `-t`. Apa penyebab paling mungkin?",
+    options: [
+      "Coverage threshold terlalu tinggi",
+      "Test itu bergantung pada data yang dibuat test lain",
+      "Supertest tidak mendukung opsi `-t`",
+      "`hookTimeout` terlalu besar",
+    ],
+    answer: 1,
+    explain: "Test itu menumpang data buatan test lain. Saat dijalankan sendirian, data itu tidak ada. Perbaikannya: siapkan data sendiri di `beforeAll`, seperti companion yang membuat user baru di tiap `describe`. Threshold coverage dan timeout besar tidak membuat test gagal hanya karena dijalankan sendirian.",
+  },
+]} />
+
+## Ringkasan
+
+- Untuk API CRUD, **integration test** lewat Supertest ke `createApp()` paling sepadan dengan usahanya. Unit test melengkapi untuk logika murni seperti hitungan pagination.
+- Database test dipisah dalam empat langkah: `tests/test-env.ts`, lalu `test.env` di `vitest.config.ts`, lalu `global-setup.ts` (`migrate deploy` ke `test.db`), lalu `resetDatabase()` di tiap file.
+- Factory seperti `registerUser()` membuat data unik dan header `auth` siap pakai. Test jadi pendek dan bisa diulang kapan saja.
+- Uji auth dari tiga sisi: tanpa token (401), token kedaluwarsa (`TOKEN_EXPIRED`), dan data milik user lain (404, data tetap utuh).
+- Pakai mock untuk layanan luar dan cabang `if` di service. Pakai database asli untuk query, constraint, dan migrasi.
+- Coverage dengan `@vitest/coverage-v8` dan `thresholds` menjaga agar jumlah kode yang dites tidak turun diam-diam. Angka coverage tinggi belum tentu berarti kodenya benar.
+- Cegah flaky test dengan data unik, tanggal relatif, urutan yang jelas, dan test yang tidak saling menumpang data.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Jadikan `npm test` kebiasaan sebelum setiap demo dan commit. Setiap kali menambah fitur di backend capstone, tulis test-nya lebih dulu. Contohnya filter `overdue` untuk tab "Terlambat" tadi. Di [Deploy & CI](/belajar/expert/deploy-ci), test ini akan berjalan otomatis setiap kali kamu push.
+
+</Callout>

@@ -1,0 +1,1042 @@
+## Pengantar
+
+Aplikasi `latihan-rn` sudah bisa menampilkan daftar, membuka detail, mengisi form, dan menyimpan data. Fungsinya lengkap. Tetapi coba buka di HP lalu nyalakan mode gelap. Kartu tetap putih dan menyilaukan. Tekan sebuah tugas: tidak ada getar, tidak ada efek riak di Android. Di layar tanpa header, teks juga bisa tertutup *notch*, yaitu "poni" hitam tempat kamera depan.
+
+Hal kecil seperti itu membuat aplikasi terasa seperti halaman web yang dibuka di HP. Pelajaran terakhir Track 2 ini memoles `latihan-rn` agar terasa **native**, yaitu berperilaku seperti aplikasi bawaan Android dan iOS. Ada tujuh bagian:
+
+- membedakan perilaku per OS dengan `Platform`,
+- menangani *safe area* dan status bar,
+- mendukung *dark mode* dengan objek tema kecil,
+- memakai ikon dan gambar yang tajam,
+- memberi *feedback* sentuhan: riak, getar (*haptic*), dan animasi pegas,
+- memakai kontrol asli sistem dengan `@expo/ui`,
+- membuat aplikasi ramah aksesibilitas.
+
+Di akhir, kamu punya kartu tugas yang dipoles dan bisa dicoba langsung di Snack. Semua paket di sini bagian dari ekosistem [Expo](/glosarium#expo). Pasang dengan `npx expo install`, yang memilih versi yang cocok dengan versi Expo (SDK) proyekmu.
+
+```bash
+npx expo install expo-status-bar expo-haptics expo-image expo-symbols react-native-reanimated react-native-worklets @expo/ui
+```
+
+Sebagian paket mungkin sudah ada dari template. Tidak masalah, perintah itu hanya menyamakan versinya. Setelah memasang Reanimated, hentikan Metro (server yang menyiapkan kode JavaScript untuk HP), lalu jalankan ulang dengan `npx expo start --clear`.
+
+## Platform.OS dan Platform.select
+
+<Callout type="analogi" title="Seperti warung waralaba yang menyesuaikan menu">
+
+Sebuah waralaba ayam goreng punya satu buku resep pusat. Cabang di Padang menambah sambal hijau, cabang di Jogja membuat rasanya lebih manis. Ayamnya sama, hanya beberapa bagian yang disesuaikan dengan selera orang setempat.
+
+Buku resep = kode komponenmu. Cabang = OS (`ios`, `android`, `web`). `Platform.select` = catatan "khusus cabang ini". `default` = resep pusat untuk cabang yang tidak disebut. Bedanya, aplikasi tidak perlu tahu lokasi. Ia langsung tahu sedang berjalan di OS apa.
+
+</Callout>
+
+Di [Komponen Inti](/belajar/react-native/core-components) dan [Styling & Flexbox](/belajar/react-native/styling-flexbox) kamu sudah memakai `Platform.OS` dan `Platform.select`. Sekarang keduanya dipakai untuk mengikuti kebiasaan tiap OS. Pengguna iPhone dan pengguna Android terbiasa dengan hal yang berbeda.
+
+| Aspek | iOS | Android |
+| --- | --- | --- |
+| Feedback saat ditekan | Elemen meredup (opacity) | Efek riak (*ripple*) |
+| Ikon sistem | SF Symbols | Material Symbols |
+| Kembali ke layar sebelumnya | Geser dari tepi kiri | Tombol atau gestur back sistem |
+| Target sentuh minimum | 44 × 44 pt | 48 × 48 dp |
+| Getar | Taptic Engine (motor getar iPhone), sangat halus | Tergantung kualitas motor HP |
+
+pt (iOS) dan dp (Android) adalah satuan ukuran yang tampil sama besar di semua HP, walau jumlah pikselnya berbeda. 44 pt kira-kira selebar ujung jari.
+
+`Platform.select` memilih nilai berdasarkan OS. Kunci yang tersedia adalah `ios`, `android`, `web`, `native` (iOS dan Android), dan `default` (semua yang tidak disebut).
+
+```jsx
+import { Platform } from 'react-native';
+
+const pressedStyle = Platform.select({
+  android: null,
+  default: { opacity: 0.6 },
+});
+```
+
+Di Android, `pressedStyle` bernilai `null` karena efek riak sudah cukup. Di iOS dan web, elemen meredup. Kalau perbedaannya besar, misalnya seluruh komponen berbeda, buat dua file: `icon-button.ios.js` dan `icon-button.android.js`. Saat kamu menulis `import IconButton from './icon-button'`, Metro memilih file yang sesuai dengan OS. Khusus file route di `src/app`, Expo Router tetap butuh versi tanpa akhiran OS sebagai cadangan.
+
+## Safe area dan status bar
+
+<Callout type="analogi" title="Seperti tidak menulis di dekat jilid buku">
+
+Saat mencatat di buku tulis, kamu tidak menulis mepet ke jilid atau ke ujung kertas. Tulisan di sana sulit dibaca, atau terpotong saat difotokopi. Garis margin merah membantumu tahu batasnya.
+
+Kertas = layar HP. Jilid dan ujung kertas = notch, status bar, dan garis home di bawah. Garis margin = *safe area*. `SafeAreaView` = buku yang sudah bermargin. `useSafeAreaInsets()` = penggaris untuk mengukur lebar margin itu. Bedanya, lebar margin tiap HP berbeda, jadi angkanya dibaca dari sistem, bukan ditulis tetap.
+
+</Callout>
+
+*Safe area* adalah bagian layar yang tidak tertutup *notch*, *Dynamic Island* (notch berbentuk pil di iPhone baru), status bar, atau *home indicator* (garis kecil di bawah layar iPhone untuk kembali ke beranda). Sejak SDK 54, aplikasi Android digambar *edge-to-edge*, artinya konten memenuhi layar sampai ke belakang status bar dan bar navigasi. Jadi Android juga butuh safe area, bukan hanya iPhone.
+
+Kabar baiknya, header `Stack` dan `Tabs` di Expo Router sudah menghitung jarak itu. Daftar tugas tidak tertutup notch karena ada header di atasnya dan tab bar di bawahnya. Kamu baru perlu menangani safe area sendiri saat header disembunyikan (`headerShown: false`). Contohnya layar pembuka, layar login penuh, atau tombol yang menempel di bawah layar.
+
+Ada dua alat dari `react-native-safe-area-context`:
+
+- **`SafeAreaView`** adalah `View` yang otomatis diberi padding sebesar safe area. Prop `edges` memilih sisi mana saja, misalnya `edges={['top']}`.
+- **`useSafeAreaInsets()`** adalah hook yang mengembalikan angka `top`, `bottom`, `left`, dan `right`. Pakai ini kalau butuh kendali penuh. Misalnya, warna latar tetap memanjang sampai ke belakang status bar, tetapi teksnya turun.
+
+```jsx
+import { Pressable, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+function SaveBar({ onSave }) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 16) }}>
+      <Pressable onPress={onSave} style={{ padding: 14, borderRadius: 12, backgroundColor: '#4f46e5' }}>
+        <Text style={{ color: 'white', textAlign: 'center', fontWeight: '700' }}>Simpan</Text>
+      </Pressable>
+    </View>
+  );
+}
+```
+
+`SaveBar` adalah bilah tombol Simpan yang menempel di bawah layar. `insets.bottom` berisi tinggi area home indicator. `Math.max(insets.bottom, 16)` memilih angka yang lebih besar, jadi tetap ada jarak 16 di HP tanpa home indicator.
+
+Kedua alat ini membaca data dari `SafeAreaProvider`, komponen pembungkus yang mengukur safe area. Expo Router sudah memasangnya untukmu. Di Snack tanpa router, kamu harus membungkus aplikasi dengan `SafeAreaProvider` sendiri.
+
+### Status bar
+
+Status bar adalah baris jam dan baterai di paling atas. Yang bisa kamu atur terutama warna ikonnya, lewat komponen `StatusBar` dari `expo-status-bar`:
+
+- `style="auto"` memilih ikon gelap di mode terang dan ikon terang di mode gelap. Ini nilai bawaan.
+- `style="light"` selalu memakai ikon terang. Cocok di atas header berwarna gelap seperti indigo.
+- `style="dark"` selalu memakai ikon gelap.
+- `hidden` menyembunyikan status bar, misalnya saat menampilkan foto layar penuh.
+
+Kamu boleh merender lebih dari satu `StatusBar`. Yang dipasang paling akhir menang. Jadi `StatusBar` di sebuah layar menimpa yang ada di layout root selama layar itu terbuka. Di web, komponen ini tidak melakukan apa-apa.
+
+## Dark mode dengan objek tema
+
+<Callout type="analogi" title="Seperti jadwal seragam sekolah">
+
+Di sekolah, guru tidak menyebut warna baju satu per satu ke tiap siswa. Ada jadwal: hari biasa putih-abu, hari Jumat batik. Siswa cukup melihat hari ini hari apa, lalu memakai seragam yang sesuai.
+
+Siswa = komponen. Jadwal seragam = objek `COLORS`. "Hari ini hari apa" = `useColorScheme()`. Seragam yang dipakai = `theme` dari `useTheme()`. Bedanya, ganti mode di HP berlaku seketika. Semua komponen langsung "ganti baju" tanpa menunggu besok.
+
+</Callout>
+
+Di Styling & Flexbox kamu sudah melihat `useColorScheme()`. Hook ini mengembalikan `"light"`, `"dark"`, atau `null` (kalau mode tidak diketahui). Masalahnya, kalau setiap komponen menulis `scheme === 'dark' ? '#0f172a' : '#f8fafc'` sendiri-sendiri, warna cepat berantakan. Solusinya, kumpulkan semua warna di satu **objek tema**.
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+Warna ditulis langsung di setiap komponen, misalnya `backgroundColor: 'white'`. Saat mode gelap, kartu tetap putih dan teks terang di atasnya tidak terbaca.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+Komponen memanggil `useTheme()` lalu memakai nama peran seperti `theme.card` dan `theme.text`. Nilai warnanya diatur di satu file.
+
+</CompareItem>
+</Compare>
+
+```js title="src/lib/theme.js"
+import { useColorScheme } from 'react-native';
+
+export const COLORS = {
+  light: {
+    background: '#f8fafc',
+    card: '#ffffff',
+    text: '#0f172a',
+    muted: '#64748b',
+    border: '#e2e8f0',
+    primary: '#4f46e5',
+    ripple: 'rgba(79, 70, 229, 0.15)',
+  },
+  dark: {
+    background: '#0f172a',
+    card: '#1e293b',
+    text: '#f1f5f9',
+    muted: '#94a3b8',
+    border: '#334155',
+    primary: '#818cf8',
+    ripple: 'rgba(129, 140, 248, 0.25)',
+  },
+};
+
+export function useTheme() {
+  const scheme = useColorScheme();
+  return scheme === 'dark' ? COLORS.dark : COLORS.light;
+}
+```
+
+Cara membaca `theme.js`:
+
+- `COLORS` berisi dua set warna, `light` dan `dark`, dengan nama kunci yang sama.
+- Nama kunci menjelaskan **peran**, bukan warnanya. `card` adalah latar kartu, `muted` adalah teks yang kurang penting.
+- `primary` di mode gelap sengaja lebih terang (`#818cf8`), supaya tetap jelas di latar gelap.
+- `useTheme()` mengembalikan set gelap hanya kalau mode HP `"dark"`. Nilai `null` jatuh ke tema terang.
+
+<Flow nodes={["Pengaturan tampilan HP", "useColorScheme()", "useTheme()", "style komponen"]} labels={["\"dark\"", "COLORS.dark", "theme.card, theme.text"]} caption="Saat pengguna mengganti mode, hook memicu render ulang dengan warna baru" />
+
+Pasang tema di layout root. Baris yang disorot adalah tambahan baru:
+
+```jsx title="src/app/_layout.js" {2,4,9,13,19}
+import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { TasksProvider } from '../features/tasks/tasks-context';
+import { useTheme } from '../lib/theme';
+
+export const unstable_settings = { anchor: '(tabs)' };
+
+export default function RootLayout() {
+  const theme = useTheme();
+
+  return (
+    <TasksProvider>
+      <StatusBar style="auto" />
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: '#4f46e5' },
+          headerTintColor: '#fff',
+          headerTitleStyle: { fontWeight: 'bold' },
+          contentStyle: { backgroundColor: theme.background },
+        }}
+      >
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="tasks/[id]" options={{ title: 'Detail Tugas' }} />
+        <Stack.Screen name="tasks/new" options={{ title: 'Tugas Baru', presentation: 'modal' }} />
+      </Stack>
+    </TasksProvider>
+  );
+}
+```
+
+Arti baris yang disorot:
+
+- Baris 2 dan 4 mengimpor `StatusBar` dan `useTheme`.
+- Baris 9 mengambil set warna yang sedang aktif.
+- Baris 13 memasang `StatusBar` dengan `style="auto"`, jadi warna ikon jam dan baterai ikut mode HP.
+- Baris 19 (`contentStyle`) mewarnai latar semua layar di Stack sesuai tema.
+
+Sekarang lihat layout tab. Header dan tab bar-nya masih putih bawaan. Di mode gelap, `StatusBar` `auto` memakai ikon terang, sehingga jam dan baterai tidak kelihatan di atas header putih. Karena itu header dan tab bar juga harus ikut tema:
+
+```jsx title="src/app/(tabs)/_layout.js" {3,6,11-15,22-24}
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { Tabs } from 'expo-router';
+import { useTheme } from '../../lib/theme';
+
+export default function TabLayout() {
+  const theme = useTheme();
+
+  return (
+    <Tabs
+      screenOptions={{
+        headerStyle: { backgroundColor: theme.card },
+        headerTintColor: theme.text,
+        tabBarStyle: { backgroundColor: theme.card, borderTopColor: theme.border },
+        tabBarActiveTintColor: theme.primary,
+        tabBarInactiveTintColor: theme.muted,
+      }}
+    >
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Tugas',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons name={focused ? 'list' : 'list-outline'} size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profil',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons name={focused ? 'person' : 'person-outline'} size={size} color={color} />
+          ),
+        }}
+      />
+    </Tabs>
+  );
+}
+```
+
+Isi `screenOptions` di atas berlaku untuk semua tab. `headerStyle` dan `tabBarStyle` memakai `theme.card` sebagai latar, `headerTintColor` memakai `theme.text` untuk judul, dan ikon tab aktif memakai `theme.primary`. Di `tabBarIcon`, `focused` bernilai `true` untuk tab yang sedang dibuka, jadi ikonnya berganti ke versi penuh.
+
+Header Stack di layar detail tetap indigo di kedua mode. Di sana ikon status bar harus selalu terang, jadi tambahkan `<StatusBar style="light" />` di `src/app/tasks/[id].js`. Begitu layar detail ditutup, `StatusBar` itu ikut dilepas dan status bar kembali ke `auto`.
+
+<Callout type="info" title="Uji dark mode dengan cepat">
+
+- Di HP: ganti mode lewat pengaturan tampilan.
+- Di simulator iOS: tekan <Kbd>Cmd</Kbd> + <Kbd>Shift</Kbd> + <Kbd>A</Kbd>.
+- Di emulator Android: jalankan `adb shell "cmd uimode night yes"` di terminal. `adb` adalah alat baris perintah untuk mengendalikan emulator. Ganti `yes` dengan `no` untuk kembali ke mode terang.
+
+Pastikan `app.json` berisi `"userInterfaceStyle": "automatic"`. Kalau nilainya `"light"`, `useColorScheme()` selalu mengembalikan `"light"`.
+
+</Callout>
+
+## Ikon dan gambar
+
+<Callout type="analogi" title="Seperti tanda toilet di bandara">
+
+Tanda toilet di bandara Soekarno-Hatta dan di bandara Changi bentuknya sedikit beda, tapi orang langsung paham artinya tanpa membaca tulisan. Tiap bandara memakai gaya tanda yang biasa dilihat penumpangnya.
+
+Tanda = ikon. Bandara = OS. Gaya tanda tiap bandara = SF Symbols di iOS dan Material Symbols di Android. Objek `name` di `SymbolView` = daftar "pakai tanda versi bandara ini".
+
+</Callout>
+
+Ikon membuat tombol bisa dipahami sekilas. Tab bar di atas memakai `Ionicons` dari `@expo/vector-icons`, yang sudah kamu pasang di pelajaran Expo Router. Paket ini berisi banyak set ikon (Ionicons, MaterialIcons, Feather, dan lain-lain). Cari nama ikonnya di icons.expo.fyi.
+
+Ionicons punya pola nama yang berguna:
+
+- `checkmark-circle` adalah versi penuh (terisi warna).
+- `checkmark-circle-outline` adalah versi garis.
+
+Pakai versi penuh untuk keadaan aktif, seperti ikon tab yang sedang dipilih.
+
+Kalau ingin ikon yang benar-benar milik sistem, pakai `SymbolView` dari `expo-symbols`. **SF Symbols** adalah kumpulan ikon resmi Apple, dan **Material Symbols** kumpulan ikon resmi Google. `SymbolView` menggambar SF Symbols di iOS dan Material Symbols di Android. Karena nama ikonnya berbeda per OS, berikan objek nama:
+
+```jsx
+import { SymbolView } from 'expo-symbols';
+
+<SymbolView
+  name={{ ios: 'checkmark.circle.fill', android: 'check_circle', web: 'check_circle' }}
+  tintColor="#4f46e5"
+  size={28}
+/>
+```
+
+Kode ini menggambar ikon centang dalam lingkaran berwarna indigo selebar 28. Di iOS namanya `checkmark.circle.fill` (SF Symbols memakai titik), di Android `check_circle` (Material Symbols memakai garis bawah). Kalau `name` hanya berupa string, ikon hanya tampil di iOS. Jadi untuk aplikasi lintas platform, selalu pakai bentuk objek.
+
+Untuk gambar, lanjutkan `expo-image` dari Komponen Inti. Foto profil di bagian `@expo/ui` nanti memakai tiga prop tambahan:
+
+- `placeholder` dengan **blurhash**, yaitu kode teks pendek yang menggambarkan versi buram gambar. Selama foto asli diunduh, versi buram ini tampil, jadi tidak ada kotak kosong.
+- `transition={200}` membuat foto muncul perlahan selama 200 ms, bukan tiba-tiba.
+- `accessibilityLabel` berisi deskripsi gambar untuk pembaca layar.
+
+`expo-image` juga otomatis menyimpan **cache** (salinan gambar yang sudah diunduh) di memori dan penyimpanan HP. Saat layar dibuka lagi, gambar tidak perlu diunduh ulang.
+
+## Feedback sentuhan
+
+<Callout type="analogi" title="Seperti tombol lift">
+
+Saat kamu menekan tombol lift, lampunya menyala, ada bunyi "tit", dan tombolnya sedikit masuk lalu kembali. Kamu langsung yakin tekananmu tercatat. Tombol lift yang diam saja membuatmu menekan berkali-kali karena ragu.
+
+Lampu menyala = riak atau elemen meredup. Bunyi "tit" = getar haptic. Tombol masuk lalu kembali = animasi pegas. Bedanya, di aplikasi kamu yang memilih seberapa banyak feedback yang diberikan.
+
+</Callout>
+
+Aplikasi native selalu "menjawab" sentuhan. **Feedback** di sini artinya tanda bahwa sentuhan pengguna diterima. Ada tiga lapisan yang bisa kamu tambahkan, dari yang paling ringan.
+
+### Riak dan efek tekan
+
+`Pressable` punya prop `android_ripple` untuk efek riak bawaan Android, yaitu lingkaran yang menyebar dari titik sentuh. Prop ini diabaikan di iOS, jadi aman dipasang di semua OS. Untuk iOS, pakai style berbentuk fungsi `({ pressed }) => ...` yang sudah kamu kenal.
+
+```jsx
+<Pressable
+  android_ripple={{ color: theme.ripple }}
+  style={({ pressed }) => [styles.card, pressed && Platform.OS !== 'android' && { opacity: 0.6 }]}
+>
+```
+
+Baca style-nya begini: selalu pakai `styles.card`. Kalau sedang ditekan **dan** bukan Android, tambahkan `opacity: 0.6` supaya kartu meredup. Di Android tidak perlu meredup karena sudah ada riak.
+
+Riak bisa "bocor" keluar dari sudut yang membulat. Beri `overflow: 'hidden'` (potong apa pun yang keluar batas) pada pembungkus yang punya `borderRadius`.
+
+### Getar dengan expo-haptics
+
+*Haptic* adalah getar kecil yang terasa seperti klik fisik. `expo-haptics` menyediakan tiga jenis utama:
+
+- `Haptics.selectionAsync()` untuk perubahan pilihan kecil, misalnya mencentang atau membatalkan centang.
+- `Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)` untuk benturan ringan, seperti dua benda bersentuhan. Kekuatan lain: `Medium`, `Heavy`, `Rigid`, dan `Soft`.
+- `Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)` untuk memberi tahu hasil sebuah aksi. Jenis lain: `Warning` dan `Error`.
+
+Di Android ada juga `Haptics.performAndroidHapticsAsync(Haptics.AndroidHaptics.Confirm)`. Fungsi ini memakai pola getar bawaan sistem Android dan tidak butuh izin tambahan.
+
+Semua fungsi di atas mengembalikan **Promise**, yaitu "janji" hasil yang baru selesai nanti. Kamu tidak perlu menunggunya dengan `await`. Panggil saja, lalu kode berikutnya langsung jalan.
+
+<Callout type="tip" title="Getar secukupnya">
+
+Haptic paling berguna untuk menandai momen penting: tugas selesai, item terhapus, atau error. Jangan beri getar di setiap ketukan navigasi atau saat scroll. Pengguna akan merasa terganggu lalu mematikan getar di pengaturan HP.
+
+</Callout>
+
+### Animasi pegas dengan Reanimated
+
+`react-native-reanimated` menjalankan animasi di **UI thread**. Thread adalah "jalur kerja" di dalam aplikasi. Kode JavaScript-mu berjalan di jalur sendiri, sedangkan UI thread khusus menggambar layar. Bayangkan kasir dan petugas pintu di minimarket. Kasir (thread JavaScript) bisa sibuk menghitung belanjaan, tapi petugas pintu (UI thread) tetap membukakan pintu tanpa menunggu kasir. Reanimated menyerahkan animasi ke "petugas pintu", jadi animasi tetap mulus walau JavaScript sedang sibuk.
+
+Polanya tiga langkah:
+
+1. `useSharedValue(1)` membuat nilai yang bisa dibaca UI thread. Di sini nilainya skala tombol, mulai dari 1 (ukuran normal).
+2. `useAnimatedStyle` mengubah nilai itu menjadi style.
+3. Ubah nilainya dengan `withSpring(...)` agar bergerak seperti pegas, lalu pasang style di `Animated.View`.
+
+Coba tekan dan tahan tombol di bawah. Tombol mengecil saat ditekan dan memantul kembali saat dilepas:
+
+<SnackEmbed name="Tombol pegas Reanimated" dependencies="react-native-reanimated,react-native-worklets,@expo/vector-icons" height={420} code={`import { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Ionicons from '@expo/vector-icons/Ionicons';
+
+export default function App() {
+  const [done, setDone] = useState(false);
+  const scale = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  return (
+    <View style={styles.container}>
+      <Animated.View style={animatedStyle}>
+        <Pressable
+          onPressIn={() => {
+            scale.value = withSpring(0.85);
+          }}
+          onPressOut={() => {
+            scale.value = withSpring(1);
+          }}
+          onPress={() => setDone((value) => !value)}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: done }}
+          accessibilityLabel="Latihan query JOIN"
+          style={[styles.button, done && styles.buttonDone]}
+        >
+          <Ionicons name={done ? 'checkmark' : 'ellipse-outline'} size={40} color={done ? 'white' : '#4f46e5'} />
+        </Pressable>
+      </Animated.View>
+      <Text style={styles.label}>{done ? 'Latihan query JOIN selesai!' : 'Tekan dan tahan tombolnya'}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16 },
+  button: { width: 88, height: 88, borderRadius: 44, borderWidth: 3, borderColor: '#4f46e5', alignItems: 'center', justifyContent: 'center' },
+  buttonDone: { backgroundColor: '#4f46e5' },
+  label: { fontSize: 16, color: '#334155' },
+});
+`} />
+
+Yang terjadi di demo:
+
+- `onPressIn` (jari mulai menekan) mengubah skala ke `0.85` dengan gaya pegas, jadi tombol mengecil.
+- `onPressOut` (jari dilepas) mengembalikan skala ke `1`, dan tombol memantul ke ukuran semula.
+- `onPress` membalik status `done`, lalu ikon berganti dari lingkaran kosong ke tanda centang.
+
+Style animasi hanya bekerja di komponen `Animated`, seperti `Animated.View` atau `Animated.Text`. Kalau dipasang di `View` biasa, tidak ada yang bergerak.
+
+## Komponen native dengan @expo/ui
+
+Sejauh ini semua tampilan kita digambar dengan komponen React Native, lalu di-style agar mirip native. Ibaratnya kita menjahit kostum yang mirip seragam resmi. `@expo/ui` mengambil jalan lain: ia memakai "seragam resmi" itu sendiri, yaitu komponen **asli** sistem. Di iOS komponen ini dibuat dengan **SwiftUI**, dan di Android dengan **Jetpack Compose**. Keduanya adalah alat resmi Apple dan Google untuk membuat tampilan aplikasi.
+
+Hasilnya, switch dan menu pilihan dari paket ini terlihat dan terasa persis seperti di aplikasi Pengaturan HP. Paket ini juga sudah tersedia di Expo Go.
+
+Aturan terpentingnya: setiap komponen `@expo/ui` harus berada di dalam `Host`. `Host` adalah jembatan antara dunia React Native dan dunia native, mirip colokan adaptor yang menyambungkan dua jenis stopkontak. Dua prop yang sering dipakai:
+
+- `matchContents={{ vertical: true }}` membuat tinggi `Host` mengikuti isinya.
+- `style={{ width: '100%' }}` membuat lebarnya penuh.
+
+Tab Profil cocok untuk pengaturan pengingat:
+
+```jsx title="src/app/(tabs)/profile.js"
+import { Column, Host, Picker, Switch } from '@expo/ui';
+import { Image } from 'expo-image';
+import { useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import { useTheme } from '../../lib/theme';
+
+export default function ProfileScreen() {
+  const theme = useTheme();
+  const [reminder, setReminder] = useState(true);
+  const [daysBefore, setDaysBefore] = useState('1');
+
+  return (
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
+      <View style={styles.header}>
+        <Image
+          source="https://picsum.photos/seed/andi/200"
+          placeholder={{ blurhash: 'LEHV6nWB2yk8pyo0adR*.7kCMdnj' }}
+          contentFit="cover"
+          transition={200}
+          style={styles.avatar}
+          accessibilityLabel="Foto profil Andi Pratama"
+        />
+        <View>
+          <Text style={[styles.name, { color: theme.text }]}>Andi Pratama</Text>
+          <Text style={{ color: theme.muted }}>Sistem Informasi, semester 4</Text>
+        </View>
+      </View>
+
+      <Text style={[styles.section, { color: theme.muted }]}>Pengingat</Text>
+      <Host matchContents={{ vertical: true }} style={{ width: '100%' }}>
+        <Column spacing={12}>
+          <Switch label="Ingatkan sebelum deadline" value={reminder} onValueChange={setReminder} />
+          {reminder && (
+            <Picker selectedValue={daysBefore} onValueChange={setDaysBefore} appearance="menu">
+              <Picker.Item label="1 hari sebelumnya" value="1" />
+              <Picker.Item label="3 hari sebelumnya" value="3" />
+              <Picker.Item label="1 minggu sebelumnya" value="7" />
+            </Picker>
+          )}
+        </Column>
+      </Host>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 16, gap: 12 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  avatar: { width: 72, height: 72, borderRadius: 36 },
+  name: { fontSize: 20, fontWeight: '700' },
+  section: { marginTop: 12, fontSize: 13, fontWeight: '600', textTransform: 'uppercase' },
+});
+```
+
+Isi layar ini dalam kata-kata biasa:
+
+- Bagian atas berisi foto profil dari `expo-image` dan nama mahasiswa. Warnanya diambil dari `theme`.
+- `reminder` menyimpan apakah pengingat aktif. `daysBefore` menyimpan berapa hari sebelum deadline pengingat muncul.
+- Di dalam `Host`, `Column` menyusun isinya ke bawah dengan jarak 12. `Switch` adalah tombol geser nyala/mati.
+- `{reminder && (...)}` artinya menu `Picker` hanya tampil kalau pengingat menyala. `appearance="menu"` membuatnya tampil sebagai menu tarik-turun.
+
+`Switch` dan `Picker` tidak diberi warna sama sekali. Tampilannya diatur oleh sistem, termasuk saat mode gelap. Kalau dari latihan sebelumnya kamu sudah menaruh `Link` ke `/about` atau `/login` di layar ini, pertahankan di bawah blok `Host` dan beri warna `theme.primary`.
+
+Pengaturan pengingat ini baru disimpan di state, jadi hilang saat aplikasi ditutup. Supaya tetap ada, simpan dengan AsyncStorage seperti di [State Global & Penyimpanan](/belajar/react-native/state-global-storage).
+
+<Callout type="note" title="Kapan memakai @expo/ui?">
+
+Pakai `@expo/ui` untuk kontrol yang pengguna kenal dari sistem: switch, menu pilihan, slider, atau *bottom sheet* (panel yang naik dari bawah layar). Untuk kartu dan layout khas aplikasimu, tetap pakai `View` dan `Pressable`.
+
+Di dalam `Host`, isinya adalah komponen `@expo/ui` seperti `Column`, `Row`, dan `Switch`. Kalau perlu menyelipkan `View` React Native di tengahnya, bungkus dengan `RNHostView` (hanya boleh satu elemen anak). Paket ini relatif baru, jadi cek dokumentasi SDK 58 saat memakai komponen lain.
+
+</Callout>
+
+## Aksesibilitas
+
+<Callout type="analogi" title="Seperti gedung kampus yang ramah semua orang">
+
+Gedung kampus yang baik bisa dipakai semua mahasiswa. Ada huruf braille di tombol lift, papan nama di tiap pintu ruangan, tombol yang cukup besar, dan papan petunjuk yang hurufnya mudah dibaca dari jauh.
+
+Papan nama ruangan dan huruf braille = `accessibilityLabel` dan `accessibilityRole`. Tombol lift yang besar = area sentuh yang diperluas dengan `hitSlop`. Papan berhuruf besar = teks yang ikut membesar sesuai pengaturan HP.
+
+</Callout>
+
+**Aksesibilitas** artinya aplikasi bisa dipakai semua orang. Termasuk di dalamnya pengguna **pembaca layar** (fitur HP yang membacakan isi layar dengan suara, untuk pengguna tunanetra): TalkBack di Android dan VoiceOver di iOS. Juga pengguna yang memperbesar ukuran huruf di pengaturan HP. Tabel prop dasarnya sudah ada di Komponen Inti. Di sini fokusnya pada tiga kebiasaan.
+
+**1. Beri nama dan peran pada setiap kontrol.** Tombol yang hanya berisi ikon tidak punya teks untuk dibacakan. Tanpa `accessibilityLabel`, pembaca layar hanya bilang "tombol". Untuk tombol centang, pakai `accessibilityRole="checkbox"` (peran: kotak centang) dan `accessibilityState={{ checked: task.done }}` (keadaan: dicentang atau tidak). Hasilnya, pengguna mendengar "ERD sistem perpustakaan, kotak centang, dicentang".
+
+**2. Perbesar area sentuh.** Ikon 20 × 20 terlalu kecil untuk jari. `hitSlop={12}` menambah area sentuh 12 di setiap sisi tanpa mengubah tampilan. Totalnya jadi 44 × 44, pas dengan batas minimum 44 pt di iOS dan mendekati 48 dp di Android.
+
+**3. Hormati ukuran huruf pilihan pengguna.** Secara bawaan, `Text` ikut membesar sesuai pengaturan HP (`allowFontScaling` bernilai `true`). Jangan matikan itu. Kalau layout rusak di ukuran sangat besar, ada dua cara:
+
+- Batasi pembesaran dengan `maxFontSizeMultiplier`. Nilai `1.8` berarti huruf paling besar 1,8 kali ukuran normal.
+- Ubah susunan layout berdasarkan `fontScale`, yaitu seberapa besar pengguna memperbesar huruf.
+
+```jsx
+import { Text, useWindowDimensions, View } from 'react-native';
+
+function TaskMeta({ task }) {
+  const { fontScale } = useWindowDimensions();
+  const stacked = fontScale > 1.3;
+
+  return (
+    <View style={{ flexDirection: stacked ? 'column' : 'row', gap: 4 }}>
+      <Text maxFontSizeMultiplier={1.8}>{task.course}</Text>
+      <Text maxFontSizeMultiplier={1.8}>{task.owner}</Text>
+    </View>
+  );
+}
+```
+
+`useWindowDimensions()` memberi `fontScale`. Kalau pengguna memperbesar huruf lebih dari 1,3 kali, `stacked` bernilai `true`, dan nama matkul serta pemilik tugas disusun ke bawah, bukan berjejer. Dengan begitu teks yang besar tidak saling dorong keluar layar.
+
+Cara menguji paling jujur: nyalakan TalkBack atau VoiceOver, lalu coba menandai satu tugas selesai tanpa melihat layar.
+
+## Praktik: kartu tugas yang dipoles
+
+Sekarang semua bagian digabung. Demo ini adalah versi mandiri dari kartu tugas dengan tema terang dan gelap, safe area, status bar, ikon, riak, haptic, dan label aksesibilitas. Ganti mode tampilan perangkatmu untuk melihat tema berubah, atau buka di Expo Go untuk merasakan getarnya. Kalau belum pernah memakai Snack, baca dulu [Lab Expo Snack](/lab/expo-snack).
+
+<SnackEmbed name="Kartu tugas native" dependencies="react-native-safe-area-context,expo-haptics,@expo/vector-icons,expo-status-bar" height={560} code={`import { useState } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View, useColorScheme } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import * as Haptics from 'expo-haptics';
+
+const COLORS = {
+  light: { background: '#f8fafc', card: '#ffffff', text: '#0f172a', muted: '#64748b', border: '#e2e8f0', primary: '#4f46e5', ripple: 'rgba(79, 70, 229, 0.15)' },
+  dark: { background: '#0f172a', card: '#1e293b', text: '#f1f5f9', muted: '#94a3b8', border: '#334155', primary: '#818cf8', ripple: 'rgba(129, 140, 248, 0.25)' },
+};
+
+const AWAL = [
+  { id: '1', title: 'ERD sistem perpustakaan', course: 'Basis Data', done: true },
+  { id: '2', title: 'Latihan query JOIN', course: 'Basis Data', done: false },
+  { id: '3', title: 'Layout halaman profil', course: 'Pemrograman Mobile', done: false },
+];
+
+function TaskCard({ task, theme, onToggle, onRemove }) {
+  return (
+    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Pressable
+        onPress={() => onToggle(task)}
+        android_ripple={{ color: theme.ripple }}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: task.done }}
+        accessibilityLabel={task.title}
+        style={({ pressed }) => [styles.main, pressed && Platform.OS !== 'android' && styles.pressed]}
+      >
+        <Ionicons
+          name={task.done ? 'checkmark-circle' : 'ellipse-outline'}
+          size={28}
+          color={task.done ? theme.primary : theme.muted}
+        />
+        <View style={styles.texts}>
+          <Text
+            style={[styles.title, { color: task.done ? theme.muted : theme.text }, task.done && styles.done]}
+            maxFontSizeMultiplier={1.5}
+          >
+            {task.title}
+          </Text>
+          <Text style={[styles.course, { color: theme.muted }]} maxFontSizeMultiplier={1.5}>
+            {task.course}
+          </Text>
+        </View>
+      </Pressable>
+      <Pressable
+        onPress={() => onRemove(task)}
+        hitSlop={12}
+        accessibilityRole="button"
+        accessibilityLabel={'Hapus tugas ' + task.title}
+        style={({ pressed }) => [styles.remove, pressed && styles.pressed]}
+      >
+        <Ionicons name="trash-outline" size={20} color={theme.muted} />
+      </Pressable>
+    </View>
+  );
+}
+
+function TaskScreen() {
+  const scheme = useColorScheme();
+  const theme = scheme === 'dark' ? COLORS.dark : COLORS.light;
+  const [tasks, setTasks] = useState(AWAL);
+  const doneCount = tasks.filter((task) => task.done).length;
+
+  function toggle(task) {
+    if (task.done) {
+      Haptics.selectionAsync();
+    } else {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+    setTasks((prev) => prev.map((item) => (item.id === task.id ? { ...item, done: !item.done } : item)));
+  }
+
+  function remove(task) {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    setTasks((prev) => prev.filter((item) => item.id !== task.id));
+  }
+
+  return (
+    <SafeAreaView edges={['top']} style={[styles.screen, { backgroundColor: theme.background }]}>
+      <StatusBar style="auto" />
+      <Text style={[styles.heading, { color: theme.text }]} accessibilityRole="header">
+        Tugas Hari Ini
+      </Text>
+      <Text style={{ color: theme.muted }}>
+        {doneCount} dari {tasks.length} selesai, mode {scheme ?? 'light'}
+      </Text>
+      <View style={styles.list}>
+        {tasks.map((task) => (
+          <TaskCard key={task.id} task={task} theme={theme} onToggle={toggle} onRemove={remove} />
+        ))}
+      </View>
+    </SafeAreaView>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <TaskScreen />
+    </SafeAreaProvider>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, padding: 16 },
+  heading: { fontSize: 24, fontWeight: '700', marginBottom: 4 },
+  list: { marginTop: 16, gap: 12 },
+  card: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 14, overflow: 'hidden' },
+  main: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
+  pressed: { opacity: 0.6 },
+  texts: { flex: 1 },
+  title: { fontSize: 16, fontWeight: '600' },
+  done: { textDecorationLine: 'line-through' },
+  course: { fontSize: 13, marginTop: 2 },
+  remove: { padding: 12 },
+});
+`} />
+
+Hal-hal yang terjadi di demo:
+
+- Mencentang tugas memberi getar `Success`. Membatalkan centang memberi getar `selectionAsync` yang lebih ringan.
+- Menghapus tugas memberi getar `Warning`, tanda ada sesuatu yang hilang.
+- Tombol hapus memakai `hitSlop={12}` dan label "Hapus tugas ..." supaya mudah disentuh dan jelas bagi pembaca layar.
+
+Tombol hapus sengaja diletakkan **di samping** area centang, bukan di dalamnya (dalam istilah kode, ia *sibling* atau saudara, bukan anak). Kalau tombol hapus ditaruh di dalam `Pressable` yang punya `accessibilityRole`, pembaca layar menggabungkan keduanya menjadi satu elemen. Akibatnya tombol hapus tidak bisa dijangkau.
+
+### Memindahkan ke latihan-rn
+
+Di proyek, kartu ini menggantikan `TaskItem`. Ada dua perbedaan dengan demo: bagian teks tetap membuka layar detail lewat `Link`, dan tombol centang diberi animasi pegas dari Reanimated.
+
+<FileTree title="latihan-rn" tree={`
+src/
+  app/
+    _layout.js # + StatusBar, latar dari tema
+    (tabs)/
+      _layout.js # header dan tab bar ikut tema
+      index.js # kirim toggleTask ke TaskItem
+      profile.js # avatar expo-image + pengaturan @expo/ui
+    tasks/
+      [id].js # + StatusBar style="light"
+  components/
+    * task-item.js # kartu tugas yang dipoles
+  features/
+    tasks/
+      tasks-context.js # tidak berubah
+  lib/
+    * theme.js # BARU: COLORS + useTheme
+`} />
+
+```jsx title="src/components/task-item.js"
+import Ionicons from '@expo/vector-icons/Ionicons';
+import * as Haptics from 'expo-haptics';
+import { Link } from 'expo-router';
+import { memo } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import { useTheme } from '../lib/theme';
+
+function TaskItem({ task, onToggle }) {
+  const theme = useTheme();
+  const scale = useSharedValue(1);
+  const checkStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+
+  function handleToggle() {
+    if (task.done) {
+      Haptics.selectionAsync();
+    } else {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+    onToggle(task.id);
+  }
+
+  return (
+    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Animated.View style={checkStyle}>
+        <Pressable
+          onPress={handleToggle}
+          onPressIn={() => {
+            scale.value = withSpring(0.8);
+          }}
+          onPressOut={() => {
+            scale.value = withSpring(1);
+          }}
+          hitSlop={12}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: task.done }}
+          accessibilityLabel={task.title}
+        >
+          <Ionicons
+            name={task.done ? 'checkmark-circle' : 'ellipse-outline'}
+            size={28}
+            color={task.done ? theme.primary : theme.muted}
+          />
+        </Pressable>
+      </Animated.View>
+
+      <Link href={{ pathname: '/tasks/[id]', params: { id: task.id } }} asChild>
+        <Pressable
+          android_ripple={{ color: theme.ripple }}
+          accessibilityHint="Membuka detail tugas"
+          style={({ pressed }) => [styles.body, pressed && Platform.OS !== 'android' && styles.pressed]}
+        >
+          <View style={styles.texts}>
+            <Text
+              style={[styles.title, { color: task.done ? theme.muted : theme.text }, task.done && styles.done]}
+              maxFontSizeMultiplier={1.6}
+            >
+              {task.title}
+            </Text>
+            <Text style={[styles.course, { color: theme.muted }]} maxFontSizeMultiplier={1.6}>
+              {task.course}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={theme.muted} />
+        </Pressable>
+      </Link>
+    </View>
+  );
+}
+
+export default memo(TaskItem);
+
+const styles = StyleSheet.create({
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 12,
+    paddingLeft: 14,
+    borderWidth: 1,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  body: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 14, paddingHorizontal: 12 },
+  pressed: { opacity: 0.6 },
+  texts: { flex: 1 },
+  title: { fontSize: 16, fontWeight: '600' },
+  done: { textDecorationLine: 'line-through' },
+  course: { fontSize: 13, marginTop: 2 },
+});
+```
+
+Kartu ini terdiri dari dua bagian yang berdampingan:
+
+- **Kiri: tombol centang.** Ia dibungkus `Animated.View`, jadi mengecil saat ditekan dan memantul saat dilepas. `handleToggle` memberi getar lalu memanggil `onToggle(task.id)` dari induknya.
+- **Kanan: judul dan matkul.** Bagian ini dibungkus `Link` ke `/tasks/[id]`. `asChild` artinya `Link` meminjam `Pressable` di dalamnya sebagai tombol, jadi riak dan efek meredup tetap bekerja. `accessibilityHint` memberi tahu pembaca layar apa yang terjadi kalau bagian ini diketuk.
+
+`export default memo(TaskItem)` membuat kartu yang datanya tidak berubah tidak digambar ulang, seperti yang kamu pelajari di FlatList.
+
+Daftar tugas tinggal mengirim `toggleTask` dari store dan memakai latar dari tema:
+
+```diff title="src/app/(tabs)/index.js"
++import { useTheme } from '../../lib/theme';
+@@
+ export default function TaskListScreen() {
+-  const { tasks, hydrated } = useTasks();
++  const { tasks, hydrated, toggleTask } = useTasks();
++  const theme = useTheme();
+@@
+     <FlatList
+       data={tasks}
+       keyExtractor={(item) => item.id}
+-      renderItem={({ item }) => <TaskItem task={item} />}
++      renderItem={({ item }) => <TaskItem task={item} onToggle={toggleTask} />}
++      style={{ backgroundColor: theme.background }}
+```
+
+Di diff ini, baris berawalan `+` adalah tambahan dan `-` adalah baris yang diganti. Layar daftar mengambil `toggleTask` dari store, meneruskannya ke tiap `TaskItem`, dan mewarnai latar FlatList dengan `theme.background`.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Jebakan saat memoles UI">
+
+- **`No safe area value available. Make sure you are rendering <SafeAreaProvider> at the top of your app.`** Muncul di Snack atau tes saat `SafeAreaView` atau `useSafeAreaInsets` dipakai tanpa provider. Bungkus komponen teratas dengan `SafeAreaProvider`. Di Expo Router, provider sudah ada.
+- **Jam dan baterai tidak terlihat.** Ikon status bar sewarna dengan header. Header putih butuh `style="dark"` atau `auto` di mode terang, sedangkan header indigo butuh `style="light"`.
+- **Mode gelap tidak berubah di Android.** Di Expo Go biasanya langsung jalan. Di *development build* (versi aplikasi yang kamu build sendiri, bukan lewat Expo Go), `userInterfaceStyle` diabaikan kalau `expo-system-ui` belum terpasang. Terminal menulis `» android: userInterfaceStyle: Install expo-system-ui in your project to enable this feature.` Jalankan `npx expo install expo-system-ui`, lalu build ulang.
+- **Haptic tidak terasa.** Simulator iOS dan emulator Android tidak bisa bergetar. Di iPhone, getar juga diam saat Low Power Mode aktif, saat getar sistem dimatikan, atau saat kamera dan dikte sedang dipakai. Uji di HP sungguhan.
+- **Riak keluar dari sudut bulat.** Tambahkan `overflow: 'hidden'` pada pembungkus yang punya `borderRadius`.
+- **Animasi tidak bergerak.** Style dari `useAnimatedStyle` dipasang di `View` biasa, bukan `Animated.View`. Atau Metro belum dijalankan ulang dengan `--clear` setelah Reanimated dipasang.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Layar detail ikut tema" difficulty="mudah" hints={["Panggil `useTheme()` di `TaskDetailScreen`, lalu pakai `theme.text` dan `theme.muted` untuk teks.", "Tambahkan `<StatusBar style=\"light\" />` karena header detail berwarna indigo.", "Panggil `Haptics.notificationAsync` dengan `Success` saat menandai selesai dan `Warning` saat menghapus."]}>
+
+Layar `src/app/tasks/[id].js` dari pelajaran State Global masih memakai warna tetap. Perbaiki dengan langkah berikut:
+
+1. Buat teks di layar detail memakai warna dari `useTheme()`.
+2. Pasang `StatusBar` dengan ikon terang, karena header detail berwarna indigo.
+3. Beri haptic pada tombol "Tandai selesai" dan "Hapus tugas".
+4. Tambahkan `accessibilityRole="button"` pada kedua tombol.
+
+<Solution>
+
+```jsx title="src/app/tasks/[id].js"
+import * as Haptics from 'expo-haptics';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTasks } from '../../features/tasks/tasks-context';
+import { useTheme } from '../../lib/theme';
+
+export default function TaskDetailScreen() {
+  const { id } = useLocalSearchParams();
+  const { tasks, toggleTask, removeTask } = useTasks();
+  const theme = useTheme();
+  const task = tasks.find((item) => item.id === id);
+
+  if (!task) {
+    return (
+      <View style={styles.container}>
+        <Stack.Screen options={{ title: 'Tidak ditemukan' }} />
+        <Text style={{ color: theme.text }}>Tugas dengan id {id} tidak ada.</Text>
+      </View>
+    );
+  }
+
+  function handleToggle() {
+    if (!task.done) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+    toggleTask(task.id);
+  }
+
+  function handleRemove() {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    router.back();
+    removeTask(task.id);
+  }
+
+  return (
+    <View style={styles.container}>
+      <StatusBar style="light" />
+      <Stack.Screen options={{ title: task.title }} />
+      <Text style={[styles.course, { color: theme.primary }]}>{task.course}</Text>
+      <Text style={[styles.status, { color: theme.text }]}>{task.done ? 'Selesai' : 'Belum selesai'}</Text>
+      <Pressable
+        onPress={handleToggle}
+        accessibilityRole="button"
+        android_ripple={{ color: theme.ripple }}
+        style={({ pressed }) => [styles.button, { backgroundColor: theme.card, borderColor: theme.border }, pressed && styles.pressed]}
+      >
+        <Text style={[styles.buttonText, { color: theme.primary }]}>
+          {task.done ? 'Tandai belum selesai' : 'Tandai selesai'}
+        </Text>
+      </Pressable>
+      <Pressable
+        onPress={handleRemove}
+        accessibilityRole="button"
+        style={({ pressed }) => [styles.button, styles.danger, pressed && styles.pressed]}
+      >
+        <Text style={styles.dangerText}>Hapus tugas</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 16, gap: 8 },
+  course: { fontSize: 14, fontWeight: '700' },
+  status: { fontSize: 16 },
+  button: { marginTop: 8, padding: 12, borderRadius: 10, borderWidth: 1, alignItems: 'center', overflow: 'hidden' },
+  buttonText: { fontWeight: '600' },
+  danger: { backgroundColor: '#fee2e2', borderColor: '#fecaca' },
+  dangerText: { color: '#b91c1c', fontWeight: '600' },
+  pressed: { opacity: 0.7 },
+});
+```
+
+Latar layar sudah ikut tema lewat `contentStyle` di layout root, jadi container tidak perlu `backgroundColor`. Haptic hanya diberikan saat tugas **menjadi** selesai, karena itu momen yang perlu dirayakan.
+
+</Solution>
+
+</Exercise>
+
+<Exercise title="Ikon sistem di tab bar" difficulty="sedang" hints={["Pasang paketnya dengan `npx expo install expo-symbols`.", "`tabBarIcon` menerima `color`, `size`, dan `focused`. Teruskan `color` ke `tintColor`.", "Nama SF Symbols memakai titik (`person.fill`), nama Material Symbols memakai garis bawah atau satu kata (`person`)."]}>
+
+Ganti ikon Ionicons di `src/app/(tabs)/_layout.js` dengan `SymbolView`:
+
+1. Pasang `expo-symbols`.
+2. Di `tabBarIcon`, ganti `Ionicons` dengan `SymbolView` yang memakai objek nama per OS.
+3. Di iOS, tab yang aktif memakai versi ikon yang terisi.
+
+<Solution>
+
+```jsx title="src/app/(tabs)/_layout.js"
+import { Tabs } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
+import { useTheme } from '../../lib/theme';
+
+export default function TabLayout() {
+  const theme = useTheme();
+
+  return (
+    <Tabs
+      screenOptions={{
+        headerStyle: { backgroundColor: theme.card },
+        headerTintColor: theme.text,
+        tabBarStyle: { backgroundColor: theme.card, borderTopColor: theme.border },
+        tabBarActiveTintColor: theme.primary,
+        tabBarInactiveTintColor: theme.muted,
+      }}
+    >
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Tugas',
+          tabBarIcon: ({ color, size }) => (
+            <SymbolView name={{ ios: 'checklist', android: 'checklist', web: 'checklist' }} tintColor={color} size={size} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profil',
+          tabBarIcon: ({ color, size, focused }) => (
+            <SymbolView
+              name={{ ios: focused ? 'person.fill' : 'person', android: 'person', web: 'person' }}
+              tintColor={color}
+              size={size}
+            />
+          ),
+        }}
+      />
+    </Tabs>
+  );
+}
+```
+
+`tintColor` menerima warna dari tab bar, jadi ikon aktif tetap memakai `theme.primary`. Kalau sebuah nama tidak ditemukan, ikon tidak tampil. Cek nama SF Symbols di aplikasi SF Symbols milik Apple, dan nama Material Symbols di fonts.google.com/icons.
+
+</Solution>
+
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Layar dengan `headerShown: false` menampilkan judul yang tertutup notch di iPhone. Perbaikan yang paling tepat adalah…",
+    options: ["Menambah `paddingTop: 44` ke container", "Memakai `SafeAreaView` atau `useSafeAreaInsets()` dari react-native-safe-area-context", "Menyembunyikan status bar dengan prop `hidden`", "Memakai `SafeAreaView` dari `react-native`"],
+    answer: 1,
+    explain: "Tinggi notch berbeda di setiap HP, jadi angka tetap seperti 44 tidak bisa diandalkan. react-native-safe-area-context membaca jarak aman yang sebenarnya dari HP itu. SafeAreaView dari react-native sudah usang dan tidak bekerja di Android.",
+  },
+  {
+    q: "Fungsi `useTheme()` di pelajaran ini mengembalikan `COLORS.light` ketika `useColorScheme()` bernilai…",
+    options: ["`\"light\"` atau `null`", "`\"dark\"`", "`\"dark\"` atau `null`", "Hanya `undefined`"],
+    answer: 0,
+    explain: "Kondisinya `scheme === 'dark' ? COLORS.dark : COLORS.light`. Semua nilai selain \"dark\", termasuk null, jatuh ke tema terang.",
+  },
+  {
+    q: "Kapan haptic paling tepat diberikan?",
+    options: ["Setiap kali daftar di-scroll", "Setiap kali komponen dirender ulang", "Sebagai pengganti pesan error tertulis", "Saat aksi penting selesai, misalnya tugas ditandai selesai"],
+    answer: 3,
+    explain: "Haptic dipakai untuk momen penting, seperti bunyi \"tit\" di tombol lift. Kalau terlalu sering, getarnya mengganggu dan tidak lagi bermakna. Pesan error tetap perlu ditulis karena tidak semua HP bisa bergetar.",
+  },
+  {
+    q: "Kode ini tidak menghasilkan animasi apa pun. Kenapa?",
+    code: "const scale = useSharedValue(1);\nconst style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));\n\nreturn <View style={style}><Text>Tugas</Text></View>;",
+    options: ["`useSharedValue` harus diberi nilai awal 0", "`withSpring` hanya bekerja di iOS", "Style animasi harus dipasang di `Animated.View`, bukan `View` biasa", "`useAnimatedStyle` harus dipanggil di dalam `useEffect`"],
+    answer: 2,
+    explain: "Hanya komponen Animated yang bisa menerima style dari useAnimatedStyle. Ganti View dengan Animated.View dari react-native-reanimated.",
+  },
+  {
+    q: "Ada tombol hapus berupa ikon 20 × 20 tanpa teks. Apa yang paling perlu ditambahkan?",
+    options: ["`accessibilityLabel` dan `hitSlop`", "`allowFontScaling={false}`", "`maxFontSizeMultiplier`", "`android_ripple` saja"],
+    answer: 0,
+    explain: "Tanpa label, pembaca layar hanya menyebut \"tombol\". hitSlop memperbesar area sentuh agar mendekati batas minimum 44 pt atau 48 dp tanpa mengubah tampilan.",
+  },
+]} />
+
+## Ringkasan
+
+- **`Platform.OS` dan `Platform.select`** mengikuti kebiasaan tiap OS: riak di Android, elemen meredup di iOS. Kalau perbedaannya besar, buat file `.ios.js` dan `.android.js`.
+- **Safe area** sudah ditangani header Expo Router. Kalau header disembunyikan, pakai `SafeAreaView` dengan `edges` atau `useSafeAreaInsets()`. **`StatusBar`** dari `expo-status-bar` mengatur warna ikon jam dan baterai: `auto`, `light`, atau `dark`.
+- **Dark mode** cukup dengan `useColorScheme()` dan satu objek tema di `src/lib/theme.js`. Komponen memakai nama peran seperti `theme.card`, bukan kode warna langsung.
+- **Ikon** dari `@expo/vector-icons`, atau `SymbolView` dari `expo-symbols` untuk ikon sistem. **Gambar** dari `expo-image` dengan placeholder blurhash.
+- **Feedback sentuhan** punya tiga lapis: riak dan efek meredup, getar dari `expo-haptics` untuk momen penting, dan animasi pegas Reanimated (`useSharedValue` + `withSpring`).
+- **`@expo/ui`** memakai kontrol asli SwiftUI dan Jetpack Compose. Setiap komponennya harus berada di dalam `Host`.
+- **Aksesibilitas**: beri label dan peran, perbesar area sentuh dengan `hitSlop`, dan biarkan huruf ikut membesar.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Track 2 selesai. `latihan-rn` sekarang punya navigasi, form, store yang tersimpan, dan tampilan yang terasa native. Di Track 3 kamu membangun `kuliah-app`, aplikasi yang terhubung ke API sungguhan. Bawa `src/lib/theme.js`, hook `useTheme`, dan pola kartu tugas dari sini. Bedanya, tombol centang di sana mengirim request ke server, lalu haptic sukses baru diberikan setelah server menjawab. Mulai dari [Arsitektur Full-stack](/belajar/fullstack/arsitektur-fullstack).
+
+</Callout>

@@ -1,0 +1,536 @@
+## Pengantar
+
+Di [Konsep CRUD](/belajar/crud-backend/konsep-crud) kamu sudah melihat alurnya. Aplikasi di HP mengirim **request** (permintaan) ke server. Server lalu membalas dengan **response** (jawaban). Supaya keduanya saling paham, mereka butuh aturan main yang sama. Aturan main yang paling banyak dipakai adalah **REST**.
+
+<Callout type="analogi" title="Seperti memesan makanan di warung">
+
+Kamu duduk di warung dan memanggil pelayan. Kamu bilang, "Nasi goreng satu, meja 4." Pelayan meneruskan pesanan ke dapur, lalu kembali membawa makanan atau kabar "maaf, habis".
+
+- Kamu yang memesan = **client** (aplikasi di HP).
+- Pelayan = **API**, perantara yang menerima pesanan.
+- Dapur = **server** dan database, tempat pesanan benar-benar dikerjakan.
+- Cara memesan yang sudah disepakati semua orang di warung = **REST**.
+
+Bedanya, pelayan warung masih bisa menebak maksudmu kalau kamu salah sebut. API tidak bisa menebak. Request harus ditulis persis sesuai aturan.
+
+</Callout>
+
+**API** (Application Programming Interface, pintu yang dipakai satu program untuk meminta sesuatu ke program lain) yang mengikuti gaya REST disebut **REST API** (lihat [glosarium API](/glosarium#api)). REST tidak perlu diinstal. Isinya kumpulan kebiasaan supaya API mudah ditebak oleh siapa pun yang memakainya. Di pelajaran ini kamu belajar tiga kebiasaan utamanya: URL untuk menunjuk data, method untuk menyebut aksi, dan status code untuk melaporkan hasil.
+
+## Anatomi request dan response
+
+Client dan server berbicara memakai **HTTP** (HyperText Transfer Protocol), yaitu bahasa standar untuk mengirim permintaan dan jawaban lewat internet. Setiap percakapan HTTP terdiri dari satu request dan satu response.
+
+<Callout type="analogi" title="Seperti pesan GoFood">
+
+Pesanan GoFood punya beberapa bagian, begitu juga paket yang datang:
+
+- Aksi "pesan" = **method**.
+- Alamat restoran dan menunya = **URL**.
+- Catatan "jangan pedas" = **header**.
+- Isi pesanan = **body** request.
+- Status "pesanan selesai" di aplikasi = **status code** di response.
+- Makanan di dalam bungkus = **body** response.
+
+</Callout>
+
+Berikut request untuk mengambil detail tugas nomor 2:
+
+```http
+GET /api/tasks/2 HTTP/1.1
+Host: localhost:3000
+Accept: application/json
+```
+
+Baris pertama berisi method (`GET`), alamat (`/api/tasks/2`), dan versi HTTP. Baris `Host` menyebut server tujuan. Baris `Accept` artinya "tolong balas dalam format JSON". **JSON** adalah format teks untuk menulis data, mirip formulir berisi nama kolom dan isinya.
+
+Dan inilah jawaban dari server:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+
+{
+  "data": {
+    "id": 2,
+    "title": "Kerjakan tugas Basis Data bab 3",
+    "done": false,
+    "priority": "tinggi",
+    "createdAt": "2025-01-11T08:00:00.000Z",
+    "updatedAt": "2025-01-11T08:00:00.000Z"
+  }
+}
+```
+
+Baris pertama berisi status `200 OK`, artinya berhasil. Baris kedua menyebut bahwa isinya JSON. Setelah satu baris kosong, body dimulai.
+
+<Flow nodes={["Client mengirim request", "Server memproses", "Client menerima response"]} labels={["method + URL + header + body", "status + header + body"]} caption="Satu kali percakapan HTTP" />
+
+Jadi request punya empat bagian: **method** (aksi, `GET` artinya "ambil"), **URL** (alamat data), **header** (info tambahan), dan **body** (data yang dikirim). `GET` tidak punya body karena hanya meminta data.
+
+Response punya tiga bagian: **status code** (`200 OK`), header, dan body. Pasangan method dan URL, misalnya `GET /api/tasks/2`, disebut **endpoint** (alamat tujuan request, mirip nomor loket di kantor pos). Lihat juga [glosarium endpoint](/glosarium#endpoint).
+
+## Prinsip REST: URL menunjuk resource
+
+<Callout type="analogi" title="Seperti rak di perpustakaan kampus">
+
+Di perpustakaan ada rak berlabel "Basis Data". Setiap buku di rak itu punya nomor sendiri. Kamu cukup bilang ke petugas, "Pinjam buku nomor 2 dari rak Basis Data."
+
+- Rak "Basis Data" = **koleksi**, misalnya `/api/tasks`.
+- Buku nomor 2 = **item** di dalam koleksi, misalnya `/api/tasks/2`.
+- Kata "pinjam" atau "kembalikan" = **method**.
+- Permintaan "yang belum dipinjam orang saja" = **query string** (saringan).
+
+Label rak hanya menyebut isinya, bukan aksinya. URL di REST juga begitu.
+
+</Callout>
+
+Dalam REST, semua data yang dikelola API disebut **resource**: tugas, mata kuliah, catatan, pengguna. Setiap resource punya alamat sendiri. **Method** HTTP menyebut aksi yang ingin dilakukan pada alamat itu. Dari ide ini lahir lima aturan sederhana:
+
+1. **Pakai kata benda, bukan kata kerja.** URL menyebut bendanya (`/api/tasks`). Method menyebut aksinya. Jadi tidak perlu `/api/getTasks` atau `/api/deleteTask`.
+2. **Koleksi memakai bentuk jamak.** `/api/tasks` berarti kumpulan semua tugas. `/api/tasks/2` berarti tugas ber-id 2 di dalam kumpulan itu.
+3. **Huruf kecil dan tanda hubung.** Tulis `/api/study-notes`, bukan `/api/StudyNotes` atau `/api/study_notes`.
+4. **Hubungan antar-resource boleh bersarang.** Tugas milik mata kuliah 1 bisa ditulis `/api/courses/1/tasks`. Cukup satu tingkat. URL seperti `/api/users/1/courses/1/tasks/5` terlalu panjang dan sulit dibaca.
+5. **Saringan ditulis di query string**, yaitu bagian URL setelah tanda tanya. Isinya filter, kata pencarian, atau nomor halaman, misalnya `/api/tasks?done=true` atau `/api/tasks?page=2&limit=10`.
+
+API yang mengikuti aturan ini disebut **RESTful**. Tabel berikut merangkum contohnya:
+
+| URL | Artinya |
+| --- | --- |
+| `/api/tasks` | Koleksi semua tugas |
+| `/api/tasks/2` | Satu tugas dengan id 2 |
+| `/api/courses` | Koleksi mata kuliah |
+| `/api/courses/1/tasks` | Tugas-tugas milik mata kuliah 1 (bersarang) |
+| `/api/tasks?courseId=1` | Hal yang sama, ditulis sebagai filter |
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+```txt
+GET  /api/getAllTasks
+POST /api/createTask
+POST /api/tasks/2/delete
+GET  /api/Task/2
+```
+
+Ada kata kerja (`get`, `create`, `delete`), bentuk tunggal (`Task`), dan huruf besar di URL.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+```txt
+GET    /api/tasks
+POST   /api/tasks
+DELETE /api/tasks/2
+GET    /api/tasks/2
+```
+
+URL hanya berisi kata benda jamak. Aksinya dibawa oleh method di depannya.
+
+</CompareItem>
+</Compare>
+
+<Callout type="info" title="Bersarang atau filter?">
+
+Dua gaya itu sama-sama RESTful. API pendamping kursus ini memakai gaya filter, `GET /api/tasks?courseId=1`. Alasannya, satu endpoint bisa menggabungkan beberapa syarat sekaligus, misalnya `?courseId=1&done=false` (tugas mata kuliah 1 yang belum selesai). Pilih salah satu gaya, lalu pakai terus secara konsisten.
+
+</Callout>
+
+## Method HTTP: kata kerja untuk resource
+
+<Callout type="analogi" title="Seperti mengelola kontak di HP">
+
+Di aplikasi Kontak, kamu bisa melakukan empat hal: menambah kontak baru, melihat kontak, mengubah nomor teman, dan menghapus kontak lama. Itulah CRUD (Create, Read, Update, Delete). Di HTTP, keempat aksi itu punya nama method sendiri:
+
+- Menambah kontak = `POST`.
+- Melihat daftar atau satu kontak = `GET`.
+- Mengubah kontak = `PUT` atau `PATCH`.
+- Menghapus kontak = `DELETE`.
+
+</Callout>
+
+Tabel berikut memasangkan setiap operasi CRUD dengan method-nya. Kolom "Body request" menunjukkan data apa yang ikut dikirim. **Field** artinya satu kolom data, misalnya `title` atau `done`.
+
+| Method | CRUD | Contoh endpoint | Body request | Status sukses |
+| --- | --- | --- | --- | --- |
+| `GET` | Read | `GET /api/tasks`, `GET /api/tasks/2` | Tidak ada | 200 |
+| `POST` | Create | `POST /api/tasks` | Data tugas baru | 201 |
+| `PUT` | Update (ganti seluruh data) | `PUT /api/tasks/4` | Semua field | 200 |
+| `PATCH` | Update (sebagian field) | `PATCH /api/tasks/2` | Field yang berubah saja | 200 |
+| `DELETE` | Delete | `DELETE /api/tasks/3` | Tidak ada | 204 |
+
+Perhatikan alamat tujuannya. `POST` dikirim ke **koleksi** (`/api/tasks`) karena tugas barunya belum punya ID. Mirip menekan tombol "+" di daftar kontak, bukan di kontak tertentu. Sebaliknya, `PUT`, `PATCH`, dan `DELETE` dikirim ke **item** (`/api/tasks/3`) karena server harus tahu data mana yang diubah atau dihapus.
+
+### PUT atau PATCH?
+
+Keduanya dipakai untuk Update. Bedanya ada pada seberapa banyak data yang dikirim. Bayangkan formulir biodata di bagian akademik. `PATCH` itu seperti mencoret satu kolom lalu menulis nomor HP baru di sebelahnya. `PUT` itu seperti mengisi ulang formulir dari awal. Kolom yang kamu biarkan kosong ikut kosong di formulir baru.
+
+`PATCH` hanya membawa field yang berubah:
+
+```http
+PATCH /api/tasks/2 HTTP/1.1
+Content-Type: application/json
+
+{ "done": true }
+```
+
+Request ini hanya mengubah `done` menjadi `true`. Judul dan prioritas tugas 2 tidak disentuh.
+
+`PUT` **mengganti seluruh** data. Semua field wajib dikirim. Field yang tidak kamu sebut kembali ke nilai **default** (nilai bawaan saat data dibuat). Di lab, `PUT` wajib membawa `title` dan `done`. Kalau `priority` tidak dikirim, nilainya kembali menjadi `"sedang"`:
+
+```http
+PUT /api/tasks/4 HTTP/1.1
+Content-Type: application/json
+
+{ "title": "Review catatan Pemrograman Web", "done": false }
+```
+
+Tugas 4 awalnya berprioritas `"rendah"`. Setelah request di atas, prioritasnya menjadi `"sedang"` karena tidak disebut di body. Kalau `done` tidak dikirim, server menolak dengan status `400` dan pesan *PUT mengganti seluruh data: done wajib diisi*. Untuk aplikasi mobile, `PATCH` biasanya lebih praktis karena kamu cukup mengirim yang berubah.
+
+## Safe dan idempotent
+
+Dua istilah ini sering muncul di dokumentasi API. Idenya dekat dengan kehidupan sehari-hari.
+
+<Callout type="analogi" title="Melihat menu, mematikan lampu, dan memesan GoFood">
+
+- **Melihat menu** berapa kali pun tidak mengubah apa-apa di warung. Ini contoh aksi **safe**, seperti `GET`.
+- **Menekan saklar "mati"** sekali atau lima kali, hasilnya sama: lampu mati. Ini contoh aksi **idempotent**, seperti `PUT` dan `DELETE`.
+- **Menekan tombol "Pesan" di GoFood** dua kali membuat dua pesanan, dan dua porsi datang. Aksi ini tidak idempotent, seperti `POST`.
+
+</Callout>
+
+Dalam bahasa teknis:
+
+- **Safe (aman)**: method yang hanya membaca dan tidak mengubah data di server. `GET` termasuk safe.
+- **Idempotent**: mengirim request yang sama satu kali atau sepuluh kali menghasilkan **keadaan data yang sama** di server.
+
+| Method | Safe | Idempotent | Kalau dikirim dua kali |
+| --- | --- | --- | --- |
+| `GET` | Ya | Ya | Data tidak berubah sama sekali |
+| `POST` | Tidak | Tidak | Tercipta dua tugas baru, misalnya id 5 dan id 6 |
+| `PUT` | Tidak | Ya | Data akhirnya sama persis dengan isi body |
+| `PATCH` | Tidak | Tidak dijamin | `{ "done": true }` aman diulang, tetapi operasi seperti "tambah 1 poin" tidak |
+| `DELETE` | Tidak | Ya | Tugas tetap terhapus; request kedua dibalas 404 |
+
+Baris terakhir sering membingungkan. Idempotent membahas **keadaan data**, bukan status code. `DELETE /api/tasks/3` yang pertama dibalas `204`. Yang kedua dibalas `404` karena tugasnya sudah tidak ada. Status code-nya berbeda, tetapi hasil akhirnya sama: tugas 3 sudah hilang, seperti lampu yang sudah mati.
+
+<Callout type="tip" title="Kenapa ini penting untuk aplikasi mobile?">
+
+Koneksi HP sering putus di tengah jalan, lalu aplikasi mencoba mengirim ulang. `GET`, `PUT`, dan `DELETE` aman dikirim ulang. `POST` tidak aman. Kalau pengguna menekan "Tambah" dua kali, tugasnya bisa dobel. Karena itu tombol simpan biasanya dinonaktifkan selama request masih berjalan.
+
+</Callout>
+
+## Status code: cara server melapor
+
+<Callout type="analogi" title="Seperti status resi paket JNE">
+
+Setelah mengirim paket, kamu mengecek resi. Statusnya bisa "Diterima oleh yang bersangkutan", "Alamat tidak ditemukan", atau "Tertunda karena gangguan di gudang". Dari status itu kamu langsung tahu siapa yang harus bertindak.
+
+- Paket sampai = **2xx** (berhasil).
+- Alamat salah tulis atau penerima tidak ada = **4xx** (kesalahan dari pihak pengirim, yaitu client).
+- Gudang kurir bermasalah = **5xx** (kesalahan di pihak server).
+
+Bedanya, resi punya banyak status selama perjalanan. Satu request HTTP hanya mendapat satu status code di akhir.
+
+</Callout>
+
+Status code adalah angka tiga digit di baris pertama response (lihat [glosarium status code](/glosarium#status-code)). Digit pertamanya menunjukkan kelompok:
+
+- **2xx**: berhasil.
+- **4xx**: kesalahan dari sisi client. Contohnya input salah, belum login, atau data yang diminta tidak ada. Client perlu memperbaiki request-nya.
+- **5xx**: kesalahan di server. Request-nya mungkin sudah benar, tetapi server gagal memprosesnya.
+
+Berikut kode yang paling sering dipakai:
+
+| Kode | Nama | Kapan dipakai | Contoh di aplikasi tugas |
+| --- | --- | --- | --- |
+| 200 | OK | GET, PUT, atau PATCH berhasil dan mengembalikan data | Membuka daftar tugas |
+| 201 | Created | POST berhasil membuat data baru | Tugas "Belajar REST API" tersimpan |
+| 204 | No Content | Berhasil tanpa body, umumnya DELETE | Tugas 3 dihapus |
+| 400 | Bad Request | Input tidak valid | Judul kosong, atau `done` berisi `"ya"` |
+| 401 | Unauthorized | Belum login, atau token (tanda bukti login) tidak valid | Membuka daftar tugas tanpa token |
+| 403 | Forbidden | Sudah login, tetapi tidak berhak | Andi mencoba menghapus tugas milik Sari |
+| 404 | Not Found | Data tidak ada, atau route (alamat endpoint) tidak dikenal | `GET /api/tasks/999` |
+| 409 | Conflict | Bentrok dengan data yang sudah ada | Mendaftar dengan email yang sudah dipakai |
+| 422 | Unprocessable Content | Format benar, tetapi isinya melanggar aturan | Dipakai sebagian API lain untuk error validasi |
+| 500 | Internal Server Error | Bug atau error tak terduga di server | Database tidak bisa dihubungi |
+
+Cara cepat memilih status code:
+
+- Input salah → `400`.
+- Data tidak ada → `404`.
+- Data baru berhasil dibuat → `201`.
+- Berhasil tanpa isi balasan → `204`.
+- Berhasil lainnya → `200`.
+- Server gagal → `500`.
+
+Bedakan juga `401` dan `403`. Bayangkan satpam di gerbang kampus. `401` artinya satpam bertanya, "Kamu siapa? Mana kartu mahasiswamu?" `403` artinya satpam sudah tahu kamu mahasiswa, tetapi tetap melarangmu masuk ruang dosen. Keduanya kamu terapkan di [Autentikasi End-to-End](/belajar/fullstack/autentikasi).
+
+<Callout type="warning" title="400 atau 422? Dan jangan pernah 200 untuk error">
+
+Sebagian API memakai `422` untuk error validasi (data yang tidak lolos pemeriksaan aturan). Kursus ini konsisten memakai **`400`** dengan kode `VALIDATION_ERROR`, dan daftar field yang salah ditaruh di `details`. Pilihan mana pun boleh, asalkan konsisten di seluruh API. Yang tidak boleh adalah membalas error dengan status `200`. Aplikasi mobile membaca status code untuk memutuskan apa yang ditampilkan: data atau pesan error. Kalau error dibalas `200`, aplikasi mengira semuanya berhasil.
+
+</Callout>
+
+## Header dan body JSON
+
+Ingat contoh GoFood tadi. Catatan "jangan pedas" di pesananmu dan label nama penerima di bungkus makanan sama-sama info tambahan. Itulah **header**. Makanannya sendiri adalah **body**.
+
+Header ditulis sebagai pasangan `Nama: nilai`. Dua header yang paling sering kamu tulis sendiri:
+
+- **`Content-Type`** memberi tahu jenis isi body. Untuk API kita, nilainya selalu `application/json`. Tanpa header ini, server tidak membaca body-mu sebagai JSON.
+- **`Authorization`** membawa bukti identitas, biasanya berupa **token** (kode panjang yang kamu terima setelah login) dengan awalan `Bearer`. Tanpa header ini, endpoint yang butuh login membalas `401`. Lab di bawah belum memakai login.
+
+```http
+POST /api/tasks HTTP/1.1
+Host: localhost:3000
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "title": "Belajar REST API",
+  "priority": "tinggi"
+}
+```
+
+Request di atas membuat tugas baru. Judul dan prioritasnya dikirim di body.
+
+Body ditulis dalam format JSON (lihat [glosarium JSON](/glosarium#json)). Anggap saja JSON itu formulir dengan kolom tetap: setiap kolom punya nama dan isi. Bentuknya mirip objek JavaScript, tetapi aturannya lebih ketat:
+
+- Nama field dan string wajib memakai tanda kutip ganda. Tulis `"title"`, bukan `title` atau `'title'`.
+- Boolean (nilai benar/salah) ditulis `true` atau `false` tanpa kutip. Kalau ditulis `"true"`, nilainya berubah menjadi string (teks biasa).
+- Tidak boleh ada koma setelah item terakhir, dan tidak boleh ada komentar.
+
+Response juga punya header. Di lab, response yang punya body membawa header `content-type: application/json; charset=utf-8`. Response `204` tidak membawanya karena memang tidak punya body.
+
+## Format response kursus ini
+
+Nota kasir minimarket selalu punya bentuk yang sama: daftar barang, harga, lalu total. Kamu jadi tahu di mana mencari totalnya. Response API juga lebih mudah dipakai kalau bentuknya selalu sama. Semua API di kursus ini (lab, API pendamping, dan capstone) memakai tiga bentuk response berikut:
+
+<Tabs items={["Daftar", "Detail", "Error"]}>
+<Tab>
+
+`data` berisi **array** (daftar berisi beberapa item). `meta` berisi info halaman, karena daftar panjang dibagi per halaman seperti katalog. Ini halaman kedua dari empat tugas awal, dengan tiga tugas per halaman:
+
+```http
+GET /api/tasks?page=2&limit=3 HTTP/1.1
+```
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "title": "Baca materi HTTP & REST",
+      "done": true,
+      "priority": "sedang",
+      "createdAt": "2025-01-10T08:00:00.000Z",
+      "updatedAt": "2025-01-10T08:00:00.000Z"
+    }
+  ],
+  "meta": { "page": 2, "limit": 3, "total": 4, "totalPages": 2 }
+}
+```
+
+Cara membaca `meta`: ini halaman 2 (`page`), satu halaman berisi maksimal 3 tugas (`limit`), totalnya ada 4 tugas (`total`), jadi ada 2 halaman (`totalPages`). Halaman 2 hanya berisi sisa satu tugas.
+
+</Tab>
+<Tab>
+
+`data` berisi satu objek. Bentuk ini dipakai saat melihat detail, membuat data baru (status 201), dan mengubah data. `DELETE` yang berhasil cukup membalas `204` tanpa body.
+
+```http
+POST /api/tasks HTTP/1.1
+Content-Type: application/json
+
+{ "title": "Belajar REST API", "priority": "tinggi" }
+```
+
+```json
+{
+  "data": {
+    "id": 5,
+    "title": "Belajar REST API",
+    "done": false,
+    "priority": "tinggi",
+    "createdAt": "2025-01-20T09:30:00.000Z",
+    "updatedAt": "2025-01-20T09:30:00.000Z"
+  }
+}
+```
+
+Server membalas tugas yang baru dibuat, lengkap dengan `id` dan waktu pembuatannya. Di lab, nilai `createdAt` mengikuti waktu saat kamu menekan Kirim.
+
+</Tab>
+<Tab>
+
+`error` berisi tiga bagian. `message` adalah pesan untuk ditampilkan ke pengguna. `code` adalah kode tetap untuk dibaca program. `details` (opsional) menyebut field mana yang salah:
+
+```http
+POST /api/tasks HTTP/1.1
+Content-Type: application/json
+
+{ "title": "", "done": "ya" }
+```
+
+```json
+{
+  "error": {
+    "message": "Data tidak valid",
+    "code": "VALIDATION_ERROR",
+    "details": [
+      { "field": "title", "message": "title wajib diisi (string, tidak boleh kosong)" },
+      { "field": "done", "message": "done harus boolean (true/false)" }
+    ]
+  }
+}
+```
+
+Request ini mengirim judul kosong dan `done` berisi teks `"ya"`. Server menolak keduanya dan menyebut kesalahan tiap field di `details`.
+
+</Tab>
+</Tabs>
+
+Dengan pola ini, aplikasi HP yang nanti kamu buat dengan Expo cukup memeriksa satu hal. Kalau status-nya 2xx, ambil `data`. Kalau bukan, tampilkan `error.message`.
+
+## Praktik di HTTP Explorer
+
+Lab di bawah ini (juga ada di halaman [HTTP Explorer](/lab/http-explorer)) meniru API tugas sungguhan. Bedanya, datanya hanya tersimpan di browser-mu, jadi aman untuk dicoba-coba. Pilih method, isi **path** (bagian URL setelah nama server, misalnya `/api/tasks`), lalu tekan **Kirim**. Tombol contoh di atas form (Daftar tugas, Detail #2, dan seterusnya) akan mengisi form untukmu.
+
+<HttpExplorer initialMethod="GET" initialPath="/api/tasks?page=1&limit=3" />
+
+Coba langkah berikut secara berurutan:
+
+1. Tekan **Kirim**. Kamu mendapat status `200`, tiga tugas di `data`, dan `meta.total` bernilai 4. Ubah path menjadi `/api/tasks?page=2&limit=3`, lalu kirim lagi.
+2. Pilih **Detail #2** dan kirim. Kali ini `data` berisi satu objek, bukan array.
+3. Pilih **Tambah tugas** dan kirim. Hasilnya `201 Created` dengan tugas ber-id 5. Kirim sekali lagi tanpa mengubah apa pun, dan muncul tugas ber-id 6. Itu bukti `POST` tidak idempotent.
+4. Pilih **Tandai selesai** untuk mencoba `PATCH`.
+5. Ganti method menjadi `PUT`, path `/api/tasks/4`, dan body `{ "title": "Review catatan Pemrograman Web", "done": false }`. Kirim, lalu lihat `priority` berubah menjadi `"sedang"`. Hapus field `done` dan kirim lagi untuk melihat error `400`.
+6. Pilih **Hapus #3** dan kirim dua kali. Kiriman pertama dibalas `204` tanpa body, yang kedua `404`.
+7. Pilih **400 validasi** dan baca isi `details`. Coba juga path `/api/tasks/abc`, lalu `PUT` ke `/api/tasks`. Yang terakhir dibalas `405 Method Not Allowed` (method itu tidak berlaku untuk alamat tersebut).
+8. Buka tab **headers** di panel Response, baca baris **Artinya**, dan lihat **Riwayat**. Tekan **Reset data** untuk kembali ke empat tugas awal.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Jebakan saat merancang dan memanggil API">
+
+- **Kata kerja di URL.** `GET /api/getTasks` dibalas `404` dengan kode `ROUTE_NOT_FOUND` dan pesan *Route GET /api/getTasks tidak ada*. Server tidak punya alamat itu. Aksinya cukup disebut lewat method.
+- **POST ke URL item.** `POST /api/tasks/1` juga dibalas `ROUTE_NOT_FOUND`. Data baru selalu dikirim ke koleksi `/api/tasks`, karena ID-nya baru dibuat oleh server.
+- **Tipe data salah di body.** `"done": "ya"` ditolak dengan pesan *done harus boolean (true/false)*. Field yang tidak dikenal, misalnya `"deadline"`, ditolak dengan *Field "deadline" tidak dikenal*.
+- **ID bukan angka.** `GET /api/tasks/abc` dibalas `400` *ID tidak valid*, bukan `404`. Server menolak bentuk ID-nya sebelum sempat mencari datanya.
+- **JSON tidak valid.** Kutip tunggal atau koma di akhir membuat lab menampilkan *JSON tidak valid*. Request-nya bahkan belum dikirim ke server.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Rancang endpoint mata kuliah" difficulty="sedang" hints={["Mulai dari koleksi: /api/courses. Item memakai ID di belakangnya.", "Mengganti nama saja berarti sebagian field. Method apa yang cocok?", "Untuk tugas milik satu mata kuliah, kamu bisa memakai gaya bersarang atau filter."]}>
+
+Aplikasi capstone punya resource **mata kuliah** (`courses`) dengan field `name`, `lecturer`, dan `sks`. Untuk tiap aksi berikut, tulis method, URL, dan status code saat berhasil:
+
+1. Menampilkan semua mata kuliah.
+2. Menampilkan detail mata kuliah id 2.
+3. Menambah mata kuliah "Basis Data".
+4. Mengganti nama mata kuliah id 2 saja.
+5. Menghapus mata kuliah id 2.
+6. Menampilkan tugas yang belum selesai milik mata kuliah id 2.
+
+Pertanyaan: status apa yang tepat kalau mata kuliah id 99 tidak ada? Dan kalau `sks` dikirim sebagai `"tiga"`?
+
+<Solution>
+
+| No | Endpoint | Status sukses |
+| --- | --- | --- |
+| 1 | `GET /api/courses` | 200 |
+| 2 | `GET /api/courses/2` | 200 |
+| 3 | `POST /api/courses` dengan body `{ "name": "Basis Data", "sks": 3 }` | 201 |
+| 4 | `PATCH /api/courses/2` dengan body `{ "name": "…" }` | 200 |
+| 5 | `DELETE /api/courses/2` | 204 |
+| 6 | `GET /api/courses/2/tasks?done=false` atau `GET /api/tasks?courseId=2&done=false` | 200 |
+
+Nomor 4 memakai `PATCH` karena hanya nama yang berubah. Nomor 6 boleh memakai gaya bersarang atau gaya filter, asalkan konsisten.
+
+Mata kuliah id 99 tidak ada, jadi dibalas `404` dengan kode `NOT_FOUND`. Nilai `"tiga"` untuk `sks` adalah teks, padahal seharusnya angka. Itu input tidak valid, jadi dibalas `400` dengan kode `VALIDATION_ERROR` dan `details` yang menyebut field `sks`.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Pilih status code" difficulty="mudah" hints={["2xx untuk sukses, 4xx untuk kesalahan client, 5xx untuk kesalahan server.", "Bedakan sukses yang membuat data, sukses yang mengembalikan data, dan sukses tanpa body."]}>
+
+Baca tiap kejadian di bawah, lalu tulis status code yang tepat. Mulailah dengan menebak kelompoknya (2xx, 4xx, atau 5xx), baru pilih angkanya.
+
+1. `POST /api/tasks` dengan data lengkap dan valid.
+2. `PATCH /api/tasks/2` berhasil mengubah judul.
+3. `DELETE /api/tasks/5` berhasil.
+4. `POST /api/tasks` dengan `title` kosong.
+5. `GET /api/tasks/42`, padahal tugas 42 tidak ada.
+6. `GET /api/tasks` tanpa token di API yang mewajibkan login.
+7. Server gagal terhubung ke database saat memproses request.
+
+<Solution>
+
+1. `201 Created`
+2. `200 OK`
+3. `204 No Content`
+4. `400 Bad Request` dengan kode `VALIDATION_ERROR`
+5. `404 Not Found` dengan kode `NOT_FOUND`
+6. `401 Unauthorized`, karena server belum tahu siapa pengirimnya
+7. `500 Internal Server Error`, karena kesalahannya ada di server
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Kamu ingin mengambil semua tugas milik mata kuliah 3. URL mana yang paling RESTful?",
+    options: ["`GET /api/getTasksByCourse?id=3`", "`GET /api/courses/3/tasks`", "`POST /api/courses/3/tasks/list`", "`GET /api/Course/3/Task`"],
+    answer: 1,
+    explain: "URL REST berisi kata benda jamak dengan huruf kecil. Aksinya dibawa oleh method. Pilihan pertama memakai kata kerja `getTasksByCourse`. Pilihan ketiga memakai kata kerja `list`, dan `POST` bukan method untuk membaca. Pilihan keempat memakai huruf besar dan bentuk tunggal (`Course`, `Task`).",
+  },
+  {
+    q: "Kamu hanya ingin mengganti judul sebuah tugas, tanpa mengirim field lain. Method mana yang paling tepat?",
+    options: ["`POST`", "`PUT`", "`GET`", "`PATCH`"],
+    answer: 3,
+    explain: "`PATCH` mengubah sebagian field saja, seperti mencoret satu kolom di formulir. `PUT` mengganti seluruh data, jadi semua field wajib dikirim. `POST` membuat data baru, dan `GET` hanya membaca.",
+  },
+  {
+    q: "Sinyal HP Andi lemah, jadi aplikasinya mengirim request yang sama dua kali. Method mana yang TIDAK idempotent, sehingga datanya bisa jadi dobel?",
+    options: ["`POST`", "`PUT`", "`DELETE`", "`GET`"],
+    answer: 0,
+    explain: "Setiap `POST /api/tasks` membuat tugas baru. Kalau terkirim dua kali, tercipta dua tugas, seperti memesan GoFood dua kali. `GET`, `PUT`, dan `DELETE` menghasilkan keadaan data yang sama walaupun diulang.",
+  },
+  {
+    q: "`DELETE /api/tasks/3` berhasil. Status code apa yang dipakai kursus ini?",
+    options: ["`201 Created`", "`404 Not Found`", "`204 No Content`", "`400 Bad Request`"],
+    answer: 2,
+    explain: "Hapus yang berhasil tidak perlu mengirim data balik, jadi dibalas `204`. `201` dipakai untuk data baru. `404` muncul kalau tugasnya sudah tidak ada, misalnya saat DELETE kedua. `400` dipakai untuk input tidak valid.",
+  },
+  {
+    q: "Client mengirim POST dengan `\"done\": \"ya\"`. Response mana yang sesuai format kursus ini?",
+    options: [
+      "Status `200` dengan body berisi `error`",
+      "Status `400` dengan `error.code` bernilai `VALIDATION_ERROR` dan `details` untuk field `done`",
+      "Status `500` karena server tidak bisa memproses body",
+      "Status `201`, lalu server mengubah `done` menjadi `true`",
+    ],
+    answer: 1,
+    explain: "`done` harus boolean (`true`/`false`), jadi `\"ya\"` adalah input salah dari client. Jawabannya `400` dengan `VALIDATION_ERROR`. Error tidak boleh dibalas `200`. `500` hanya untuk kesalahan di server. Server juga tidak boleh menebak-nebak maksud input yang salah.",
+  },
+]} />
+
+## Ringkasan
+
+- REST memandang data sebagai **resource**. URL-nya memakai kata benda jamak: `/api/tasks` untuk koleksi, `/api/tasks/2` untuk satu item. Relasi boleh bersarang satu tingkat atau memakai filter di query string.
+- Method menyebut aksinya: `GET` membaca, `POST` membuat, `PUT` mengganti seluruh data, `PATCH` mengubah sebagian, `DELETE` menghapus.
+- `GET` itu safe (hanya membaca). `GET`, `PUT`, dan `DELETE` idempotent (aman diulang). `POST` tidak, jadi bisa membuat data dobel.
+- Status code berhasil: `200`, `201`, `204`. Kesalahan client: `400`, `401`, `403`, `404`, `409`. Kesalahan server: `500`. Kursus ini memakai `400` untuk error validasi, bukan `422`.
+- Body JSON dikirim dengan header `Content-Type: application/json`. Bukti login dikirim lewat header `Authorization`.
+- Response selalu berbentuk `data` + `meta` untuk daftar, `data` untuk satu item, atau `error` saat gagal. Rangkumannya ada di [cheatsheet HTTP](/cheatsheet/http).
+
+<Callout type="capstone" title="Langkah capstone">
+
+Buka lagi daftar fitur berlabel C/R/U/D yang kamu buat di pelajaran sebelumnya. Ubah daftar itu menjadi tabel endpoint dengan kolom method, URL, body, status sukses, dan kemungkinan error. Tabel ini menjadi peta saat kamu membangun API sungguhan di [Dasar Express.js](/belajar/crud-backend/express-dasar). Sebelum itu, pelajari dulu cara data disimpan di [Dasar SQL & Database](/belajar/crud-backend/dasar-sql).
+
+</Callout>

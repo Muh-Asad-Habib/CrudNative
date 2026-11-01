@@ -1,0 +1,437 @@
+## Istilah dasar
+
+**Database relasional** menyimpan data dalam **tabel** yang saling terhubung. Semua contoh di halaman ini memakai SQLite (database kecil yang isinya satu file) dan data [SQL Playground](/lab/sql-playground): tabel `users`, `courses`, dan `tasks`.
+
+<Callout type="analogi" title="Database seperti lemari arsip kampus">
+
+Database = lemari arsip. Tabel = satu sheet Excel di lemari itu, misalnya daftar mahasiswa. Baris = satu mahasiswa di daftar hadir. Primary key = NIM, tidak ada dua mahasiswa dengan NIM sama. Foreign key = NIM yang tertulis di lembar KRS untuk menunjuk pemiliknya.
+
+</Callout>
+
+| Istilah | Arti | Contoh |
+| --- | --- | --- |
+| Tabel | Kumpulan data sejenis, seperti satu sheet Excel | `tasks` |
+| Baris (*row*) | Satu data utuh | tugas "Desain ERD perpustakaan" |
+| Kolom (*column*) | Satu jenis keterangan, punya tipe data sendiri | `title TEXT` |
+| Primary key | Nomor pengenal unik tiap baris, seperti NIM | `tasks.id` |
+| Foreign key | Kolom berisi id dari tabel lain, sebagai penghubung | `tasks.course_id` → `courses.id` |
+| Index | Daftar bantu agar pencarian cepat, seperti indeks di belakang buku | `idx_tasks_user_done` |
+| `NULL` | Kosong: nilainya tidak ada atau belum diisi | tugas tanpa `due_date` |
+
+```sql
+-- Komentar satu baris diawali dua tanda minus
+SELECT * FROM tasks; -- setiap perintah diakhiri titik koma
+```
+
+## Tipe data SQLite
+
+**Contoh sehari-hari:** formulir pendaftaran punya aturan isi. Kolom umur diisi angka, kolom nama diisi huruf. Tipe data adalah aturan isi untuk tiap kolom tabel.
+
+SQLite hanya punya lima tipe penyimpanan. Tidak ada tipe khusus untuk boolean (benar/salah) atau tanggal, jadi keduanya disimpan memakai tipe yang ada.
+
+| Tipe | Isi | Dipakai untuk |
+| --- | --- | --- |
+| `INTEGER` | Bilangan bulat | id, `sks`, boolean `done` (0 = belum, 1 = sudah) |
+| `REAL` | Bilangan desimal | nilai IPK |
+| `TEXT` | Teks (huruf, kata, kalimat) | `title`, tanggal format ISO `'2025-03-08'` |
+| `BLOB` | Data mentah berupa byte, misalnya isi file | jarang dipakai; file sebaiknya disimpan di disk |
+| `NULL` | Kosong | kolom yang boleh tidak diisi |
+
+## Membuat tabel
+
+**Contoh sehari-hari:** petugas loket mengecek formulirmu. Formulir tanpa nama ditolak, email yang sudah terdaftar juga ditolak.
+
+`CREATE TABLE` membuat tabel baru: nama kolom, tipenya, dan aturannya. Aturan ini disebut *constraint*. Database menolak data yang melanggar aturan.
+
+```sql title="Skema tasks di SQL Playground"
+CREATE TABLE tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  course_id INTEGER REFERENCES courses(id) ON DELETE SET NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0,
+  priority TEXT NOT NULL DEFAULT 'sedang',
+  due_date TEXT
+);
+```
+
+Artinya: `id` diisi otomatis, `title` wajib diisi, `done` bawaannya 0 (belum selesai), dan `user_id` harus menunjuk user yang benar-benar ada.
+
+| Constraint | Fungsi | Pesan jika dilanggar |
+| --- | --- | --- |
+| `PRIMARY KEY` | Pengenal unik tiap baris | `UNIQUE constraint failed: tasks.id` |
+| `AUTOINCREMENT` | id diisi otomatis; id yang pernah dihapus tidak dipakai lagi | – |
+| `NOT NULL` | Wajib diisi | `NOT NULL constraint failed: tasks.title` |
+| `UNIQUE` | Isinya tidak boleh sama dengan baris lain | `UNIQUE constraint failed: users.email` |
+| `DEFAULT` | Nilai bawaan jika kolom tidak diisi | – |
+| `CHECK (...)` | Syarat buatanmu sendiri, misalnya `sks > 0` | `CHECK constraint failed: ...` |
+| `REFERENCES` | Isinya harus ada di tabel lain (foreign key) | `FOREIGN KEY constraint failed` |
+
+Baris induk adalah baris yang dirujuk (misalnya satu user). Baris anak adalah baris yang merujuknya (tugas milik user itu).
+
+| Aksi `ON DELETE` | Yang terjadi saat baris induk dihapus |
+| --- | --- |
+| `CASCADE` | Baris anak ikut terhapus (user dihapus → tugasnya hilang) |
+| `SET NULL` | Kolom foreign key di baris anak menjadi `NULL` (mata kuliah dihapus → tugas tetap ada) |
+| `RESTRICT` | Induk tidak boleh dihapus selama masih punya anak |
+
+Perintah untuk mengubah tabel yang sudah ada: menambah kolom, mengganti nama kolom, menghapus tabel, dan melihat daftar kolom.
+
+```sql title="Mengubah struktur"
+ALTER TABLE courses ADD COLUMN color TEXT;
+ALTER TABLE courses RENAME COLUMN lecturer TO dosen;
+DROP TABLE IF EXISTS notes;
+PRAGMA table_info(tasks); -- lihat kolom sebuah tabel
+```
+
+<Callout type="warning" title="Foreign key SQLite mati secara default">
+
+SQLite bawaan tidak memeriksa foreign key sampai kamu menjalankan `PRAGMA foreign_keys = ON;` di setiap koneksi (setiap kali program membuka database). Tanpa perintah itu, `ON DELETE CASCADE` tidak jalan, dan `user_id = 99` tetap diterima walau user 99 tidak ada. Driver `better-sqlite3` (penghubung Node.js ke SQLite yang dipakai Prisma lewat driver adapter) sudah menyalakannya otomatis.
+
+</Callout>
+
+## CRUD
+
+**Contoh sehari-hari:** kontak di HP. Kamu menambah kontak, melihat daftar, mengubah nomor, dan menghapus kontak lama.
+
+CRUD adalah empat operasi dasar data: Create (tambah), Read (baca), Update (ubah), Delete (hapus). Di SQL, keempatnya ditulis dengan `INSERT`, `SELECT`, `UPDATE`, dan `DELETE`. Klausa `RETURNING` (SQLite 3.35 ke atas) mengirim balik baris yang baru ditambah atau diubah, mirip respons API.
+
+<Tabs items={["INSERT", "SELECT", "UPDATE", "DELETE"]}>
+<Tab>
+
+```sql
+INSERT INTO tasks (user_id, course_id, title, priority)
+VALUES (1, 2, 'Integrasi API ke aplikasi', 'tinggi')
+RETURNING id, title, done;
+-- → 9 | Integrasi API ke aplikasi | 0
+
+-- Banyak baris sekaligus
+INSERT INTO courses (user_id, name, lecturer, sks) VALUES
+  (3, 'Basis Data', 'Dr. Rina', 3),
+  (3, 'Pemrograman Mobile', 'Pak Hendra', 3);
+```
+
+</Tab>
+<Tab>
+
+```sql
+SELECT * FROM tasks; -- semua kolom
+SELECT id, title AS judul FROM tasks WHERE id = 2; -- kolom tertentu + alias
+SELECT DISTINCT lecturer FROM courses; -- tanpa duplikat
+```
+
+</Tab>
+<Tab>
+
+```sql
+UPDATE tasks
+SET done = 1, priority = 'rendah'
+WHERE id = 2
+RETURNING id, done, priority;
+-- → 2 | 1 | rendah
+```
+
+</Tab>
+<Tab>
+
+```sql
+DELETE FROM tasks WHERE id = 8;
+SELECT changes(); -- jumlah baris yang terdampak perintah terakhir → 1
+```
+
+</Tab>
+</Tabs>
+
+<Callout type="danger" title="UPDATE dan DELETE tanpa WHERE">
+
+`DELETE FROM tasks;` menghapus **semua** baris tanpa bertanya dulu, dan tidak ada tombol undo. Biasakan menulis `WHERE` lebih dulu. Cara aman: jalankan `SELECT` dengan `WHERE` yang sama untuk melihat baris mana yang akan kena.
+
+</Callout>
+
+Nama operasi yang sama di SQL, HTTP, dan Prisma:
+
+| Operasi CRUD | SQL | HTTP | Prisma |
+| --- | --- | --- | --- |
+| Create | `INSERT` | `POST` | `create` |
+| Read | `SELECT` | `GET` | `findMany`, `findUnique` |
+| Update | `UPDATE` | `PUT`/`PATCH` | `update` |
+| Delete | `DELETE` | `DELETE` | `delete` |
+
+## Urutan klausa SELECT
+
+**Contoh sehari-hari:** di kertas resep, nama masakan ditulis paling atas. Saat memasak, kamu mulai dari menyiapkan bahan, memilih yang segar, baru menyajikan. SQL juga begitu: ditulis mulai `SELECT`, tetapi dijalankan mulai `FROM`.
+
+Klausa adalah bagian query, misalnya `WHERE` atau `ORDER BY`. Klausa harus ditulis dalam urutan tetap, tetapi database menjalankannya dalam urutan lain. Karena `WHERE` dijalankan sebelum `SELECT`, alias buatan `SELECT` belum dikenal di `WHERE`.
+
+| Urutan tulis | Klausa | Fungsi | Urutan eksekusi |
+| --- | --- | --- | --- |
+| 1 | `SELECT` | Kolom yang ditampilkan | 5 |
+| 2 | `FROM` / `JOIN` | Tabel sumber data | 1 |
+| 3 | `WHERE` | Saring baris | 2 |
+| 4 | `GROUP BY` | Kelompokkan baris | 3 |
+| 5 | `HAVING` | Saring kelompok | 4 |
+| 6 | `ORDER BY` | Urutkan hasil | 6 |
+| 7 | `LIMIT` / `OFFSET` | Batasi jumlah baris | 7 |
+
+```sql
+SELECT priority, COUNT(*) AS jumlah
+FROM tasks
+WHERE done = 0
+GROUP BY priority
+HAVING COUNT(*) >= 2
+ORDER BY jumlah DESC
+LIMIT 5;
+```
+
+Artinya: dari tugas yang belum selesai, hitung jumlahnya per prioritas. Ambil prioritas yang punya minimal 2 tugas, urutkan dari yang terbanyak, tampilkan maksimal 5 baris.
+
+## Filter dengan WHERE
+
+**Contoh sehari-hari:** mencari baju di toko online dengan filter "ukuran M" dan "warna hitam". Hanya barang yang cocok yang ditampilkan.
+
+`WHERE` menyaring baris: hanya baris yang memenuhi syarat yang ikut di hasil. Gabungkan beberapa syarat dengan `AND` (dan), `OR` (atau), dan `NOT` (bukan).
+
+| Operator | Arti | Contoh |
+| --- | --- | --- |
+| `=`, `<>` atau `!=` | Sama dengan, tidak sama dengan | `priority = 'tinggi'` |
+| `<`, `<=`, `>`, `>=` | Lebih kecil, lebih besar (bisa untuk tanggal ISO) | `due_date < '2025-03-05'` |
+| `BETWEEN a AND b` | Di antara a dan b, termasuk a dan b | `due_date BETWEEN '2025-03-01' AND '2025-03-08'` |
+| `IN (...)` | Salah satu dari daftar | `priority IN ('tinggi', 'sedang')` |
+| `LIKE` | Cocok dengan pola teks (`%` = teks apa pun, `_` = satu karakter) | `title LIKE '%laporan%'` |
+| `IS NULL` / `IS NOT NULL` | Kosong / tidak kosong | `course_id IS NULL` |
+| `AND`, `OR`, `NOT` | Gabungkan syarat; pakai kurung agar jelas | `done = 0 AND (priority = 'tinggi' OR due_date IS NULL)` |
+
+```sql
+SELECT id, title, priority
+FROM tasks
+WHERE done = 0 AND priority = 'tinggi';
+-- → 2 | Normalisasi tabel sampai 3NF | tinggi
+-- → 6 | Query JOIN tiga tabel        | tinggi
+```
+
+<Callout type="warning" title="= NULL selalu kosong">
+
+`WHERE due_date = NULL` tidak pernah menemukan baris. `NULL` berarti "tidak diketahui", jadi membandingkan apa pun dengan `NULL` hasilnya juga "tidak diketahui", bukan benar. Pakai `IS NULL` atau `IS NOT NULL`. Di SQLite, `LIKE` tidak membedakan huruf besar-kecil (untuk huruf A sampai Z biasa), sedangkan `=` membedakannya.
+
+</Callout>
+
+Teks (*string*) ditulis dengan **tanda kutip tunggal**, misalnya `'tinggi'`. Tanda kutip ganda dipakai untuk nama kolom atau tabel.
+
+## Urutkan & pagination
+
+**Contoh sehari-hari:** katalog belanja yang menampilkan 3 produk per halaman. Untuk melihat halaman 2, kamu melewati 3 produk pertama lalu mengambil 3 berikutnya.
+
+`ORDER BY` mengurutkan hasil. `LIMIT` menentukan berapa baris yang diambil, `OFFSET` menentukan berapa baris yang dilewati dulu. Pasangan ini dipakai untuk *pagination* (membagi data per halaman).
+
+```sql
+SELECT title, due_date
+FROM tasks
+ORDER BY due_date ASC NULLS LAST, title ASC
+LIMIT 3;
+```
+
+Artinya: urutkan dari deadline paling dekat, taruh tugas tanpa deadline di bawah, lalu ambil 3 baris pertama.
+
+```sql title="Halaman 2, 3 item per halaman"
+-- OFFSET = (page - 1) * limit = (2 - 1) * 3 = 3
+SELECT id, title FROM tasks ORDER BY id LIMIT 3 OFFSET 3;
+-- → 4, 5, 6
+```
+
+Di SQLite, `NULL` dianggap nilai paling kecil. Akibatnya, pada `ASC` (urut naik) tugas tanpa deadline muncul paling atas. Tambahkan `NULLS LAST` agar tugas itu pindah ke bawah. Selalu pakai `ORDER BY` saat pagination. Tanpa itu urutan baris tidak dijamin, sehingga data bisa muncul dobel atau terlewat di halaman berikutnya.
+
+## Agregasi & GROUP BY
+
+**Contoh sehari-hari:** rekap absen kelas. Dosen tidak membaca tiap tanda tangan, cukup melihat "hadir 30, izin 2, alpa 1".
+
+Fungsi agregat meringkas banyak baris menjadi satu angka, misalnya jumlah atau rata-rata. `GROUP BY` membagi baris ke beberapa kelompok dulu, lalu angka itu dihitung per kelompok.
+
+| Fungsi | Hasil | Catatan |
+| --- | --- | --- |
+| `COUNT(*)` | Jumlah baris | Baris berisi `NULL` tetap dihitung |
+| `COUNT(kolom)` | Jumlah baris yang kolomnya terisi | `COUNT(due_date)` → 7 |
+| `SUM(kolom)` | Jumlah semua nilai | `SUM(done)` = jumlah tugas selesai |
+| `AVG(kolom)` | Rata-rata | `AVG(sks)` |
+| `MIN` / `MAX` | Terkecil / terbesar | Bisa untuk tanggal format ISO |
+
+```sql
+SELECT COUNT(*) AS total, SUM(done) AS selesai, COUNT(due_date) AS punya_deadline
+FROM tasks;
+-- → 8 | 3 | 7
+
+SELECT priority, COUNT(*) AS jumlah
+FROM tasks
+GROUP BY priority;
+-- → rendah 2, sedang 3, tinggi 3
+```
+
+`WHERE` menyaring **baris** sebelum dikelompokkan. `HAVING` menyaring **kelompok** setelah dihitung. Jadi syarat yang memakai hasil hitungan, seperti `COUNT(*) >= 3`, harus ditaruh di `HAVING`.
+
+## JOIN
+
+**Contoh sehari-hari:** daftar nilai hanya berisi NIM. Untuk tahu nama mahasiswanya, kamu mencocokkan NIM itu dengan daftar mahasiswa.
+
+JOIN menggabungkan baris dari dua tabel atau lebih, dicocokkan lewat foreign key. Beri alias (nama pendek), misalnya `t` untuk `tasks` dan `c` untuk `courses`, agar query mudah dibaca.
+
+| Jenis | Hasil |
+| --- | --- |
+| `INNER JOIN` (atau `JOIN`) | Hanya baris yang punya pasangan di kedua tabel |
+| `LEFT JOIN` | Semua baris tabel kiri (setelah `FROM`) tetap muncul; jika tidak punya pasangan, kolom tabel kanan berisi `NULL` |
+
+<Tabs items={["INNER JOIN", "LEFT JOIN"]}>
+<Tab>
+
+```sql
+SELECT t.title, c.name AS mata_kuliah
+FROM tasks t
+INNER JOIN courses c ON c.id = t.course_id
+WHERE t.user_id = 2;
+-- → Query JOIN tiga tabel | Basis Data
+-- → Dokumen SRS bab 1     | Rekayasa Perangkat Lunak
+-- "Beli buku catatan" hilang karena course_id-nya NULL
+```
+
+</Tab>
+<Tab>
+
+```sql
+SELECT t.title, COALESCE(c.name, 'Tanpa mata kuliah') AS mata_kuliah
+FROM tasks t
+LEFT JOIN courses c ON c.id = t.course_id
+WHERE t.user_id = 2;
+-- → Query JOIN tiga tabel | Basis Data
+-- → Dokumen SRS bab 1     | Rekayasa Perangkat Lunak
+-- → Beli buku catatan     | Tanpa mata kuliah
+```
+
+</Tab>
+</Tabs>
+
+```sql title="JOIN + GROUP BY: jumlah tugas per user"
+SELECT u.name, COUNT(t.id) AS jumlah_tugas, COALESCE(SUM(t.done), 0) AS selesai
+FROM users u
+LEFT JOIN tasks t ON t.user_id = u.id
+GROUP BY u.id;
+-- → Andi Pratama 5 2 · Sari Wulandari 3 1 · Budi Santoso 0 0
+```
+
+Pada `LEFT JOIN`, pakai `COUNT(t.id)`, bukan `COUNT(*)`. Budi tidak punya tugas, tetapi `LEFT JOIN` tetap membuat satu baris untuknya dengan kolom tugas kosong. `COUNT(*)` akan menghitung baris kosong itu sebagai 1. `SUM` dari kolom yang semuanya kosong menghasilkan `NULL`, jadi dibungkus `COALESCE` agar menjadi 0.
+
+Many-to-many terjadi saat satu user bisa ikut banyak mata kuliah, dan satu mata kuliah diikuti banyak user. Pasangan keduanya dicatat di tabel penghubung, mirip lembar KRS yang berisi NIM dan kode mata kuliah.
+
+```sql title="Many-to-many lewat tabel penghubung"
+CREATE TABLE enrollments (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, course_id)
+);
+
+SELECT u.name
+FROM enrollments e
+JOIN users u ON u.id = e.user_id
+WHERE e.course_id = 1;
+```
+
+## Fungsi & ekspresi berguna
+
+**Contoh sehari-hari:** rumus di Excel seperti `=IF(...)` atau `=TODAY()`. Fungsi SQL bekerja mirip: dipakai di `SELECT`, `WHERE`, atau `ORDER BY` untuk mengolah nilai tiap baris sebelum ditampilkan.
+
+| Ekspresi | Contoh → hasil |
+| --- | --- |
+| `COALESCE(a, b)` | Nilai pertama yang bukan `NULL` |
+| `CASE WHEN ... THEN ... ELSE ... END` | `CASE priority WHEN 'tinggi' THEN 1 WHEN 'sedang' THEN 2 ELSE 3 END` |
+| `IIF(syarat, a, b)` | `IIF(done = 1, 'Selesai', 'Belum')` |
+| Subquery (query di dalam query) | `WHERE course_id IN (SELECT id FROM courses WHERE name = 'Basis Data')` |
+| `datetime('now')` | Waktu sekarang UTC, `'2026-10-30 12:04:30'` |
+| `date('2025-03-01', '+7 days')` | `'2025-03-08'` |
+| `strftime('%m', due_date)` | Bulan, misalnya `'03'` |
+| `lower(x)`, `upper(x)`, `length(x)`, `trim(x)` | Olah teks |
+
+```sql title="Urutkan menurut prioritas, bukan abjad"
+SELECT title
+FROM tasks
+WHERE user_id = 1
+ORDER BY CASE priority WHEN 'tinggi' THEN 1 WHEN 'sedang' THEN 2 ELSE 3 END, due_date;
+```
+
+Artinya: tugas berprioritas tinggi diberi nomor 1, sedang nomor 2, sisanya nomor 3. Hasil diurutkan menurut nomor itu, lalu menurut deadline. Tanpa `CASE`, urutan abjadnya menjadi rendah, sedang, tinggi.
+
+## Index
+
+**Contoh sehari-hari:** indeks di belakang buku. Untuk mencari kata "JOIN", kamu membuka indeks lalu langsung lompat ke halamannya, tanpa membaca buku dari halaman pertama.
+
+Index mempercepat `WHERE`, `JOIN`, dan `ORDER BY` pada kolom yang sering dicari. Kekurangannya, `INSERT` dan `UPDATE` jadi sedikit lebih lambat karena index ikut diperbarui.
+
+```sql
+CREATE INDEX idx_tasks_user_done ON tasks (user_id, done);
+CREATE UNIQUE INDEX idx_users_email ON users (email);
+
+EXPLAIN QUERY PLAN SELECT * FROM tasks WHERE user_id = 1 AND done = 0;
+-- → SEARCH tasks USING INDEX idx_tasks_user_done (user_id=? AND done=?)
+```
+
+`EXPLAIN QUERY PLAN` menampilkan cara SQLite menjalankan query. `SEARCH ... USING INDEX` berarti index terpakai. Jika hasilnya `SCAN tasks`, SQLite membaca seluruh tabel. Kolom foreign key dan kolom filter yang sering dipakai adalah kandidat index pertama. Primary key dan kolom `UNIQUE` sudah otomatis ber-index.
+
+## Transaksi
+
+**Contoh sehari-hari:** transfer lewat m-banking. Saldomu berkurang dan saldo temanmu bertambah. Kalau sistem gagal di tengah jalan, keduanya dibatalkan, jadi uangmu tidak hilang begitu saja.
+
+Transaksi menjamin sekumpulan perintah berhasil semua atau gagal semua. `BEGIN` memulai transaksi, `COMMIT` menyimpan semua perubahan, dan `ROLLBACK` membatalkan semuanya.
+
+```sql
+BEGIN;
+UPDATE courses SET sks = 4 WHERE id = 1;
+DELETE FROM tasks WHERE course_id = 1 AND done = 1;
+COMMIT; -- simpan permanen, atau ROLLBACK; untuk membatalkan semuanya
+```
+
+## Keamanan: parameter, bukan string
+
+**Contoh sehari-hari:** petugas loket yang ceroboh membaca isi formulir sebagai perintah. Kalau di kolom nama kamu menulis "Andi, lalu tunjukkan semua data mahasiswa", ia menurutinya. Petugas yang benar menganggap isi kolom nama hanya sebagai nama.
+
+Jangan pernah menyusun SQL dengan menyambung string dari input user. Cara itu membuka celah **SQL injection**: input user ikut terbaca sebagai perintah SQL.
+
+<Compare>
+<CompareItem title="Rentan SQL injection" tone="bad">
+
+```js
+const sql = `SELECT * FROM tasks WHERE title = '${req.query.q}'`;
+// q = ' OR '1'='1  → semua tugas bocor
+```
+
+</CompareItem>
+<CompareItem title="Parameter terikat" tone="good">
+
+```js
+// better-sqlite3: nilai dikirim terpisah dari SQL
+const rows = db
+  .prepare("SELECT * FROM tasks WHERE title = ?")
+  .all(req.query.q);
+```
+
+</CompareItem>
+</Compare>
+
+Tanda `?` di contoh "Parameter terikat" adalah tempat nilai. Nilainya dikirim terpisah, jadi tidak pernah dibaca sebagai perintah. Prisma Client otomatis memakai parameter. Saat menulis SQL mentah di Prisma, gunakan tagged template `` prisma.$queryRaw`...` `` (template string yang diawali nama fungsi) yang meng-escape nilai, bukan `$queryRawUnsafe`.
+
+## Error yang sering muncul
+
+Pesan error SQLite mirip petugas loket yang menolak formulir sambil menyebut kolom yang salah. Baca sampai habis, karena nama tabel atau kolomnya biasanya disebut.
+
+| Pesan | Penyebab |
+| --- | --- |
+| `no such table: taskz` | Salah ketik nama tabel atau migrasi belum dijalankan |
+| `no such column: titel` | Salah ketik nama kolom |
+| `NOT NULL constraint failed: tasks.title` | Kolom wajib tidak diisi |
+| `UNIQUE constraint failed: users.email` | Nilai sudah ada |
+| `FOREIGN KEY constraint failed` | Id yang dirujuk tidak ada (saat foreign key aktif) |
+| `near "FORM": syntax error` | Salah ketik kata kunci SQL |
+
+## Pelajari lebih lanjut
+
+- [Konsep CRUD](/belajar/crud-backend/konsep-crud): empat operasi dasar dan simulatornya.
+- [Dasar SQL & Database](/belajar/crud-backend/dasar-sql): tabel, primary key, dan query CRUD.
+- [Relasi Tabel & JOIN](/belajar/crud-backend/relasi-join): foreign key, one-to-many, dan many-to-many.
+- [Database Sungguhan dengan Prisma + SQLite](/belajar/crud-backend/prisma-sqlite): dari SQL ke Prisma Client.
+- [Performa Backend](/belajar/expert/performa-backend): index dan masalah query N+1.
+- Coba semua query di atas di [SQL Playground](/lab/sql-playground) dan [Simulator CRUD](/lab/crud-simulator).

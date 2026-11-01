@@ -1,0 +1,904 @@
+## Pengantar
+
+Di Track 3 kamu membangun `kuliah-app` dengan JavaScript. Mungkin kamu pernah kena bug seperti ini. Kamu
+menulis `task.prority` (salah ketik, harusnya `priority`). Layar menampilkan kosong, tapi tidak ada error sama
+sekali. Atau server mengganti `done: boolean` menjadi `status: "TODO" | "IN_PROGRESS" | "DONE"`. Aplikasi baru
+ketahuan rusak saat dosen mencoba demo.
+
+<Callout type="analogi" title="Seperti label di toples bumbu">
+
+Di dapur kos, gula dan garam sama-sama bubuk putih. Tanpa label, kamu baru sadar salah ambil saat teh sudah
+terasa asin. Dengan label "GULA" di toples, kesalahan ketahuan sebelum sendok masuk ke gelas.
+
+- toples = variabel atau properti di kode
+- label di toples = **tipe** (`string`, `number`, `Task`)
+- teman kos yang membaca label sebelum kamu memasak = **compiler** TypeScript
+- teh yang terlanjur asin = bug yang baru ketahuan di HP pengguna
+
+Bedanya, label TypeScript hilang saat aplikasi berjalan. Label itu hanya membantu selama kamu menulis kode.
+
+</Callout>
+
+**TypeScript** (TS) adalah JavaScript ditambah **tipe**. Tipe adalah keterangan bentuk data, misalnya "`title`
+berisi teks" atau "`id` berisi angka". Program `tsc` (TypeScript compiler) memeriksa keterangan itu *sebelum*
+kode dijalankan. Jadi salah ketik dan perubahan **kontrak** (kesepakatan bentuk data antara server dan aplikasi)
+ketahuan di editor, bukan di HP pengguna.
+
+Target pelajaran ini adalah **type safety end-to-end**. Artinya, bentuk data dijaga dan diperiksa di setiap
+langkah, dari database sampai layar:
+
+<Flow
+  nodes={["schema.prisma", "Tipe Prisma", "Skema Zod", "Handler Express", "JSON", "types.ts kuliah-app", "Layar"]}
+  labels={["prisma generate", "service", "validate()", "res.json", "apiFetch<T>", "props"]}
+  caption="Rantai tipe dari API pendamping sampai kuliah-app: setiap panah adalah titik yang bisa diperiksa compiler"
+/>
+
+Baca diagram dari kiri. Prisma membuat tipe dari `schema.prisma`. Zod memeriksa data yang masuk. Handler Express
+mengirim JSON. Lalu `kuliah-app` membaca JSON itu dengan tipe yang sama dan menampilkannya. Di dalam satu proyek,
+compiler bisa melacak perubahan dari satu langkah ke langkah berikutnya. Antara `api/` dan `kuliah-app`, kamu
+sendiri yang menjaganya (dibahas di bagian DTO).
+
+Contoh backend diambil dari API pendamping `api/` (Express 5 + Prisma 7 + Zod 4). Contoh aplikasi adalah
+**contoh referensi** untuk `kuliah-app` versi TypeScript. Maksudnya, proyek Expo milikmu dari Track 3 yang sudah
+dipindah ke TS dan dirapikan ke folder `src/features/...`. Repo tidak berisi aplikasi itu, jadi kamu menulisnya
+sendiri. Kode yang belum ada di `api/` diberi label **saran pengembangan**.
+
+## Tipe dasar, union, generic, dan utility types
+
+Empat alat ini cukup untuk membaca sebagian besar kode di `api/` dan `kuliah-app`.
+
+**Tipe dasar & objek.** `string` (teks), `number` (angka), `boolean` (benar/salah), `null` (kosong), array `T[]`
+(daftar berisi `T`), dan objek. Tanda `?` setelah nama properti artinya properti itu boleh tidak ada. Tulisan
+`| null` artinya nilainya boleh `null`. Contoh: `lecturer?: string` berarti properti `lecturer` boleh tidak ditulis.
+`color: string | null` berarti properti `color` wajib ada, tapi isinya boleh `null`.
+
+**Union literal.** Union (tanda `|`, dibaca "atau") adalah daftar pilihan nilai yang diizinkan. Mirip pilihan
+ganda di formulir: status hanya boleh `'TODO'`, `'IN_PROGRESS'`, atau `'DONE'`, tidak boleh `'SELESAI'`. Di
+`kuliah-app`, buat union dari array `as const`. Dengan begitu daftar nilai cukup ditulis sekali. Array yang sama
+juga bisa dipakai saat aplikasi berjalan, misalnya untuk membuat tombol filter:
+
+```ts title="kuliah-app/src/features/tasks/types.ts"
+export const TASK_STATUSES = ['TODO', 'IN_PROGRESS', 'DONE'] as const;
+export const TASK_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH'] as const;
+
+export type TaskStatus = (typeof TASK_STATUSES)[number];
+// → 'TODO' | 'IN_PROGRESS' | 'DONE'
+export type TaskPriority = (typeof TASK_PRIORITIES)[number];
+```
+
+`as const` membuat array menjadi *readonly tuple*: daftar tetap yang isinya tidak boleh diubah. Tiap elemennya
+diingat sebagai nilai persis (`'TODO'`), bukan `string` biasa. `[number]` artinya "tipe elemen mana pun di array
+itu". Hasilnya, `TaskStatus` berisi tiga pilihan tadi.
+
+<Callout type="analogi" title="Seperti amplop surat resmi kampus">
+
+Amplop resmi kampus formatnya selalu sama: ada kop, alamat, dan nomor surat. Yang berubah hanya isinya. Kadang
+isinya surat tugas, kadang daftar mata kuliah. Bagian TU tidak perlu mendesain amplop baru untuk setiap jenis
+surat.
+
+- amplop standar = tipe generic `ApiResponse<T>`
+- isi amplop = parameter tipe `T`
+- "amplop berisi satu surat tugas" = `ApiResponse<Task>`, yaitu bungkus `{ data }` berisi satu `Task`
+
+Bedanya, `T` diisi saat kamu menulis kode, bukan saat surat dikirim. Compiler memakainya untuk mengecek, lalu
+membuangnya.
+
+</Callout>
+
+**Generic.** Tipe yang punya "parameter" (`<T>`), mirip fungsi yang menerima tipe sebagai masukan. Bungkus
+respons API cukup ditulis sekali, lalu dipakai untuk semua resource (jenis data, misalnya tugas atau mata kuliah):
+
+```ts title="kuliah-app/src/lib/api.ts"
+export type ApiResponse<T> = { data: T };
+
+export type PageMeta = { page: number; limit: number; total: number; totalPages: number };
+
+export type Paginated<T> = { data: T[]; meta: PageMeta };
+```
+
+`ApiResponse<Task>` berarti `{ data: Task }`. `Paginated<Course>` berarti `{ data: Course[]; meta: PageMeta }`,
+yaitu daftar mata kuliah plus info halaman.
+
+**Utility types.** Ini "fungsi" bawaan TypeScript untuk membuat tipe baru dari tipe yang sudah ada. Mirip
+memfotokopi formulir lalu mencoret kolom yang tidak perlu (`Omit`), atau hanya menyalin kolom tertentu (`Pick`).
+Semua baris di tabel ini dipakai di `api/` atau di contoh referensi `kuliah-app`:
+
+| Utility | Arti | Contoh pemakaian |
+| --- | --- | --- |
+| `Partial<T>` | semua properti jadi opsional | `update(id: number, input: Partial<TaskInput>)` di `kuliah-app/src/features/tasks/api.ts` |
+| `Record<K, V>` | objek dengan kunci `K` dan nilai `V` | `STATUS_LABELS: Record<TaskStatus, string>` di `kuliah-app/src/features/tasks/types.ts` |
+| `Pick<T, K>` | ambil sebagian properti | `getUserId(req: Pick<Request, "userId">)` di `api/src/middleware/auth.ts` |
+| `Omit<T, K>` | buang sebagian properti | `type Options = Omit<RequestOptions, 'method' \| 'body'>` di `kuliah-app/src/lib/api.ts` |
+| `Exclude<U, X>` | buang anggota union | `Exclude<ListTasksQuery["sort"], "priority" \| "-priority">` di `api/src/modules/tasks/tasks.service.ts` |
+
+Utility bisa digabung. Di `kuliah-app/src/lib/form.ts`, definisikan error form sebagai
+`type FormErrors<T> = Partial<Record<keyof T, string>>`. Bacanya dari dalam ke luar:
+
+- `keyof T` = daftar nama field di `T` (misalnya `'title' | 'deadline'`).
+- `Record<keyof T, string>` = objek dengan nama field itu sebagai kunci dan pesan error sebagai nilai.
+- `Partial<...>` = semua kunci boleh tidak ada, karena field yang benar tidak punya pesan error.
+
+Kalau kamu salah ketik `errors.titel`, compiler langsung protes.
+
+## Migrasi JavaScript ke TypeScript secara bertahap
+
+<Callout type="analogi" title="Seperti renovasi kos kamar per kamar">
+
+Pemilik kos yang mau renovasi tidak mengusir semua penghuni sekaligus. Ia memperbaiki satu kamar dulu, sementara
+penghuni lain tetap tinggal. Selama beberapa bulan, kamar lama dan kamar baru berdiri berdampingan. Ia mulai dari
+kamar paling ujung, yang tidak dilewati orang menuju kamar lain.
+
+- kamar lama = file `.js`, kamar baru = file `.ts`
+- izin kamar lama dan baru dipakai bersamaan = opsi `allowJs`
+- kamar paling ujung = file "daun" yang tidak meng-import kode buatanmu sendiri
+- cek keliling setelah tiap kamar selesai = `npm run typecheck`
+
+</Callout>
+
+Jangan menulis ulang semuanya sekaligus. Opsi **`allowJs`** membuat file `.js` dan `.ts` boleh hidup berdampingan
+dan saling import. Jadi kamu bisa memindahkan satu file per commit, dan aplikasi tetap jalan.
+
+Untuk `kuliah-app`, template Expo sudah menyiapkan ini. `tsconfig.json` (file pengaturan TypeScript) di proyek
+Expo memakai `extends` ke `expo/tsconfig.base`, artinya mewarisi isi file itu. Isinya antara lain seperti ini (cek
+sendiri di `kuliah-app/node_modules/expo/tsconfig.base.json`):
+
+```json title="expo/tsconfig.base.json (potongan)"
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "jsx": "react-jsx",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "target": "ESNext"
+  }
+}
+```
+
+Arti opsi yang paling penting untuk migrasi:
+
+- `allowJs`: file `.js` boleh ikut dalam proyek TypeScript.
+- `noEmit`: `tsc` hanya memeriksa, tidak membuat file baru. Yang menjalankan kode tetap Metro (bundler Expo).
+- `skipLibCheck`: tipe di dalam library tidak diperiksa ulang, supaya pemeriksaan lebih cepat.
+
+Urutan yang aman: mulai dari file **daun**, yaitu file yang tidak meng-import kode buatanmu sendiri. Setelah itu
+naik ke file yang memakainya.
+
+<Steps>
+<Step title="Pastikan pemeriksa tipe bisa jalan">
+
+Di `kuliah-app`, TypeScript sudah terpasang oleh template. Tambahkan script `"typecheck": "tsc --noEmit"` di
+`package.json`, lalu jalankan `npm run typecheck`. `--noEmit` artinya hanya memeriksa, tanpa membuat file.
+Hasilnya harus 0 error sebelum kamu mulai.
+
+</Step>
+<Step title="Ubah satu file daun">
+
+Mulai dari `src/lib/labels.js` (tidak meng-import apa pun), lalu `src/lib/api.js`.
+
+<Tabs items={["Windows (PowerShell)", "macOS/Linux"]}>
+<Tab>
+
+```powershell
+Rename-Item src\lib\labels.js labels.ts
+Rename-Item src\lib\api.js api.ts
+npm run typecheck
+```
+
+</Tab>
+<Tab>
+
+```bash
+mv src/lib/labels.js src/lib/labels.ts
+mv src/lib/api.js src/lib/api.ts
+npm run typecheck
+```
+
+</Tab>
+</Tabs>
+
+Import di file lain tidak perlu diubah. Metro dan TypeScript sama-sama mencari `./api` dengan ekstensi apa pun.
+
+</Step>
+<Step title="Perbaiki error, jangan dibungkam">
+
+Error pertama biasanya `Parameter 'path' implicitly has an 'any' type.` Artinya, parameter `path` belum diberi
+tipe, jadi TypeScript menganggapnya `any` (boleh berisi apa saja). Beri tipe pada parameter itu. Hindari menulis
+`any` sendiri. `any` mematikan pemeriksaan dan "menular": nilai yang berasal darinya juga ikut tidak diperiksa.
+Kalau benar-benar belum tahu tipenya, pakai `unknown` (dibahas di bawah).
+
+</Step>
+<Step title="Naik ke komponen, lalu layar">
+
+Ubah `src/components/task-card.js` menjadi `task-card.tsx`. Akhirannya `.tsx` karena file itu berisi JSX. Setelah
+itu pindahkan layar di `src/app/`. Di setiap langkah: jalankan `npm run typecheck`, jalankan aplikasi, lalu commit.
+
+</Step>
+</Steps>
+
+Untuk backend `belajar-api` (Track 1), polanya sama:
+
+1. Pasang `typescript`, `@types/node`, dan `@types/express` sebagai devDependency (paket yang hanya dipakai saat
+   development, tidak ikut dijalankan di production).
+2. Buat `tsconfig.json` dengan `"allowJs": true` dan `"noEmit": true`.
+3. Ganti file satu per satu, mulai dari daun.
+
+Node 22.18 sudah bisa menjalankan file `.ts` langsung lewat *type stripping*: Node membuang tipenya, lalu
+menjalankan sisanya sebagai JavaScript. Sementara itu `api/` memakai `tsx` (alat yang menjalankan file `.ts` dan
+mengulang otomatis saat file berubah): `"dev": "tsx watch src/server.ts"` di `api/package.json`. Di proyek besar,
+tambahkan `"incremental": true`. Dengan opsi ini `tsc` menyimpan hasil pemeriksaan di file `.tsbuildinfo`, jadi
+pemeriksaan berikutnya lebih cepat.
+
+<Callout type="tip" title="Belum siap rename? Pakai JSDoc">
+
+Tambahkan `// @ts-check` di baris pertama file `.js` (atau `"checkJs": true` di tsconfig). TypeScript lalu memeriksa
+file JavaScript itu memakai komentar JSDoc, misalnya `/** @param {string} path */`. Cara ini cocok untuk file yang
+masih sering diubah teman satu tim.
+
+</Callout>
+
+## Membedah tsconfig.json API pendamping
+
+Anggap `tsconfig.json` seperti tata tertib kos: makin ketat aturannya, makin sedikit masalah yang lolos. Ini
+konfigurasi lengkap backend pendamping. Tidak perlu dihafal. Cukup pahami arti tiap opsi lewat tabel di bawahnya.
+
+```json title="api/tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "noEmit": true
+  },
+  "include": ["src", "prisma", "tests", "prisma.config.ts", "vitest.config.ts"]
+}
+```
+
+| Opsi | Kenapa dipakai |
+| --- | --- |
+| `strict` | Paket pemeriksaan ketat: `strictNullChecks` (null/undefined harus ditangani), `noImplicitAny`, `useUnknownInCatchVariables`, dan lainnya. Wajib untuk proyek baru. |
+| `noUncheckedIndexedAccess` | Akses `arr[i]` atau `obj[key]` bertipe `T \| undefined`, karena indeksnya bisa saja di luar batas. |
+| `noImplicitOverride` | Method yang menimpa method kelas induk wajib ditandai `override`. |
+| `module`/`moduleResolution: "nodenext"` | Mengikuti aturan ESM Node: import relatif wajib berekstensi. |
+| `verbatimModuleSyntax` | Import yang hanya berisi tipe wajib ditulis `import type`, supaya aman dibuang saat runtime. |
+| `isolatedModules` | Setiap file harus bisa diterjemahkan sendiri-sendiri (syarat `tsx`, Vitest, dan type stripping). |
+| `allowImportingTsExtensions` + `rewriteRelativeImportExtensions` | Boleh menulis `import ... from "./x.ts"`; saat build, `tsc` menulisnya ulang menjadi `./x.js`. |
+| `noEmit` | `tsc` hanya memeriksa. Build sungguhan memakai `tsconfig.build.json`. |
+
+File build mewarisi semua aturan di atas, hanya mengaktifkan output ke `dist/`:
+
+```json title="api/tsconfig.build.json"
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "sourceMap": true
+  },
+  "include": ["src"]
+}
+```
+
+Efek `noUncheckedIndexedAccess` paling terasa. Kalau `kuliah-app` belum menyalakannya, fungsi ini lolos:
+
+```ts title="kuliah-app/src/features/tasks/types.ts"
+export function nextStatus(status: TaskStatus): TaskStatus {
+  const index = TASK_STATUSES.indexOf(status);
+  return TASK_STATUSES[(index + 1) % TASK_STATUSES.length];
+}
+```
+
+Kalau opsi itu dinyalakan di `kuliah-app/tsconfig.json`, baris `return` menjadi error karena hasil indeks bertipe
+`TaskStatus | undefined`. Perbaikannya eksplisit, misalnya `?? 'TODO'`. Aturan ketat memaksa kamu memikirkan kasus
+tepi yang biasanya terlupa.
+
+## Mengetik handler Express
+
+`@types/express` menyediakan tipe generik `RequestHandler<Params, ResBody, ReqBody, Query>`. Masalahnya, Express
+tidak tahu isi `req.body` sebelum divalidasi, jadi defaultnya `any`. Proyek pendamping menyelesaikannya dengan
+middleware `validate()` yang **mengembalikan handler bertipe sesuai skema Zod**:
+
+```ts title="api/src/middleware/validate.ts"
+type Schemas = {
+  params?: z.ZodType;
+  query?: z.ZodType;
+  body?: z.ZodType;
+};
+
+// Tipe hasil parsing; kalau skemanya tidak diberikan, pakai tipe bawaan Express.
+type Output<S, Fallback> = S extends z.ZodType ? z.output<S> : Fallback;
+
+export function validate<S extends Schemas>(
+  schemas: S,
+): RequestHandler<
+  Output<S["params"], Request["params"]>,
+  unknown,
+  Output<S["body"], unknown>,
+  Output<S["query"], Request["query"]>
+> {
+```
+
+`Output<S, Fallback>` adalah **conditional type**: "kalau `S` skema Zod, pakai tipe output-nya; kalau tidak,
+pakai tipe bawaan". Karena route di Express menerima deretan handler dengan generic yang sama, handler
+berikutnya ikut mendapat tipe tersebut:
+
+```ts title="api/src/modules/tasks/tasks.routes.ts"
+tasksRouter.get("/", validate({ query: listTasksQuerySchema }), async (req, res) => {
+  const result = await tasksService.listTasks(getUserId(req), req.query);
+  res.json(result);
+});
+```
+
+Di sini `req.query` bertipe `ListTasksQuery`: `page` sudah `number` (bukan string mentah dari URL), `sort`
+sudah punya default. Tidak ada cast, tidak ada `any`.
+
+Data tambahan di `req` (misalnya id user dari token) ditambahkan lewat **declaration merging**, yaitu memperluas
+interface milik library:
+
+```ts title="api/src/middleware/auth.ts"
+declare global {
+  namespace Express {
+    interface Request {
+      // Diisi oleh requireAuth setelah access token terverifikasi.
+      userId?: number;
+    }
+  }
+}
+```
+
+Error handler punya tipe sendiri, `ErrorRequestHandler`, sehingga keempat parameternya tidak perlu diberi tipe satu
+per satu:
+
+```ts title="api/src/middleware/error-handler.ts"
+export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+  const httpError = toHttpError(error);
+```
+
+## Zod sebagai satu sumber kebenaran
+
+Tanpa Zod, kamu menulis aturan dua kali: sekali sebagai `type` untuk compiler, sekali sebagai `if` untuk validasi
+runtime. Keduanya pasti suatu hari tidak sinkron. Dengan Zod, **skema adalah sumbernya**, tipe diturunkan:
+
+```ts title="api/src/modules/tasks/tasks.schemas.ts"
+export const createTaskSchema = z.object({
+  title: z
+    .string({ error: "Judul wajib diisi" })
+    .trim()
+    .min(1, "Judul wajib diisi")
+    .max(200, "Judul maksimal 200 karakter"),
+  description: z
+    .string()
+    .trim()
+    .max(2000, "Deskripsi maksimal 2000 karakter")
+    .nullish()
+    .transform((value) => (value === "" ? null : value)),
+  // ISO 8601, contoh "2026-11-01T23:59:00.000Z". null = tanpa deadline.
+  deadline: z.iso
+    .datetime({ offset: true, error: "Deadline harus berformat tanggal ISO 8601" })
+    .nullish()
+    .transform((value) => (value ? new Date(value) : value)),
+  status: status.optional(),
+  priority: priority.optional(),
+  courseId: z.number({ error: "courseId harus berupa angka" }).int().positive().nullish(),
+});
+
+// PATCH: field sama dengan POST, tapi semuanya opsional.
+export const updateTaskSchema = createTaskSchema.partial();
+
+export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>;
+export type CreateTaskInput = z.infer<typeof createTaskSchema>;
+export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
+```
+
+Tambah satu field di skema, dan `CreateTaskInput`, `validate()`, serta service yang memakainya ikut berubah.
+
+### `z.input` vs `z.output`
+
+Skema yang memakai `.transform()`, `.default()`, atau `z.coerce` punya **dua** tipe: data *sebelum* diparse
+(yang dikirim client) dan *sesudah* diparse (yang diterima service). `z.infer` sama dengan `z.output`.
+
+| Field `createTaskSchema` | `z.input` (body dari client) | `z.output` / `z.infer` (masuk service) |
+| --- | --- | --- |
+| `title` | `string` | `string` (sudah di-trim) |
+| `deadline` | `string \| null \| undefined` | `string \| Date \| null \| undefined` |
+| `status` | `"TODO" \| "IN_PROGRESS" \| "DONE" \| undefined` | sama |
+
+Hal yang sama terjadi di query list: `page` dari URL berupa teks, lalu `z.coerce.number()` mengubahnya menjadi
+angka dengan default `1`. Itu sebabnya `validate()` sengaja memakai `z.output`. Sebaliknya, untuk tipe body di
+**client**, yang benar adalah `z.input`.
+
+## Tipe Prisma hasil generate
+
+`npm run db:generate` membaca `prisma/schema.prisma` dan menulis client bertipe ke `api/src/generated/prisma`.
+Dari sana kamu mendapat tipe model (`Task`, `Course`) dan namespace `Prisma` berisi tipe argumen query.
+
+Yang menarik: tipe hasil query **mengikuti argumennya**. Service tugas mendefinisikan bentuk Task yang dikirim ke
+client sekali saja:
+
+```ts title="api/src/modules/tasks/tasks.service.ts"
+import type { Prisma } from "../../generated/prisma/client.ts";
+
+// Bentuk Task yang dikirim ke client: tanpa userId, plus ringkasan course & daftar lampiran.
+const taskQueryArgs = {
+  omit: { userId: true },
+  include: {
+    course: { select: { id: true, name: true, color: true } },
+    attachments: { orderBy: { id: "asc" } },
+  },
+} satisfies Prisma.TaskDefaultArgs;
+```
+
+Setiap `prisma.task.findMany({ ...taskQueryArgs, where })` otomatis bertipe "Task tanpa `userId`, dengan `course`
+berisi `id`, `name`, `color`, dan array `attachments`". Query kecil seperti
+`findFirst({ where: { id, userId }, select: { id: true } })` di `assertTaskOwned` hanya bertipe `{ id: number } | null`.
+
+Kode pendamping membiarkan tipe ini disimpulkan otomatis dari nilai kembalian fungsi. **Saran pengembangan**:
+beri nama agar bisa dipakai di tempat lain, misalnya di test:
+
+```ts title="api/src/modules/tasks/tasks.service.ts (saran pengembangan)"
+export type TaskDto = Prisma.TaskGetPayload<typeof taskQueryArgs>;
+```
+
+<Callout type="warning" title="Tipe Prisma bukan tipe di aplikasi">
+
+Ada dua perbedaan penting antara tipe di server dan data yang tiba di HP:
+
+1. **Tanggal**: Prisma mengembalikan `Date`, tetapi `res.json()` mengubahnya menjadi string ISO. Karena itu
+   tipe `Task` di `kuliah-app` memakai `deadline: string | null`, bukan `Date`.
+2. **Enum di SQLite**: SQLite tidak punya enum, jadi di `schema.prisma` kolom `status` bertipe `String`. Tipe
+   Prisma-nya hanya `string`; yang menjamin isinya `TODO | IN_PROGRESS | DONE` adalah Zod saat data masuk.
+
+</Callout>
+
+## Berbagi tipe DTO antara API dan aplikasi
+
+**DTO** (*Data Transfer Object*) adalah bentuk data yang lewat di jaringan. Ada tiga cara menjaga DTO di server dan
+aplikasi tetap sama:
+
+| Cara | Kelebihan | Kekurangan |
+| --- | --- | --- |
+| Salin tipe secara manual | Paling sederhana, tanpa tooling | Bisa tidak sinkron, harus disiplin |
+| Paket bersama (monorepo, mis. `packages/shared`) | Satu skema Zod dipakai server dan aplikasi | Perlu npm workspaces dan konfigurasi Metro |
+| Codegen dari OpenAPI | Cocok bila client ditulis tim/bahasa lain | Butuh spesifikasi OpenAPI dan langkah generate |
+
+Pelajaran ini memakai cara **pertama** dengan sengaja, supaya `api/` dan `kuliah-app` bisa dipelajari terpisah.
+Contoh referensinya:
+
+```ts title="kuliah-app/src/features/tasks/types.ts"
+// Model tugas sesuai kontrak API.
+
+export type Task = {
+  id: number;
+  title: string;
+  description: string | null;
+  /** Tanggal ISO 8601 atau null jika tanpa deadline. */
+  deadline: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  courseId: number | null;
+  course: { id: number; name: string; color: string | null } | null;
+  attachments: Attachment[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TaskInput = {
+  title: string;
+  description: string | null;
+  deadline: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  courseId: number | null;
+};
+```
+
+Konsekuensinya, beberapa hal ditulis dua kali: `TASK_STATUSES` ada di `api/src/modules/tasks/tasks.schemas.ts`
+**dan** di file di atas. Kalau kamu menambah validasi form di `kuliah-app/src/features/tasks/validation.ts`, aturan
+judul maksimal 200 karakter juga harus disalin "dengan aturan yang sama seperti API". Setiap kali kontrak berubah,
+kedua sisi harus diperbarui bersama, dan test API (`api/tests/tasks.test.ts`) menjadi jaring pengamannya.
+
+**Saran pengembangan** bila proyek tumbuh: pindahkan skema ke paket bersama.
+
+<FileTree title="belajar-crud-rn (saran pengembangan)" tree={`
+package.json # "workspaces": ["api", "kuliah-app", "packages/*"]
+packages/
+  shared/
+    package.json # "name": "@kuliah/shared"
+    src/
+      * tasks.ts # TASK_STATUSES + createTaskSchema
+api/
+  src/modules/tasks/tasks.schemas.ts # import dari @kuliah/shared
+kuliah-app/
+  src/features/tasks/types.ts # TaskInput = z.input<...>
+`} />
+
+Aplikasi lalu memakai `z.input<typeof createTaskSchema>` sebagai tipe body dan bisa memanggil `safeParse` untuk
+validasi form dengan pesan yang persis sama. Untuk opsi OpenAPI, Zod 4 punya `z.toJSONSchema()` yang mengubah
+skema menjadi JSON Schema, bahan baku spesifikasi OpenAPI.
+
+## `apiFetch<T>` bertipe di `kuliah-app`
+
+Di Track 3 kamu menulis `apiFetch(path, { method, body, signal })` di `src/lib/api.js`. Versi TypeScript-nya
+cukup menambah satu parameter tipe:
+
+```diff title="kuliah-app: src/lib/api.ts"
+-export async function apiFetch(path, { method = "GET", body, signal } = {}) {
++export type ApiFetchOptions = {
++  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
++  body?: unknown;
++  signal?: AbortSignal;
++};
++
++export async function apiFetch<T>(
++  path: string,
++  { method = "GET", body, signal }: ApiFetchOptions = {},
++): Promise<T> {
+   // ... isi fungsi sama seperti di Track 3 ...
+-  if (res.status === 204) return undefined;
+-  return res.json();
++  if (res.status === 204) return undefined as T;
++  return (await res.json()) as T;
+ }
+```
+
+Setelah `kuliah-app` dirapikan ke struktur fitur, peran `apiFetch` bisa dipegang oleh `request<T>` plus objek
+`api` yang lebih ringkas. Contoh referensinya:
+
+```ts title="kuliah-app/src/lib/api.ts"
+export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  // ... token, refresh saat 401, lalu:
+  return parseResponse<T>(response);
+}
+
+type Options = Omit<RequestOptions, 'method' | 'body'>;
+
+export const api = {
+  get: <T>(path: string, options?: Options) => request<T>(path, { ...options, method: 'GET' }),
+  post: <T>(path: string, body?: unknown, options?: Options) =>
+    request<T>(path, { ...options, method: 'POST', body }),
+  patch: <T>(path: string, body?: unknown, options?: Options) =>
+    request<T>(path, { ...options, method: 'PATCH', body }),
+  delete: <T = void>(path: string, options?: Options) =>
+    request<T>(path, { ...options, method: 'DELETE' }),
+};
+```
+
+Pemakaiannya di fitur tugas:
+
+```ts title="kuliah-app/src/features/tasks/api.ts"
+async get(id: number, signal?: AbortSignal) {
+  const res = await api.get<ApiResponse<Task>>(`/api/tasks/${id}`, { signal });
+  return res.data; // → bertipe Task
+},
+```
+
+Perhatikan `<T = void>` di `delete`: **default type parameter**, karena DELETE membalas `204` tanpa body.
+
+<Callout type="danger" title="Generic bukan validasi">
+
+`as T` adalah janji kepada compiler, bukan pemeriksaan. Jika server mengirim bentuk lain, TypeScript tidak akan
+tahu. Untuk data yang benar-benar kritis, parse respons dengan skema Zod di batas jaringan (saran pengembangan),
+misalnya `TaskSchema.parse(json)`. Contoh referensi di pelajaran ini memilih percaya pada kontrak demi kesederhanaan.
+
+</Callout>
+
+## Discriminated union untuk hasil dan state
+
+**Discriminated union** adalah union objek yang punya satu properti "penanda" (*discriminant*) bernilai literal.
+Setelah kamu memeriksa penandanya, TypeScript tahu properti lain apa yang tersedia. Kamu sudah memakainya tanpa
+sadar: `safeParse` dari Zod mengembalikan `{ success: true; data } | { success: false; error }`.
+
+```ts title="api/src/config/env.ts"
+const parsed = envSchema.safeParse(process.env);
+
+if (!parsed.success) {
+  const problems = parsed.error.issues
+    .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
+    .join("\n");
+  console.error(`Konfigurasi environment tidak valid:\n${problems}\nPeriksa file .env (lihat .env.example).`);
+  process.exit(1);
+}
+
+export const env = parsed.data;
+```
+
+Di dalam `if`, hanya `parsed.error` yang boleh diakses. Setelah `process.exit(1)` (bertipe `never`), TypeScript
+tahu sisanya pasti sukses, jadi `parsed.data` aman. Hasil `useQuery` di TanStack Query juga discriminated union:
+setelah `if (query.status === 'success')`, `query.data` bertipe `Task`, bukan `Task | undefined`.
+
+Versi pertama status login biasanya berupa union literal biasa, misalnya
+`AuthStatus = 'loading' | 'signedIn' | 'signedOut'` di `kuliah-app/src/features/auth/auth-context.tsx`, ditambah
+`user: User | null` terpisah. **Saran pengembangan**:
+gabungkan keduanya agar keadaan mustahil (status `signedIn` tetapi `user` null) tidak bisa ditulis:
+
+```ts title="saran pengembangan"
+type AuthState =
+  | { status: 'loading' }
+  | { status: 'signedOut' }
+  | { status: 'signedIn'; user: User };
+
+function greeting(state: AuthState): string {
+  switch (state.status) {
+    case 'loading':
+      return 'Memuat...';
+    case 'signedOut':
+      return 'Silakan masuk';
+    case 'signedIn':
+      return `Halo, ${state.user.name}`; // user pasti ada di sini
+    default: {
+      const unreachable: never = state; // error jika ada status baru yang lupa ditangani
+      return unreachable;
+    }
+  }
+}
+```
+
+Trik `never` di `default` disebut **exhaustive check**: tambahkan `{ status: 'expired' }` ke union, dan compiler
+menunjuk setiap `switch` yang belum menanganinya.
+
+## `satisfies`: dicek tanpa kehilangan detail
+
+Ingat `taskQueryArgs` di atas memakai `satisfies Prisma.TaskDefaultArgs`, bukan anotasi `: Prisma.TaskDefaultArgs`.
+Bedanya besar:
+
+<Compare>
+<CompareItem title="Anotasi tipe" tone="bad">
+
+```ts
+const taskQueryArgs: Prisma.TaskDefaultArgs = {
+  omit: { userId: true },
+  include: { course: { select: { id: true, name: true, color: true } } },
+};
+```
+
+Tipe variabel *melebar* menjadi `TaskDefaultArgs`. Prisma tidak lagi tahu bahwa `course` di-include, jadi hasil
+query kehilangan properti `course`.
+
+</CompareItem>
+<CompareItem title="satisfies" tone="good">
+
+```ts
+const taskQueryArgs = {
+  omit: { userId: true },
+  include: { course: { select: { id: true, name: true, color: true } } },
+} satisfies Prisma.TaskDefaultArgs;
+```
+
+Objek tetap **dicek** (salah ketik `inclde` langsung error), tetapi tipe literalnya dipertahankan, sehingga
+tipe hasil query akurat.
+
+</CompareItem>
+</Compare>
+
+Aturan praktis: pakai anotasi bila kamu ingin tipe yang umum; pakai `satisfies` bila kamu ingin validasi **dan**
+tetap butuh detail nilai literalnya (konfigurasi, objek argumen query, peta label).
+
+## `unknown` di catch dan narrowing
+
+Dengan `strict`, variabel di `catch (error)` bertipe `unknown`, karena JavaScript boleh melempar apa saja, bahkan
+string. `unknown` tidak bisa dipakai sebelum dipersempit (**narrowing**) dengan `instanceof`, `typeof`, atau
+*type guard*. Contoh untuk `kuliah-app`:
+
+```ts title="kuliah-app/src/lib/api.ts"
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error && error.message) return error.message;
+  return 'Terjadi kesalahan yang tidak diketahui.';
+}
+
+function isErrorBody(body: unknown): body is ErrorBody {
+  return typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'object';
+}
+```
+
+`body is ErrorBody` adalah **type predicate**: bila fungsi mengembalikan `true`, TypeScript menganggap `body`
+bertipe `ErrorBody` di cabang itu. Backend memakai pola yang sama di `toHttpError(error: unknown)` pada
+`api/src/middleware/error-handler.ts`, dan `requireAuth` memeriksa `error instanceof jwt.TokenExpiredError` untuk
+membalas kode `TOKEN_EXPIRED`.
+
+## Typed routes di Expo Router
+
+Rute juga bisa salah ketik: `router.push('/task/1')` padahal filenya `src/app/tasks/[id]/index.tsx`. Expo Router
+bisa membuatkan tipe dari struktur folder `src/app/`. Nyalakan fiturnya di `app.json`:
+
+```json title="kuliah-app/app.json (potongan)"
+{
+  "expo": {
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
+```
+
+Saat `npx expo start` berjalan, Expo CLI menulis deklarasi tipe ke folder `.expo/types/` dan file `expo-env.d.ts`.
+Pastikan keduanya masuk `include` di `kuliah-app/tsconfig.json`:
+
+```json title="kuliah-app/tsconfig.json (potongan)"
+"include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
+```
+
+Hasilnya, `href` pada `Link` dan `router` diperiksa terhadap file yang benar-benar ada. Contoh untuk rute
+`kuliah-app` dari Track 3:
+
+```tsx title="contoh: src/components/task-card.tsx"
+import { Link, router } from 'expo-router';
+
+// ✅ rute dinamis dengan params bertipe
+<Link href={{ pathname: '/tasks/[id]', params: { id: String(task.id) } }}>Detail</Link>;
+
+router.push('/tasks/new'); // ✅
+router.push('/task/new'); // ❌ error: rute tidak ada
+```
+
+Di layar detail, ambil parameter dengan tipe eksplisit:
+
+```tsx title="contoh: src/app/tasks/[id]/index.tsx"
+import { useLocalSearchParams } from 'expo-router';
+
+export default function TaskDetailScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const taskId = Number(id); // parameter URL selalu string
+  // ...
+}
+```
+
+## Kesalahan umum
+
+<Callout type="warning" title="Pesan error yang paling sering muncul">
+
+- `Parameter 'task' implicitly has an 'any' type.` (TS7006): parameter belum bertipe di bawah `strict`. Tambahkan
+  tipe, misalnya `(task: Task) =>`.
+- `Type 'string | undefined' is not assignable to type 'string'.` (TS2322): nilai mungkin kosong. Tangani dengan
+  `if`, `??`, atau perbaiki skemanya. Jangan langsung menambal dengan `!`.
+- `'error' is of type 'unknown'.` (TS18046): mengakses `error.message` di `catch` tanpa narrowing. Pakai
+  `error instanceof Error` atau `getErrorMessage(error)`.
+- `'Request' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.`
+  (TS1484): ganti menjadi `import type { Request } from "express"`.
+- `Cannot find module '../../generated/prisma/client.ts' or its corresponding type declarations.` (TS2307): client
+  Prisma belum dibuat. Jalankan `npm run db:generate` di `api/`.
+- Tipe rute tidak muncul atau `href` dianggap `string` biasa: jalankan `npx expo start` sekali agar `.expo/types`
+  dibuat, lalu restart TS server di editor.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Tipe body dari skema Zod" difficulty="sedang" hints={["`z.input` membaca tipe sebelum transform dan default.", "Gunakan `satisfies` agar objek dicek tanpa kehilangan tipe literal."]}>
+
+Di backend, buat tipe `CreateTaskBody` untuk body yang **dikirim client** ke `POST /api/tasks`, berdasarkan
+`createTaskSchema`. Lalu tulis objek contoh tugas "Laporan praktikum Basis Data" dengan deadline string ISO dan
+prioritas tinggi yang dicek terhadap tipe itu. Kenapa `CreateTaskInput` (dari `z.infer`) kurang tepat di sini?
+
+<Solution>
+
+```ts title="api/src/modules/tasks/tasks.schemas.ts (tambahan)"
+export type CreateTaskBody = z.input<typeof createTaskSchema>;
+
+export const contohBody = {
+  title: "Laporan praktikum Basis Data",
+  deadline: "2026-11-01T23:59:00.000Z",
+  priority: "HIGH",
+} satisfies CreateTaskBody;
+```
+
+`z.infer` sama dengan `z.output`: tipe *setelah* transform. Client mengirim string ISO, sedangkan output
+transform bisa berisi `Date`. `satisfies` memastikan `priority` hanya boleh `"LOW" | "MEDIUM" | "HIGH"` sambil
+tetap mempertahankan nilai literalnya.
+
+</Solution>
+</Exercise>
+
+<Exercise title="State layar detail yang tidak mungkin salah" difficulty="sulit" hints={["Mulai dari tiga anggota union dengan properti `status`.", "Tambahkan `default` dengan variabel bertipe `never`."]}>
+
+Buat tipe `DetailState` untuk layar detail tugas dengan tiga keadaan: memuat, gagal (membawa `ApiError`), dan
+berhasil (membawa `Task`). Tulis fungsi `judulLayar(state)` yang mengembalikan "Memuat...", pesan error, atau
+judul tugas, lengkap dengan exhaustive check.
+
+<Solution>
+
+```ts title="src/features/tasks/detail-state.ts (saran pengembangan)"
+import type { ApiError } from '@/lib/api';
+import type { Task } from './types';
+
+export type DetailState =
+  | { status: 'loading' }
+  | { status: 'error'; error: ApiError }
+  | { status: 'success'; task: Task };
+
+export function judulLayar(state: DetailState): string {
+  switch (state.status) {
+    case 'loading':
+      return 'Memuat...';
+    case 'error':
+      return state.error.message;
+    case 'success':
+      return state.task.title;
+    default: {
+      const unreachable: never = state;
+      return unreachable;
+    }
+  }
+}
+```
+
+Di setiap `case`, TypeScript hanya mengizinkan properti milik anggota itu. Mengakses `state.task` di cabang
+`'error'` langsung ditolak compiler.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Opsi tsconfig mana yang membuat `arr[i]` bertipe `T | undefined`?",
+    options: ["`strict`", "`noImplicitOverride`", "`noUncheckedIndexedAccess`", "`isolatedModules`"],
+    answer: 2,
+    explain: "`noUncheckedIndexedAccess` menganggap akses indeks bisa di luar batas. `strict` tidak menyertakannya, dan dua opsi lain mengatur hal berbeda (kata kunci `override` dan kompilasi per file).",
+  },
+  {
+    q: "Untuk tipe body yang dikirim aplikasi ke `POST /api/tasks`, mana yang paling tepat?",
+    options: ["`z.input<typeof createTaskSchema>`", "`z.infer<typeof createTaskSchema>`", "`Prisma.TaskGetPayload<{}>`", "`any`"],
+    answer: 0,
+    explain: "Client mengirim data sebelum transform, jadi `z.input`. `z.infer` adalah tipe setelah transform (deadline bisa `Date`), tipe Prisma adalah baris database, dan `any` mematikan pemeriksaan.",
+  },
+  {
+    q: "Kenapa `taskQueryArgs` memakai `satisfies Prisma.TaskDefaultArgs` dan bukan anotasi tipe?",
+    options: ["Agar lebih cepat saat runtime", "Agar objek dicek tetapi tipe literal `include`-nya tetap terbawa ke hasil query", "Karena anotasi tipe tidak boleh dipakai di objek", "Agar Prisma tidak perlu di-generate"],
+    answer: 1,
+    explain: "`satisfies` memeriksa kecocokan tanpa melebarkan tipe. Dengan anotasi, tipe melebar menjadi `TaskDefaultArgs` dan hasil query kehilangan info `course`. Tidak ada efek runtime sama sekali.",
+  },
+  {
+    q: "Di pelajaran ini, bagaimana tipe Task dibagi antara `api/` dan `kuliah-app`?",
+    options: ["Paket bersama di monorepo", "Codegen dari OpenAPI", "Mengimpor langsung dari `api/src/generated/prisma`", "Menyalin tipe secara manual di `kuliah-app/src/features/tasks/types.ts`"],
+    answer: 3,
+    explain: "Tipe sengaja disalin sesuai kontrak agar kedua proyek berdiri sendiri. Mengimpor tipe Prisma ke `kuliah-app` juga salah karena tanggal di JSON berupa string, bukan `Date`.",
+  },
+  {
+    q: "Di dalam `catch (error)` dengan `strict`, apa yang harus dilakukan sebelum membaca `error.message`?",
+    options: ["Tidak perlu apa-apa", "Mempersempit tipe, misalnya `error instanceof Error`", "Mengganti `catch` dengan `finally`", "Menambahkan `// @ts-check`"],
+    answer: 1,
+    explain: "`error` bertipe `unknown`, jadi harus dipersempit dulu (narrowing). `finally` tidak menerima error, dan `@ts-check` hanya untuk file JavaScript.",
+  },
+]} />
+
+## Ringkasan
+
+- Union literal dari array `as const`, generic seperti `ApiResponse<T>`, dan utility types (`Partial`, `Pick`,
+  `Omit`, `Record`, `Exclude`) adalah alat sehari-hari di `api/` dan `kuliah-app`.
+- Migrasi bertahap dengan `allowJs`: mulai dari file daun, jalankan `tsc --noEmit` di setiap langkah, hindari `any`.
+- `api/tsconfig.json` memakai `strict` plus `noUncheckedIndexedAccess`, `verbatimModuleSyntax`, dan ekstensi
+  `.ts` di import yang ditulis ulang saat build.
+- `validate()` mengubah skema Zod menjadi tipe `req.params`, `req.query`, dan `req.body`; skema adalah satu sumber
+  kebenaran, `z.input` untuk client dan `z.output` untuk server.
+- Tipe Prisma mengikuti argumen query (`satisfies` + `Prisma.TaskGetPayload`), tetapi `Date` menjadi string setelah JSON.
+- Pelajaran ini menyalin DTO secara manual; paket bersama atau OpenAPI adalah opsi saat proyek tumbuh.
+- Discriminated union, exhaustive check `never`, `unknown` di `catch`, dan typed routes menutup celah sisanya.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Migrasikan `kuliah-app` ke TypeScript: ubah `src/lib/labels.js` dan `src/lib/api.js` menjadi `.ts` dengan
+`apiFetch<T>`, tulis tipe `Task` dan `TaskInput` di `kuliah-app/src/features/tasks/types.ts` (salin dari contoh
+di atas), lalu aktifkan
+`"typedRoutes": true` di `app.json`. Targetnya: `npx tsc --noEmit` bersih tanpa satu pun `any`. Pelajaran
+berikutnya, [Arsitektur Bersih & Pola Desain](/belajar/expert/clean-architecture), akan menata kode bertipe ini
+menjadi lapisan yang rapi.
+
+</Callout>

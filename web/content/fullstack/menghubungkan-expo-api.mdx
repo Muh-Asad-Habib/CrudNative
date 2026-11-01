@@ -1,0 +1,921 @@
+## Pengantar
+
+API pendamping sudah jalan di laptop. Di browser, `http://localhost:3000/api/health` menampilkan `{"status":"ok"}`.
+Tetapi saat `fetch("http://localhost:3000/api/tasks")` dijalankan lewat Expo Go di HP, yang muncul justru
+`TypeError: Network request failed`.
+
+API-nya tidak rusak. HP-mu hanya mencari API di tempat yang salah.
+
+Di pelajaran ini kamu akan:
+
+1. Membuat proyek **`kuliah-app`**, aplikasi Expo yang dipakai sampai akhir Track 3.
+2. Memilih alamat API yang benar untuk tiap perangkat: browser, emulator, simulator, atau HP fisik.
+3. Menulis **`src/lib/api.js`**, kode pembantu yang mengurus semua request ke API, termasuk batas waktu dan pesan
+error.
+4. Menulis **`src/lib/dev-auth.js`**, login demo sementara supaya aplikasi boleh mengambil data.
+5. Membuat layar uji yang membuktikan HP benar-benar bisa mengambil data dari laptop.
+
+## Menyiapkan proyek kuliah-app
+
+Kamu butuh **dua terminal** (jendela command line) yang menyala bersamaan. Terminal pertama menjalankan API, terminal
+kedua menjalankan Expo. Buat folder `kuliah-app` di folder proyek kursus, sejajar dengan folder `api`, bukan di
+dalamnya.
+
+<Steps>
+<Step title="Terminal 1: jalankan API pendamping">
+
+```bash
+cd api
+npm run dev
+```
+
+```txt
+API berjalan di http://localhost:3000/api
+  Dari HP di Wi-Fi yang sama: http://192.168.1.10:3000/api
+  Dari emulator Android:      http://10.0.2.2:3000/api
+```
+
+Biarkan terminal ini terbuka. Catat alamat di baris `Dari HP di Wi-Fi yang sama` untuk dipakai nanti.
+
+</Step>
+<Step title="Terminal 2: buat proyek dan kosongkan template">
+
+```bash
+npx create-expo-app@latest kuliah-app
+cd kuliah-app
+npm run reset-project
+```
+
+`create-expo-app` membuat proyek baru dari template. `reset-project` menghapus contoh bawaan template supaya kamu
+mulai dari layar kosong. Saat muncul pertanyaan
+`Do you want to move existing files to /example instead of deleting them? (Y/n)`, ketik `n` lalu Enter. Tunggu sampai
+muncul `✅ Project reset complete.`
+
+</Step>
+<Step title="Ubah file TypeScript menjadi JavaScript">
+
+Template Expo memakai TypeScript (file `.tsx`). Kursus ini memakai JavaScript, jadi ganti ekstensi dua file yang
+dibuat `reset-project` menjadi `.js`.
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+Rename-Item src\app\index.tsx index.js
+Rename-Item src\app\_layout.tsx _layout.js
+```
+
+</Tab>
+<Tab>
+
+```bash
+mv src/app/index.tsx src/app/index.js
+mv src/app/_layout.tsx src/app/_layout.js
+```
+
+</Tab>
+</Tabs>
+
+File `tsconfig.json` boleh dibiarkan. Expo tetap menjalankan file `.js` seperti biasa.
+
+</Step>
+<Step title="Jalankan Expo">
+
+```bash
+npx expo start
+```
+
+Perhatikan baris `› Metro waiting on exp://192.168.1.10:8081`. Artinya:
+
+- `192.168.1.10` adalah alamat laptopmu di jaringan Wi-Fi.
+- `8081` adalah **port** (nomor "pintu" di laptop) milik [Metro](/glosarium#metro). Metro adalah program yang
+mengemas kode JavaScript aplikasimu lalu mengirimnya ke HP. API memakai pintu lain, yaitu `3000`.
+
+Tekan `a` untuk emulator Android, `i` untuk iOS Simulator, `w` untuk browser, atau pindai QR dengan
+[Expo Go](/glosarium#expo-go) di HP Android.
+
+</Step>
+</Steps>
+
+<Callout type="info" title="Pengguna iPhone">
+
+Seperti dibahas di pelajaran [Intro React Native & Expo](/belajar/react-native/intro-react-native-expo), Expo Go di
+App Store belum mendukung SDK 58. Di iPhone fisik kamu perlu [development build](/glosarium#development-build), yaitu
+versi aplikasi khusus pengembangan yang kamu build sendiri. Cara memilih alamat API-nya sama dengan HP Android fisik.
+
+</Callout>
+
+## Kenapa localhost tidak selalu berhasil
+
+<Callout type="analogi" title="Seperti catatan di meja kos">
+
+Kamu menempel catatan di meja kosmu: "Kunci motor ada di laci meja ini." Temanmu memotret catatan itu dan menempelnya
+di mejanya sendiri. Saat ia membuka "laci meja ini", yang terbuka laci miliknya, dan kuncinya tidak ada.
+
+Catatan itu = kode `fetch`. "Meja ini" = `localhost`. Meja teman = HP yang menjalankan kode itu.
+
+</Callout>
+
+[`localhost`](/glosarium#localhost) selalu berarti **"perangkat ini sendiri"**. Saat kode berjalan di HP, `localhost`
+menunjuk ke HP itu, padahal API ada di laptop. Jadi alamat API bergantung pada **di mana aplikasi berjalan**:
+
+| Aplikasi berjalan di | Isi `EXPO_PUBLIC_API_URL` | Alasan |
+| --- | --- | --- |
+| Browser laptop (Expo web) | `http://localhost:3000` | Browser dan API berada di mesin yang sama |
+| iOS Simulator (di Mac) | `http://localhost:3000` | Simulator memakai jaringan Mac secara langsung |
+| Emulator Android | `http://10.0.2.2:3000` | `10.0.2.2` adalah alamat khusus emulator untuk menuju laptop |
+| HP fisik di Wi-Fi yang sama | `http://192.168.1.10:3000` (IP LAN laptop) | HP adalah perangkat lain, jadi ia harus menuju laptop lewat router Wi-Fi |
+| HP Android lewat kabel USB + `adb reverse tcp:3000 tcp:3000` | `http://localhost:3000` | `adb` (alat Android untuk mengendalikan HP lewat kabel) meneruskan port 3000 di HP ke port 3000 laptop |
+
+<Flow nodes={["Expo Go di HP", "Router Wi-Fi", "Laptop 192.168.1.10", "API :3000"]} labels={["HTTP", "jaringan lokal", "port 3000"]} caption="Jalur request dari HP fisik ke API di laptop" />
+
+<Callout type="tip" title="Satu alamat untuk semua">
+
+IP LAN (`http://192.168.1.10:3000`) bisa dipakai emulator, simulator, **dan** HP sekaligus, asalkan firewall
+mengizinkan. Kekurangannya, IP itu berubah setiap kamu pindah Wi-Fi, jadi `.env` harus diperbarui.
+
+</Callout>
+
+## Mencari IP LAN laptop
+
+<Callout type="analogi" title="Seperti nomor kamar dan pintu di gedung kos">
+
+Satu jaringan Wi-Fi itu seperti satu gedung kos, dan router adalah penjaganya.
+
+- **IP LAN** (alamat di jaringan lokal) = nomor kamar tiap perangkat, misalnya `192.168.1.10`.
+- **Port** = nomor pintu di kamar itu: `3000` untuk API, `8081` untuk Metro.
+
+Pindah gedung (Wi-Fi lain) berarti dapat nomor kamar baru. Karena itu IP laptop bisa berubah.
+
+</Callout>
+
+Cara tercepat: baca baris `Dari HP di Wi-Fi yang sama` di terminal API. Kalau ingin mengecek sendiri, jalankan
+perintah sesuai sistem operasimu:
+
+<Tabs items={["Windows", "macOS", "Linux"]}>
+<Tab>
+
+```powershell
+ipconfig
+```
+
+Cari bagian **Wireless LAN adapter Wi-Fi**, lalu baca nilai **IPv4 Address**, misalnya `192.168.1.10`.
+
+</Tab>
+<Tab>
+
+```bash
+ipconfig getifaddr en0
+```
+
+Jika kosong, jalankan `ifconfig | grep "inet "` dan pilih alamat selain `127.0.0.1`.
+
+</Tab>
+<Tab>
+
+```bash
+hostname -I
+```
+
+Atau `ip -4 addr` dan lihat antarmuka Wi-Fi (biasanya `wlan0` atau `wlp…`).
+
+</Tab>
+</Tabs>
+
+Abaikan adapter virtual seperti **vEthernet (WSL)**, **VirtualBox**, atau **VMware**. Itu jaringan buatan di dalam
+laptop, dan HP tidak bisa menjangkaunya. IP yang benar biasanya diawali `192.168.`, `10.`, atau `172.16.` sampai
+`172.31.`.
+
+Sebelum menulis kode, uji dulu dari browser HP. Buka `http://192.168.1.10:3000/api/health` (ganti dengan IP
+laptopmu). Kalau muncul `{"status":"ok"}`, jaringan sudah beres. Kalau gagal, masalahnya ada di jaringan atau
+firewall, bukan di kodemu.
+
+### Izin firewall
+
+**Firewall** adalah penjaga di laptop yang menyaring koneksi masuk, mirip satpam di gerbang kampus. Kalau Node.js
+belum diberi izin, request dari HP ditolak di gerbang dan tidak pernah sampai ke API.
+
+Saat API pertama kali dijalankan di Windows, biasanya muncul jendela **"Windows Defender Firewall has blocked some
+features of this app"** untuk **Node.js JavaScript Runtime**. Centang **Private networks**, lalu klik **Allow
+access**.
+
+Kalau jendela itu terlanjur kamu tutup, atau Wi-Fi-mu tercatat sebagai jaringan *Public* (jaringan umum yang aturannya
+lebih ketat), buka PowerShell **sebagai Administrator** lalu jalankan:
+
+```powershell
+# Izinkan koneksi masuk ke port 3000 di jaringan Private
+New-NetFirewallRule -DisplayName "API Kuliah (port 3000)" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -Profile Private
+
+# Cek profil jaringan, lalu jadikan Wi-Fi rumah/kos sebagai Private
+Get-NetConnectionProfile
+Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
+```
+
+Perintah pertama membuka port 3000. Dua perintah berikutnya mengecek profil jaringan, lalu menjadikan Wi-Fi rumah
+atau kos *Private* (jaringan yang kamu percaya).
+
+Di macOS, pilih **Allow** saat muncul pertanyaan apakah `node` boleh menerima koneksi masuk.
+
+Wi-Fi kampus atau kafe sering melarang perangkat saling terhubung (*client isolation*), supaya pengguna lain tidak bisa
+mengakses laptopmu. Kalau semua langkah sudah benar tetapi tetap gagal, sambungkan laptop dan HP ke hotspot HP.
+
+## Menyimpan alamat API di .env
+
+<Callout type="analogi" title="Seperti papan alamat dan brosur warung">
+
+Pemilik warung menulis alamat pemasok di papan di dinding dapur. Kalau pemasok pindah, ia cukup mengganti tulisan di
+papan. Buku resepnya tidak perlu diubah. Papan = file `.env`, buku resep = kode aplikasimu.
+
+Variabel berawalan `EXPO_PUBLIC_` ikut dicetak di brosur yang dibagikan ke semua pembeli, yaitu aplikasi di HP
+pengguna. Alamat warung boleh ada di brosur. PIN rekening jangan.
+
+</Callout>
+
+Jangan menulis alamat API langsung di kode, karena alamat itu berubah tiap kamu pindah Wi-Fi atau perangkat. Simpan di
+file `.env` di folder utama (**root**) `kuliah-app`, sejajar dengan `package.json`:
+
+```dotenv
+# kuliah-app/.env
+EXPO_PUBLIC_API_URL=http://192.168.1.10:3000
+```
+
+Tulis alamat **tanpa** akhiran `/api`, karena setiap path di kode sudah diawali `/api/...`. Kalau ditulis dobel,
+hasilnya `/api/api/tasks` dan request gagal.
+
+Saat aplikasi dijalankan, Expo CLI mengemas semua kode JavaScript menjadi satu paket bernama **bundle** (prosesnya
+disebut *bundling*). Ketika mengemas, Expo mencari tulisan `process.env.EXPO_PUBLIC_...` di kode lalu menggantinya
+dengan nilai dari `.env` (lihat [EXPO_PUBLIC_](/glosarium#expo-public-env)). Akibatnya ada dua aturan:
+
+- Setelah mengubah `.env`, muat ulang aplikasi. Jika nilai lama masih terbaca, hentikan Expo dengan
+  <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd> lalu jalankan `npx expo start --clear` untuk membersihkan cache Metro.
+- Tulis `process.env.EXPO_PUBLIC_API_URL` utuh dengan titik. Expo hanya mencari tulisan persis seperti itu, jadi
+  bentuk lain tidak diganti:
+
+```js
+// ✅ diganti dengan nilai dari .env saat bundling
+const url = process.env.EXPO_PUBLIC_API_URL;
+
+// ❌ tidak diganti → undefined
+const { EXPO_PUBLIC_API_URL } = process.env;
+const url2 = process.env["EXPO_PUBLIC_API_URL"];
+```
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+```dotenv
+EXPO_PUBLIC_API_URL=http://192.168.1.10:3000
+EXPO_PUBLIC_JWT_SECRET=rahasia-super
+```
+
+Siapa pun yang mengunduh aplikasimu bisa membaca nilai ini dari bundle sebagai teks biasa.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+```dotenv
+EXPO_PUBLIC_API_URL=http://192.168.1.10:3000
+```
+
+Isinya hanya informasi publik. [Secret](/glosarium#secret) (data rahasia) seperti `JWT_SECRET` tetap tinggal di
+`api/.env` di server.
+
+</CompareItem>
+</Compare>
+
+<Callout type="danger" title="EXPO_PUBLIC_ bukan tempat rahasia">
+
+Semua yang berawalan `EXPO_PUBLIC_` ikut terkirim ke setiap HP pengguna. Jangan pernah menaruh password database,
+`JWT_SECRET`, atau kunci API berbayar di sana.
+
+IP LAN tiap laptop berbeda. Kalau bekerja berkelompok, simpan alamatmu di `.env.local`. Nilainya menang atas `.env`,
+dan file ini tidak ikut ter-commit karena sudah tercantum di `.gitignore` bawaan template.
+
+</Callout>
+
+## Klien HTTP: src/lib/api.js
+
+<Callout type="analogi" title="Seperti kurir langganan kantor">
+
+Bayangkan tiap pegawai harus mengirim dokumen ke kantor pusat. Daripada mengurus sendiri-sendiri, semua titip ke satu
+kurir langganan. Kurir itu selalu menulis alamat pusat dengan benar (base URL) dan menempel stempel izin (token). Ia
+berhenti menunggu kalau balasan tak kunjung datang (timeout). Setiap masalah ia laporkan dengan formulir yang sama
+(`ApiError`). Fungsi `apiFetch` adalah kurir itu.
+
+</Callout>
+
+`fetch` bawaan JavaScript bisa langsung dipakai, tetapi punya tiga kekurangan untuk aplikasi nyata:
+
+1. Ia **tidak melempar error** untuk status 4xx/5xx, yaitu kode status gagal seperti 404 (tidak ditemukan) atau 500
+(server error). Kamu harus mengeceknya sendiri.
+2. Ia **tidak punya timeout** (batas waktu tunggu). Kalau server diam, aplikasi bisa menunggu sangat lama.
+3. Setiap pemanggilan harus menyusun sendiri base URL (alamat dasar API), header JSON, dan token. **Header** adalah
+keterangan tambahan yang ikut dikirim bersama request, misalnya "isi pesannya JSON" atau "ini tokenku".
+
+Karena itu kita membungkus `fetch` sekali saja di fungsi `apiFetch`. Setiap kegagalan diubah menjadi `ApiError`
+dengan `status`, `code`, `message`, dan `details`. Isinya sama dengan amplop `error` yang dikirim API. Amplop di sini
+artinya bungkus JSON yang bentuknya selalu sama, yaitu `{ error: { code, message, details } }`.
+
+```js
+// src/lib/api.js
+export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? "").replace(/\/+$/, "");
+
+const DEFAULT_TIMEOUT_MS = 10000;
+
+export class ApiError extends Error {
+  constructor(status, code, message, details = []) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status; // 0 = tidak ada respons HTTP sama sekali
+    this.code = code;
+    this.details = details;
+  }
+}
+
+let getToken = null;
+
+// Dipanggil oleh dev-auth.js (sementara) dan nanti oleh auth-context.js
+export function setTokenGetter(getter) {
+  getToken = getter;
+}
+
+async function send(path, { method, body, signal, headers, token, timeoutMs }) {
+  if (!API_URL) {
+    throw new ApiError(0, "CONFIG_ERROR", "EXPO_PUBLIC_API_URL belum diatur di file .env.");
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  // Teruskan pembatalan dari pemanggil (misalnya layar ditutup)
+  const onAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  signal?.addEventListener("abort", onAbort);
+
+  const finalHeaders = { Accept: "application/json", ...headers };
+  if (body !== undefined) finalHeaders["Content-Type"] = "application/json";
+  if (token) finalHeaders.Authorization = `Bearer ${token}`;
+
+  try {
+    return await fetch(`${API_URL}${path}`, {
+      method,
+      headers: finalHeaders,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (timedOut) {
+      throw new ApiError(0, "TIMEOUT", `Server tidak menjawab setelah ${timeoutMs} ms.`);
+    }
+    if (signal?.aborted) throw err; // dibatalkan pemanggil, bukan error jaringan
+    throw new ApiError(
+      0,
+      "NETWORK_ERROR",
+      `Tidak bisa terhubung ke ${API_URL}. Cek IP, port, Wi-Fi, dan firewall.`,
+    );
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+async function toApiError(response) {
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    // body kosong atau bukan JSON (misalnya halaman HTML)
+  }
+  const error = payload?.error ?? {};
+  return new ApiError(
+    response.status,
+    error.code ?? `HTTP_${response.status}`,
+    error.message ?? `Request gagal dengan status ${response.status}.`,
+    error.details ?? [],
+  );
+}
+
+export async function apiFetch(path, options = {}) {
+  const {
+    method = "GET",
+    body,
+    signal,
+    headers = {},
+    auth = true,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  } = options;
+  const request = { method, body, signal, headers, timeoutMs };
+
+  let token = auth && getToken ? await getToken() : null;
+  let response = await send(path, { ...request, token });
+
+  // Token ditolak (misalnya kedaluwarsa)? Minta token baru, ulangi SEKALI saja.
+  if (response.status === 401 && token) {
+    token = await getToken({ renew: true });
+    response = await send(path, { ...request, token });
+  }
+
+  if (!response.ok) throw await toApiError(response);
+  if (response.status === 204) return null;
+
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new ApiError(
+      response.status,
+      "INVALID_JSON",
+      "Respons server bukan JSON. Apakah EXPO_PUBLIC_API_URL menunjuk ke API (port 3000)?",
+    );
+  }
+}
+```
+
+Kodenya panjang, jadi baca per bagian:
+
+| Bagian | Tugasnya |
+| --- | --- |
+| `API_URL` | Dibaca dari `.env`. Garis miring di akhir dibuang supaya tidak terjadi `//api` |
+| `ApiError` | Satu bentuk error. `status` 0 berarti respons tidak pernah datang (konfigurasi, jaringan, timeout) |
+| `setTokenGetter()` | Mendaftarkan fungsi pemberi token. `api.js` sendiri tidak tahu cara login |
+| `send()` | Menyusun header, memasang timeout, dan mengubah kegagalan jaringan menjadi `ApiError` |
+| `toApiError()` | Membaca amplop `{ error: { message, code, details } }`. Jika body bukan JSON, tetap menghasilkan `HTTP_404` dan sejenisnya |
+| `apiFetch()` | Mengambil token, mengulang sekali saat 401, mengembalikan `null` untuk 204, dan mengubah teks JSON menjadi objek |
+
+Timeout memakai `AbortController`, alat bawaan untuk membatalkan request. `send()` menyalakan timer 10 detik. Kalau
+waktunya habis sebelum respons datang, `controller.abort()` menghentikan request. `AbortSignal.timeout()` tidak
+dipakai karena belum tentu tersedia di semua runtime React Native. *Runtime* adalah mesin yang menjalankan kode
+JavaScript-mu di HP, misalnya Hermes. Tiap versi mesin bisa punya fitur yang sedikit berbeda.
+
+`apiFetch` mengembalikan **body utuh** (seluruh isi JSON dari API). Bentuknya mengikuti
+[kontrak API](/glosarium#api-contract), yaitu kesepakatan format antara aplikasi dan API:
+
+- daftar data memakai `data` + `meta`,
+- satu objek memakai `data`,
+- health check mengembalikan `status`.
+
+Ada dua opsi tambahan. `auth: false` berarti request dikirim tanpa token (dipakai untuk health dan login).
+`timeoutMs` mengganti batas tunggu 10 detik. Contoh pemakaian di dalam fungsi `async`:
+
+```js
+import { apiFetch, ApiError } from "../lib/api";
+
+const health = await apiFetch("/api/health", { auth: false });
+// → { status: "ok" }
+
+const list = await apiFetch("/api/tasks?limit=5");
+// → { data: [ …5 tugas ], meta: { page: 1, limit: 5, total: 10, totalPages: 2 } }
+
+await apiFetch("/api/tasks/11", { method: "DELETE" });
+// → null (204 No Content)
+
+try {
+  await apiFetch("/api/tasks/9999");
+} catch (err) {
+  if (err instanceof ApiError) console.log(err.status, err.code, err.message);
+  // → 404 NOT_FOUND Tugas tidak ditemukan
+}
+```
+
+Komentar `// →` menunjukkan hasil tiap panggilan. Tugas 9999 tidak ada, jadi API membalas 404 dan `apiFetch`
+melemparnya sebagai `ApiError`.
+
+## Login demo sementara: src/lib/dev-auth.js
+
+<Callout type="analogi" title="Seperti gelang tiket konser">
+
+Untuk masuk area konser, kamu butuh gelang tiket, dan penjaga mengeceknya di setiap pintu. Gelang = access token,
+penjaga = API. Loket resmi belum buka, jadi panitia menyediakan akun tamu sementara (= akun demo di `dev-auth.js`).
+Kalau gelang kedaluwarsa, kamu ke loket sekali untuk mengambil gelang baru. Bedanya dengan konser, satu token dipakai
+bersama oleh semua request aplikasimu.
+
+</Callout>
+
+Semua **endpoint** (alamat tujuan request) `/api/tasks` mewajibkan [access token](/glosarium#access-token), yaitu
+tanda bukti bahwa kamu sudah login. Layar login baru dibuat di pelajaran [Autentikasi](/belajar/fullstack/autentikasi).
+Sampai saat itu kita memakai jalan pintas: aplikasi login otomatis dengan akun demo hasil **seed** (data contoh yang
+sudah diisikan ke database API).
+
+```js
+// src/lib/dev-auth.js
+// SEMENTARA: login otomatis dengan akun demo. Dihapus di pelajaran Autentikasi.
+import { apiFetch, setTokenGetter } from "./api";
+
+const DEMO_ACCOUNT = { email: "demo@kampus.ac.id", password: "password123" };
+
+let accessToken = null; // disimpan di memori saja, hilang saat aplikasi ditutup
+let loginPromise = null;
+
+async function loginDemo() {
+  const json = await apiFetch("/api/auth/login", {
+    method: "POST",
+    body: DEMO_ACCOUNT,
+    auth: false,
+  });
+  return json.data.accessToken;
+}
+
+export async function getDemoToken({ renew = false } = {}) {
+  if (renew) accessToken = null;
+  if (accessToken) return accessToken;
+
+  // Beberapa request bersamaan cukup menunggu SATU proses login
+  if (!loginPromise) {
+    loginPromise = loginDemo().finally(() => {
+      loginPromise = null;
+    });
+  }
+  accessToken = await loginPromise;
+  return accessToken;
+}
+
+setTokenGetter(getDemoToken);
+```
+
+Alurnya:
+
+1. Baris terakhir, `setTokenGetter(getDemoToken)`, memberi tahu `apiFetch` ke mana harus meminta token.
+2. Request pertama memanggil `getDemoToken()`. Token belum ada, jadi aplikasi login dulu.
+3. Token disimpan di `accessToken`. Request berikutnya memakai token yang sama tanpa login lagi.
+4. Access token berlaku 15 menit. Setelah itu API membalas `401` dengan kode `TOKEN_EXPIRED`.
+5. `apiFetch` lalu memanggil `getToken({ renew: true })`, login ulang sekali, dan mengulang request tadi.
+
+Variabel `loginPromise` mencegah lima request bersamaan memicu lima login. Semuanya menunggu satu proses login yang
+sama. Ini perlu karena `/api/auth/*` punya **rate limit** (batas jumlah request): maksimal 20 request per 15 menit.
+
+<Callout type="warning" title="Hanya untuk development">
+
+Password demo di file ini ikut masuk bundle. Ini masih boleh **hanya** karena akunnya data seed publik dan filenya
+sementara. Di pelajaran Autentikasi, `dev-auth.js` dihapus dan diganti login sungguhan dengan token yang disimpan
+aman.
+
+</Callout>
+
+## Layar uji koneksi
+
+`dev-auth.js` baru bekerja setelah di-import sekali. Tempat paling pas adalah layout root (`src/app/_layout.js`),
+karena layout dimuat sebelum layar mana pun:
+
+```diff
++import "../lib/dev-auth";
+ import { Stack } from "expo-router";
+
+ export default function RootLayout() {
+   return <Stack />;
+ }
+```
+
+Baris `import "../lib/dev-auth";` tidak mengambil nilai apa pun. Ia hanya menjalankan isi file itu sekali, termasuk
+`setTokenGetter(getDemoToken)`.
+
+Lalu isi `src/app/index.js` dengan layar uji. Layar ini sementara. Di pelajaran berikutnya ia diganti daftar tugas.
+
+```jsx
+// src/app/index.js (sementara)
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Stack } from "expo-router";
+import { API_URL, apiFetch } from "../lib/api";
+
+export default function CekKoneksiScreen() {
+  const [health, setHealth] = useState(null);
+  const [tasks, setTasks] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async (signal) => {
+    setLoading(true);
+    setError(null);
+    setHealth(null);
+    try {
+      const status = await apiFetch("/api/health", { auth: false, signal });
+      setHealth(status.status);
+
+      const json = await apiFetch("/api/tasks?limit=5", { signal });
+      setTasks(json.data);
+      setTotal(json.meta.total);
+    } catch (err) {
+      if (signal?.aborted) return; // layar sudah ditutup
+      setError(err);
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+
+  return (
+    <ScrollView contentContainerStyle={styles.container}>
+      <Stack.Screen options={{ title: "Cek Koneksi API" }} />
+
+      <Text style={styles.label}>API_URL</Text>
+      <Text selectable>{API_URL || "(kosong, cek file .env)"}</Text>
+
+      <Text style={styles.label}>GET /api/health</Text>
+      <Text>{health ? `status: ${health}` : "-"}</Text>
+
+      {loading && <ActivityIndicator style={styles.spinner} />}
+
+      {error && (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorTitle}>
+            {error.code ?? "ERROR"} ({error.status ?? "-"})
+          </Text>
+          <Text>{error.message}</Text>
+        </View>
+      )}
+
+      {!loading && !error && (
+        <>
+          <Text style={styles.label}>GET /api/tasks?limit=5 (total {total} tugas)</Text>
+          {tasks.map((task) => (
+            <Text key={task.id}>
+              • {task.title} ({task.status}, {task.priority})
+            </Text>
+          ))}
+        </>
+      )}
+
+      <Pressable style={styles.button} onPress={() => load()} disabled={loading}>
+        <Text style={styles.buttonText}>Coba lagi</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { padding: 16, gap: 6 },
+  label: { marginTop: 12, fontWeight: "700" },
+  spinner: { marginVertical: 12 },
+  errorBox: { marginTop: 12, padding: 12, borderRadius: 8, backgroundColor: "#fdecea" },
+  errorTitle: { fontWeight: "700", color: "#b42318" },
+  button: {
+    marginTop: 20,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
+  },
+  buttonText: { color: "#ffffff", fontWeight: "700" },
+});
+```
+
+Cara kerja layar ini:
+
+- Lima `useState` menyimpan hasil health, daftar tugas, total, error, dan status loading.
+- `load` memanggil `/api/health` tanpa token, lalu `/api/tasks?limit=5` dengan token dari `dev-auth.js`.
+- Kalau gagal, error tampil di kotak merah beserta `code` dan `status`.
+- `useEffect` menjalankan `load` saat layar dibuka. Saat layar ditutup, request dibatalkan, jadi tidak muncul error
+palsu.
+- Tombol **Coba lagi** memanggil `load()` ulang setelah kamu memperbaiki IP atau firewall.
+
+Struktur proyek sekarang:
+
+<FileTree title="kuliah-app" tree={`
+* .env # EXPO_PUBLIC_API_URL
+src/
+  app/
+    * _layout.js # + import dev-auth
+    * index.js # layar uji koneksi (sementara)
+  lib/
+    * api.js # apiFetch + ApiError
+    * dev-auth.js # login demo (sementara)
+package.json
+`} />
+
+Jika semuanya benar, layar menampilkan kira-kira ini (data dari seed, tugas terbaru lebih dulu):
+
+```txt
+API_URL
+http://192.168.1.10:3000
+
+GET /api/health
+status: ok
+
+GET /api/tasks?limit=5 (total 10 tugas)
+• Daftar ulang semester dan isi KRS (TODO, HIGH)
+• Baca materi model OSI vs TCP/IP (TODO, LOW)
+• Simulasi routing statis di Packet Tracer (TODO, LOW)
+• Konfigurasi subnetting kelas C (TODO, MEDIUM)
+• Laporan praktikum navigasi Expo Router (DONE, MEDIUM)
+```
+
+Terminal API juga mencatat tiga request: health, login otomatis, lalu daftar tugas. Angka waktu dan ukuran di
+komputermu bisa berbeda.
+
+```txt
+GET /api/health 200 4.120 ms - 15
+POST /api/auth/login 200 95.310 ms - 512
+GET /api/tasks?limit=5 200 11.842 ms - 1630
+```
+
+Kalau tidak ada satu pun request yang muncul di terminal API, request itu tidak pernah sampai ke laptop. Masalahnya ada
+di alamat atau jaringan, bukan di kode API.
+
+## Kesalahan umum
+
+Baca `code` dan `status` di kotak merah. `status` 0 berarti respons tidak pernah datang, jadi periksa jaringan atau
+konfigurasi. Status lain berarti API sudah menjawab, jadi baca pesannya. Lalu cocokkan dengan tabel ini:
+
+| Gejala di layar | Penyebab paling mungkin | Solusi |
+| --- | --- | --- |
+| `NETWORK_ERROR (0)` (aslinya `TypeError: Network request failed`) | Memakai `localhost` di HP, IP salah atau berubah, beda Wi-Fi, firewall menolak, atau API mati | Buka `/api/health` di browser HP dulu; perbaiki IP di `.env`, izinkan firewall, muat ulang |
+| `TIMEOUT (0)` setelah 10 detik | Paket tertahan: firewall diam-diam membuang koneksi, Wi-Fi kampus memisahkan perangkat, atau IP milik perangkat lain | Cek ulang IP dan firewall; coba hotspot HP |
+| `CONFIG_ERROR (0)` | `.env` tidak di root `kuliah-app`, nama variabel tanpa `EXPO_PUBLIC_`, atau cache lama | Perbaiki, lalu `npx expo start --clear` |
+| `UNAUTHORIZED (401)` "Token akses tidak ditemukan" | `dev-auth.js` belum di-import, jadi tidak ada pemberi token | Tambahkan `import "../lib/dev-auth";` di `_layout.js` |
+| `UNAUTHORIZED (401)` "Email atau password salah" | Akun demo belum ada karena database belum di-seed | Jalankan `npm run db:reset` di folder `api` (data buatanmu ikut terhapus) |
+| `RATE_LIMITED (429)` | Lebih dari 20 request ke `/api/auth/*` dalam 15 menit, misalnya karena reload berulang | Tunggu 15 menit; jangan memanggil login di dalam loop |
+| `ROUTE_NOT_FOUND (404)` "Route GET /api/api/tasks tidak ditemukan" | `.env` diakhiri `/api`, sehingga path jadi dobel | Hapus `/api` dari `EXPO_PUBLIC_API_URL` |
+| `HTTP_404` atau `INVALID_JSON` | URL menunjuk ke port 8081 (Metro) atau server lain, bukan API | Pastikan alamat memakai port `:3000` |
+| Data punya field `done`, tidak ada `status` | Port 3000 masih dipakai `belajar-api` dari Track 1 | Hentikan server lama, jalankan folder `api` |
+| Lancar di Expo Go, tetapi `NETWORK_ERROR` di APK preview/release | Android memblokir HTTP biasa di build release | Lihat bagian di bawah |
+
+### HTTP biasa (cleartext) di Android
+
+<Callout type="analogi" title="Seperti kartu pos dan surat beramplop">
+
+Request `http://` itu seperti kartu pos: siapa pun di perjalanan bisa membacanya. Request `https://` seperti surat
+beramplop tersegel, dan segelnya bernama TLS. Android modern menolak mengirim kartu pos tanpa izin khusus. Untuk
+belajar di jaringan rumah, kartu pos masih boleh. Untuk aplikasi yang dirilis, pakai amplop.
+
+</Callout>
+
+**Cleartext** artinya data dikirim apa adanya tanpa enkripsi, seperti pada `http://`. Sejak Android 9, aplikasi
+**diblokir** mengirim request `http://` kecuali aplikasi itu diberi izin. Di Expo SDK 58, kondisinya begini:
+
+- **Expo Go** mengizinkan HTTP, karena memang dibuat untuk development.
+- **Development build** (varian debug) juga mengizinkan, karena template Expo memasang
+  `android:usesCleartextTraffic="true"` di manifest debug. Manifest adalah file pengaturan aplikasi Android, dan
+  manifest debug hanya dipakai untuk build yang sedang dikembangkan.
+- **Build preview/release** (misalnya APK dari `eas build --profile preview`) tidak punya izin itu. Request ke
+  `http://192.168.1.10:3000` gagal dengan `Network request failed` walaupun IP-nya benar.
+
+Untuk **produksi** (aplikasi bagi pengguna sungguhan), solusinya adalah API ber-HTTPS. Kalau hanya ingin mencoba APK
+preview terhadap API di laptop, izinkan cleartext sementara:
+
+1. Jalankan `npx expo install expo-build-properties`.
+2. Tambahkan plugin berikut di `app.json`.
+3. Build ulang aplikasinya. Reload saja tidak cukup, karena ini pengaturan native (di luar kode JavaScript).
+
+```json
+{
+  "expo": {
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ]
+  }
+}
+```
+
+Di iOS, template Expo menyalakan `NSAllowsLocalNetworking`, yaitu izin HTTP biasa khusus ke jaringan lokal. Untuk
+aplikasi yang dirilis, tetap gunakan HTTPS.
+
+<Callout type="warning" title="Ubah .env? Muat ulang dulu">
+
+Setelah pindah Wi-Fi, sering kali IP di `.env` sudah diperbarui tetapi bundle masih memakai nilai lama. Cek baris
+`API_URL` di layar uji. Jika masih IP lama, jalankan ulang dengan `npx expo start --clear`.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Pilih alamat yang tepat" difficulty="mudah" hints={["Ingat: `localhost` selalu berarti perangkat itu sendiri.", "Emulator Android punya alias khusus untuk laptop."]}>
+
+Tiga teman satu kelompok menjalankan API di laptop masing-masing. IP Wi-Fi laptop Sari adalah `192.168.0.23`.
+
+Tentukan isi `EXPO_PUBLIC_API_URL` untuk tiap orang:
+
+1. Andi, memakai emulator Android di laptopnya.
+2. Sari, memakai Expo Go di HP Android fisik.
+3. Budi, memakai iOS Simulator di MacBook.
+
+Lalu jawab: apa yang harus Sari lakukan saat ia pindah dari Wi-Fi kos ke Wi-Fi kampus?
+
+<Solution>
+
+| Orang | `EXPO_PUBLIC_API_URL` | Alasan |
+| --- | --- | --- |
+| Andi | `http://10.0.2.2:3000` | Alias khusus emulator Android untuk laptop |
+| Sari | `http://192.168.0.23:3000` | HP adalah perangkat lain, jadi pakai IP LAN laptop |
+| Budi | `http://localhost:3000` | iOS Simulator memakai jaringan Mac secara langsung |
+
+Saat pindah Wi-Fi, IP laptop Sari hampir pasti berubah. Langkahnya:
+
+1. Baca IP baru dari output API atau `ipconfig`.
+2. Perbarui `.env`.
+3. Jalankan `npx expo start --clear`.
+
+Kalau Wi-Fi kampus melarang perangkat saling terhubung, ia bisa memakai hotspot HP.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Pancing tiga error" difficulty="sedang" hints={["Ubah path kedua di fungsi `load` satu per satu.", "Opsi `timeoutMs` bisa dikirim ke `apiFetch`."]}>
+
+Tujuannya melihat sendiri beda error dari API dan error jaringan.
+
+1. Buka `src/app/index.js` dan cari pemanggilan `/api/tasks?limit=5` di fungsi `load`.
+2. Ganti sementara dengan path salah ketik: `/api/tugas`. Simpan, lalu catat isi kotak merah.
+3. Ganti dengan tugas yang tidak ada: `/api/tasks/9999`. Catat lagi.
+4. Kembalikan path ke `/api/tasks?limit=5`, lalu tambahkan opsi `timeoutMs: 1` di samping `signal`. Catat lagi.
+5. Kembalikan kodenya seperti semula.
+
+<Solution>
+
+```js
+await apiFetch("/api/tugas", { signal });
+await apiFetch("/api/tasks/9999", { signal });
+await apiFetch("/api/tasks?limit=5", { signal, timeoutMs: 1 });
+```
+
+```txt
+ROUTE_NOT_FOUND (404)
+Route GET /api/tugas tidak ditemukan
+
+NOT_FOUND (404)
+Tugas tidak ditemukan
+
+TIMEOUT (0)
+Server tidak menjawab setelah 1 ms.
+```
+
+Dua error pertama datang **dari API**. Ada respons, `status`-nya 404, dan pesannya diambil dari amplop error. Error
+ketiga dibuat **oleh `apiFetch`** karena respons tidak sempat datang, sehingga `status`-nya 0. Dari `status` kamu
+tahu apa yang harus diperbaiki: 404 berarti path atau id di kode request-mu, 0 berarti jaringan atau batas waktu.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Aplikasi berjalan di emulator Android dan API di laptop pada port 3000. Isi `EXPO_PUBLIC_API_URL` yang tepat adalah…",
+    options: ["`http://localhost:3000`", "`http://127.0.0.1:3000`", "`http://10.0.2.2:3000`", "`http://10.0.2.2:8081`"],
+    answer: 2,
+    explain: "Dari dalam emulator Android, `10.0.2.2` adalah jalan pintas ke laptop. `localhost` dan `127.0.0.1` justru menunjuk ke emulator itu sendiri. Port 8081 milik Metro, bukan API.",
+  },
+  {
+    q: "Kenapa `http://localhost:3000` gagal saat aplikasi dibuka di HP fisik?",
+    options: ["Di HP, `localhost` berarti HP itu sendiri, bukan laptop yang menjalankan API", "Expo Go melarang semua request HTTP", "Port 3000 hanya bisa diakses dari iOS", "API harus dijalankan dengan `--clear`"],
+    answer: 0,
+    explain: "`localhost` selalu berarti perangkat tempat kode berjalan. Jadi HP harus memakai IP LAN laptop. Expo Go tetap mengizinkan HTTP. `--clear` adalah opsi Expo CLI, bukan opsi API.",
+  },
+  {
+    q: "Mana yang AMAN disimpan di variabel berawalan `EXPO_PUBLIC_`?",
+    options: ["`JWT_SECRET` milik API", "`DATABASE_URL` server", "Kunci API berbayar pihak ketiga", "Alamat API seperti `http://192.168.1.10:3000`"],
+    answer: 3,
+    explain: "Nilai `EXPO_PUBLIC_` ditempel ke bundle, jadi siapa pun bisa membacanya. Alamat API memang boleh diketahui orang. Secret, URL database, dan kunci berbayar harus tetap di server.",
+  },
+  {
+    q: "`apiFetch` menerima respons `204 No Content` dari `DELETE /api/tasks/3`. Apa yang dikembalikan?",
+    options: ["Melempar `ApiError` karena body kosong", "`null`", "Objek `{ data: null }`", "String kosong"],
+    answer: 1,
+    explain: "Sebelum membaca JSON, `apiFetch` mengecek status 204. Kalau 204, ia langsung mengembalikan `null`. Status 204 termasuk sukses, jadi tidak ada `ApiError`.",
+  },
+  {
+    q: "Di HP muncul `NETWORK_ERROR` (aslinya `TypeError: Network request failed`), padahal API jalan di laptop. Penyebab paling mungkin?",
+    options: ["Access token kedaluwarsa", "Database belum di-seed", "HP tidak bisa menjangkau laptop: IP salah, beda Wi-Fi, atau diblokir firewall", "Body JSON yang dikirim tidak valid"],
+    answer: 2,
+    explain: "Error ini berarti tidak ada respons HTTP sama sekali. Token kedaluwarsa dan akun belum di-seed menghasilkan 401. JSON tidak valid menghasilkan 400. Ketiganya tetap respons dari API, jadi bukan `NETWORK_ERROR`.",
+  },
+]} />
+
+## Ringkasan
+
+- `localhost` berarti perangkat itu sendiri. Web dan iOS Simulator memakai `localhost`, emulator Android memakai
+  `10.0.2.2`, dan HP fisik memakai IP LAN laptop.
+- Uji `http://IP:3000/api/health` di browser HP sebelum menyalahkan kode. Izinkan Node.js di firewall jaringan
+  Private.
+- Simpan alamat di `EXPO_PUBLIC_API_URL` tanpa `/api`, lalu jalankan `npx expo start --clear` setelah mengubahnya.
+  Jangan pernah menaruh secret di variabel `EXPO_PUBLIC_`.
+- `apiFetch` mengurus base URL, JSON, token, timeout 10 detik, dan status 204. Semua kegagalan menjadi `ApiError`.
+- `status` 0 berarti respons tidak pernah datang. Status lain berasal dari API.
+- `dev-auth.js` login otomatis dengan akun demo dan login ulang sekali saat 401. File ini dihapus di pelajaran
+  Autentikasi.
+- Build release Android memblokir HTTP biasa, jadi aplikasi produksi wajib memakai HTTPS.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Buat `kuliah-app`, isi `.env` dengan alamat yang sesuai perangkatmu, lalu tulis `src/lib/api.js`,
+`src/lib/dev-auth.js`, dan layar uji koneksi. Lanjutkan ke [Menampilkan Data](/belajar/fullstack/read-data) hanya
+setelah layar uji menampilkan `status: ok` dan lima judul tugas dari seed.
+
+</Callout>

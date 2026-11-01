@@ -1,0 +1,635 @@
+## Pengantar
+
+Di [Dasar SQL & Database](/belajar/crud-backend/dasar-sql) kamu bekerja dengan satu tabel saja, yaitu `tasks`.
+Sekarang bayangkan Andi punya tugas "Normalisasi tabel sampai 3NF". Tugas itu milik mata kuliah **Basis Data**, dan
+dosennya **Dr. Rina**. Pertanyaannya: nama mata kuliah dan nama dosen itu disimpan di mana?
+
+Cara paling cepat adalah menambah kolom `course_name` dan `lecturer` langsung di tabel `tasks`. Awalnya terasa praktis.
+Lama-lama muncul tiga masalah:
+
+- Nama dosen ditulis ulang di setiap tugas. Kalau dosennya ganti, kamu harus mengubah puluhan baris satu per satu.
+- Penulisan jadi tidak seragam. Satu baris ditulis "Basis Data", baris lain "basis data", baris lain lagi "Basdat".
+- Mata kuliah yang belum punya tugas tidak bisa disimpan sama sekali, karena tidak ada baris tugas untuk ditempeli.
+
+<Callout type="analogi" title="Seperti lemari arsip bagian akademik">
+
+Bagian akademik kampus tidak menyalin biodata lengkap mahasiswa ke setiap lembar nilai. Biodata disimpan sekali saja
+di map "Data Mahasiswa". Lembar nilai cukup mencatat NIM. Kalau alamat mahasiswa berubah, petugas cukup mengubah satu
+map, dan semua lembar nilai tetap benar.
+
+Map "Data Mahasiswa" = satu tabel. Tumpukan lembar nilai = tabel lain. NIM yang ditulis di lembar nilai = penghubung
+antartabel, yang di database disebut **relasi**.
+
+</Callout>
+
+Jadi solusinya: **pisahkan data ke beberapa tabel, lalu hubungkan tabel-tabel itu**. Aplikasi capstone kita memakai
+pola ini. Setiap user punya beberapa mata kuliah (*courses*), dan setiap mata kuliah punya banyak tugas (*tasks*). Di
+pelajaran ini kamu belajar tiga hal: mendesain hubungan itu, menjaganya tetap rapi dengan foreign key, lalu
+menggabungkan datanya lagi dengan `JOIN` saat ingin ditampilkan.
+
+## Primary key dan foreign key
+
+<Callout type="analogi" title="NIM dan lembar KRS">
+
+Di daftar mahasiswa, setiap mahasiswa punya NIM. Tidak ada dua mahasiswa dengan NIM yang sama. Saat mengisi lembar
+KRS, kamu menulis NIM-mu di sana. Petugas akademik akan menolak KRS kalau NIM yang tertulis tidak terdaftar.
+
+- NIM di daftar mahasiswa = **primary key**.
+- NIM yang tertulis di lembar KRS = **foreign key**.
+- Petugas yang menolak NIM palsu = **constraint** foreign key di database.
+
+Bedanya, petugas manusia bisa lupa mengecek. Database selalu mengecek, asalkan aturannya sudah dipasang.
+
+</Callout>
+
+**Primary key** (PK) adalah kolom yang nilainya unik untuk setiap baris. Biasanya kolom ini bernama `id`. Fungsinya
+sama seperti NIM: menunjuk satu baris dengan pasti.
+
+**Foreign key** (FK) adalah kolom di satu tabel yang berisi primary key dari tabel lain. Contohnya kolom
+`tasks.course_id`. Isinya adalah `id` milik salah satu baris di tabel `courses`. Tabel yang dirujuk (`courses`) disebut
+*parent* (induk). Tabel yang merujuk (`tasks`) disebut *child* (anak).
+
+Berikut skema yang dipakai di [SQL Playground](/lab/sql-playground). Versinya sedikit diringkas:
+
+```sql
+CREATE TABLE courses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  lecturer TEXT,
+  sks INTEGER NOT NULL DEFAULT 2
+);
+
+CREATE TABLE tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  course_id INTEGER REFERENCES courses(id) ON DELETE SET NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0,
+  priority TEXT NOT NULL DEFAULT 'sedang',
+  due_date TEXT
+);
+```
+
+Cara membaca skema di atas:
+
+- `id INTEGER PRIMARY KEY AUTOINCREMENT` artinya `id` adalah primary key, dan nomornya diisi otomatis (1, 2, 3, ...).
+- `user_id ... REFERENCES users(id)` artinya isi kolom ini harus berupa `id` yang ada di tabel `users`.
+- `course_id ... REFERENCES courses(id)` artinya tugas merujuk ke satu mata kuliah. Kolom ini tidak punya `NOT NULL`,
+  jadi boleh kosong.
+- Bagian `ON DELETE ...` mengatur nasib data child saat parent dihapus. Ini dibahas di bagian
+  [CASCADE dan SET NULL](#saat-parent-dihapus-cascade-dan-set-null).
+
+Kata kunci `REFERENCES` membuat **constraint** (aturan yang dijaga database) bernama foreign key. Dengan aturan ini,
+database menolak tugas yang merujuk ke mata kuliah yang tidak ada. Coba di lab:
+
+```sql
+INSERT INTO tasks (user_id, course_id, title)
+VALUES (1, 99, 'Tugas hantu');
+```
+
+```txt
+Error: FOREIGN KEY constraint failed
+```
+
+Perintah itu mencoba menyimpan tugas untuk mata kuliah nomor 99. Mata kuliah dengan `id` 99 tidak ada, jadi database
+menolak. Jaminan seperti ini disebut **integritas referensial**: setiap rujukan pasti mengarah ke data yang
+benar-benar ada.
+
+Ingat juga, `course_id` boleh bernilai `NULL` (kosong, tidak ada isinya). Dengan begitu, tugas pribadi seperti "Beli
+buku catatan" tidak wajib punya mata kuliah.
+
+<Callout type="warning" title="SQLite: foreign key harus dinyalakan">
+
+SQLite **tidak** memeriksa foreign key secara bawaan. Alasannya demi kecocokan dengan versi lama. Kamu harus
+menyalakannya di setiap koneksi dengan perintah `PRAGMA foreign_keys = ON;`. SQL Playground sudah menjalankannya
+otomatis. Kalau kamu memakai SQLite langsung lalu heran kenapa data "hantu" bisa masuk, cek pengaturan ini dulu.
+
+</Callout>
+
+## Mendesain relasi: ERD
+
+Sebelum menulis SQL, programmer biasanya menggambar **ERD** (*Entity Relationship Diagram*). ERD adalah peta yang
+menunjukkan tabel apa saja yang ada dan bagaimana tabel-tabel itu saling terhubung. Mirip denah gedung sebelum
+dibangun. Untuk data lab, petanya seperti ini:
+
+<Flow
+  nodes={["users", "courses", "tasks"]}
+  labels={["1 : N lewat courses.user_id", "1 : N lewat tasks.course_id"]}
+  caption="Satu user punya banyak mata kuliah, satu mata kuliah punya banyak tugas"
+/>
+
+Tanda "1 : N" dibaca "satu ke banyak". Berikut versi tabelnya, lengkap dengan peran tiap kolom kunci:
+
+| Tabel | Kolom kunci | Jenis | Menunjuk ke | Arti relasi |
+| --- | --- | --- | --- | --- |
+| `users` | `id` | PK | – | Satu user… |
+| `courses` | `id` | PK | – | …punya banyak mata kuliah |
+| `courses` | `user_id` | FK | `users.id` | Setiap mata kuliah milik tepat satu user |
+| `tasks` | `id` | PK | – | Satu mata kuliah punya banyak tugas |
+| `tasks` | `course_id` | FK (boleh NULL) | `courses.id` | Tugas milik nol atau satu mata kuliah |
+| `tasks` | `user_id` | FK | `users.id` | Setiap tugas milik tepat satu user |
+
+### One-to-many (1 : N)
+
+<Callout type="analogi" title="Satu kelas, banyak mahasiswa">
+
+Kelas TI-2A punya 40 mahasiswa. Setiap mahasiswa hanya terdaftar di satu kelas. Di daftar mahasiswa, tiap baris punya
+kolom "Kelas: TI-2A". Kampus tidak menulis 40 NIM berderet di satu kotak pada data kelas.
+
+Kelas = `courses` (sisi "one"). Mahasiswa = `tasks` (sisi "many"). Kolom "Kelas" di tiap baris mahasiswa =
+`tasks.course_id`.
+
+</Callout>
+
+Relasi `courses` → `tasks` disebut **one-to-many** (satu ke banyak). Satu mata kuliah bisa punya banyak tugas. Satu
+tugas hanya milik satu mata kuliah. Aturan praktisnya: **foreign key selalu diletakkan di sisi "many"**. Jadi tugas
+yang menyimpan `course_id`. Mata kuliah tidak menyimpan daftar id tugas.
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+Menyimpan daftar tugas di satu kolom, misalnya `courses.task_ids = '1,2,5'`. Database tidak bisa memeriksa apakah id
+itu ada. Query jadi rumit. Menghapus satu tugas berarti mengedit potongan teks.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+Setiap baris `tasks` punya kolom `course_id`. Database bisa menjaga foreign key-nya. Untuk mengambil tugas sebuah mata
+kuliah, cukup pakai `JOIN` atau `WHERE course_id = 1`.
+
+</CompareItem>
+</Compare>
+
+## Menggabungkan tabel dengan JOIN
+
+Data sudah terpisah rapi. Masalahnya, layar aplikasi ingin menampilkan "judul tugas + nama mata kuliah" dalam satu
+daftar. Di sinilah `JOIN` dipakai. `JOIN` menyambungkan baris dari dua tabel, berdasarkan syarat yang kamu tulis
+setelah kata `ON`.
+
+<Callout type="analogi" title="Mencocokkan daftar nilai dengan daftar mahasiswa">
+
+Asisten dosen punya dua kertas. Kertas pertama berisi NIM dan nama mahasiswa. Kertas kedua berisi NIM dan nilai. Untuk
+membuat pengumuman "nama + nilai", ia mencocokkan kedua kertas lewat NIM yang sama, baris demi baris.
+
+Dua kertas = dua tabel. NIM yang dicocokkan = syarat `ON`. Pengumuman yang jadi = hasil `JOIN`.
+
+Lalu bagaimana dengan mahasiswa yang belum punya nilai?
+
+- Kalau asisten hanya menulis mahasiswa yang muncul di kedua kertas, itu **INNER JOIN**.
+- Kalau asisten menulis semua nama dari kertas pertama, lalu mengosongkan kolom nilai bagi yang belum punya, itu
+  **LEFT JOIN**. Kertas pertama berperan sebagai tabel "kiri".
+
+</Callout>
+
+### INNER JOIN
+
+`INNER JOIN` hanya mengambil baris yang **punya pasangan di kedua tabel**.
+
+```sql
+SELECT t.id, t.title, c.name AS mata_kuliah
+FROM tasks AS t
+INNER JOIN courses AS c ON c.id = t.course_id;
+```
+
+Cara membaca query ini, baris demi baris:
+
+- `FROM tasks AS t`: mulai dari tabel `tasks`, dan sebut saja `t`. Nama pendek seperti `t` dan `c` disebut **alias**.
+  Gunanya agar query tidak terlalu panjang.
+- `INNER JOIN courses AS c`: sambungkan dengan tabel `courses`, yang disebut `c`.
+- `ON c.id = t.course_id`: syarat pasangannya. Foreign key di `tasks` harus sama dengan primary key di `courses`.
+- `c.name AS mata_kuliah`: ambil nama mata kuliah, lalu beri judul kolom `mata_kuliah` di hasil.
+
+Hasilnya **7 baris**:
+
+```txt
+id | title                          | mata_kuliah
+1  | Desain ERD perpustakaan        | Basis Data
+2  | Normalisasi tabel sampai 3NF   | Basis Data
+3  | Install Expo & jalankan di HP  | Pemrograman Mobile
+4  | Buat layar daftar tugas        | Pemrograman Mobile
+5  | Laporan praktikum subnetting   | Jaringan Komputer
+6  | Query JOIN tiga tabel          | Basis Data
+7  | Dokumen SRS bab 1              | Rekayasa Perangkat Lunak
+```
+
+Padahal tabel `tasks` punya 8 baris. Lalu ke mana tugas nomor 8? Tugas "Beli buku catatan" punya `course_id` `NULL`.
+Tugas itu tidak punya pasangan di `courses`, jadi `INNER JOIN` membuangnya. Kata `INNER` boleh tidak ditulis. `JOIN`
+saja artinya sama.
+
+### LEFT JOIN
+
+`LEFT JOIN` mengambil **semua baris dari tabel kiri**, yaitu tabel yang ditulis setelah `FROM`. Lalu ia menempelkan
+pasangannya dari tabel kanan. Kalau tidak ada pasangan, kolom dari tabel kanan diisi `NULL`. Persis seperti asisten
+dosen yang tetap menulis nama mahasiswa walau kolom nilainya kosong.
+
+```sql
+SELECT t.id, t.title, c.name AS mata_kuliah
+FROM tasks AS t
+LEFT JOIN courses AS c ON c.id = t.course_id;
+```
+
+```txt
+id | title                          | mata_kuliah
+...  (7 baris yang sama seperti di atas)
+8  | Beli buku catatan              | NULL
+```
+
+Query-nya sama dengan sebelumnya. Bedanya hanya kata `LEFT`. Sekarang hasilnya 8 baris. Untuk layar daftar tugas,
+`LEFT JOIN` biasanya pilihan yang tepat. Kamu tentu tidak mau tugas pribadi hilang dari layar hanya karena tidak
+terhubung ke mata kuliah.
+
+<Compare>
+<CompareItem title="INNER JOIN" tone="neutral">
+
+Hanya baris yang cocok di **kedua** tabel. Pakai saat data tanpa pasangan memang tidak perlu tampil. Contohnya laporan
+"tugas per mata kuliah".
+
+</CompareItem>
+<CompareItem title="LEFT JOIN" tone="neutral">
+
+**Semua** baris tabel kiri. Kolom tabel kanan berisi pasangannya, atau `NULL` kalau tidak ada. Pakai saat data kiri
+harus tetap tampil. Contohnya daftar semua tugas, atau semua mata kuliah termasuk yang belum punya tugas.
+
+</CompareItem>
+</Compare>
+
+Kamu juga bisa menyambung lebih dari dua tabel. Query berikut menampilkan pemilik, mata kuliah, dan judul tugas milik
+Sari:
+
+```sql
+SELECT u.name AS pemilik, c.name AS mata_kuliah, t.title
+FROM tasks AS t
+JOIN courses AS c ON c.id = t.course_id
+JOIN users AS u ON u.id = t.user_id
+WHERE u.name LIKE 'Sari%';
+```
+
+```txt
+pemilik        | mata_kuliah              | title
+Sari Wulandari | Basis Data               | Query JOIN tiga tabel
+Sari Wulandari | Rekayasa Perangkat Lunak | Dokumen SRS bab 1
+```
+
+Query ini menyambung tiga tabel secara berantai. `tasks` disambung ke `courses` lewat `course_id`, lalu ke `users`
+lewat `user_id`. Baris `WHERE u.name LIKE 'Sari%'` menyaring hasilnya. Hanya user yang namanya diawali "Sari" yang
+diambil. Tanda `%` artinya "boleh diikuti huruf apa saja".
+
+## Menghitung dengan GROUP BY dan COUNT
+
+<Callout type="analogi" title="Ketua kelas memilah setoran tugas">
+
+Ketua kelas menerima setumpuk lembar tugas dari semua mata kuliah. Ia memilah lembar-lembar itu ke beberapa tumpukan,
+satu tumpukan per mata kuliah. Lalu ia menghitung isi tiap tumpukan, dan berapa lembar yang sudah diberi cap "selesai".
+
+Memilah ke tumpukan = `GROUP BY`. Menghitung isi tumpukan = `COUNT`. Menjumlahkan yang sudah selesai = `SUM`.
+
+</Callout>
+
+Pertanyaan khas aplikasi kuliah: "Ada berapa tugas di setiap mata kuliah, dan berapa yang sudah selesai?" `GROUP BY`
+mengelompokkan baris yang nilainya sama. Setelah itu, **fungsi agregat** menghitung per kelompok. Fungsi agregat adalah
+fungsi yang meringkas banyak baris menjadi satu angka, misalnya `COUNT` (menghitung jumlah) dan `SUM` (menjumlahkan).
+
+```sql
+SELECT c.id, c.name, COUNT(t.id) AS jumlah_tugas, SUM(t.done) AS selesai
+FROM courses AS c
+LEFT JOIN tasks AS t ON t.course_id = c.id
+GROUP BY c.id
+ORDER BY jumlah_tugas DESC;
+```
+
+```txt
+id | name                     | jumlah_tugas | selesai
+1  | Basis Data               | 2            | 1
+2  | Pemrograman Mobile       | 2            | 1
+3  | Jaringan Komputer        | 1            | 0
+4  | Basis Data               | 1            | 0
+5  | Rekayasa Perangkat Lunak | 1            | 1
+```
+
+Urutan kerja query ini:
+
+1. `FROM courses AS c LEFT JOIN tasks AS t ...`: pasangkan setiap mata kuliah dengan tugas-tugasnya. Mata kuliah tanpa
+   tugas tetap ikut.
+2. `GROUP BY c.id`: pilah hasilnya menjadi satu kelompok per mata kuliah.
+3. `COUNT(t.id)` dan `SUM(t.done)`: hitung isi tiap kelompok.
+4. `ORDER BY jumlah_tugas DESC`: urutkan dari yang tugasnya paling banyak. `DESC` artinya urutan menurun.
+
+Kolom `done` hanya berisi 0 (belum) atau 1 (selesai). Jadi `SUM(t.done)` sama dengan jumlah tugas yang selesai. Ada
+dua jebakan yang perlu kamu hindari:
+
+1. **Kelompokkan berdasarkan `c.id`, bukan `c.name`.** Andi dan Sari sama-sama punya mata kuliah "Basis Data" (id 1
+   dan 4). Kalau kamu menulis `GROUP BY c.name`, keduanya melebur jadi satu baris berisi 3 tugas. Padahal tugas itu
+   milik dua orang yang berbeda.
+2. **Pakai `COUNT(t.id)`, bukan `COUNT(*)`, setelah `LEFT JOIN`.** `COUNT(*)` menghitung jumlah baris. Mata kuliah
+   tanpa tugas tetap punya satu baris berisi `NULL`, jadi hasilnya 1. `COUNT(t.id)` hanya menghitung nilai yang tidak
+   `NULL`, jadi hasilnya 0. Angka 0 inilah yang benar.
+
+Kadang kamu ingin menyaring hasil hitungan. Misalnya, hanya mata kuliah yang punya minimal 2 tugas. Untuk itu, tulis
+`HAVING COUNT(t.id) >= 2` setelah `GROUP BY`. Bedanya dengan `WHERE`: `WHERE` menyaring baris *sebelum* dikelompokkan,
+sedangkan `HAVING` menyaring kelompok *sesudah* dihitung.
+
+Coba semua query di atas langsung di sini. Tombol **Reset DB** mengembalikan data awal kapan saja.
+
+<SqlPlayground initialQuery={`SELECT c.id, c.name, COUNT(t.id) AS jumlah_tugas, SUM(t.done) AS selesai
+FROM courses AS c
+LEFT JOIN tasks AS t ON t.course_id = c.id
+GROUP BY c.id
+ORDER BY jumlah_tugas DESC;`} />
+
+## Saat parent dihapus: CASCADE dan SET NULL
+
+Apa yang terjadi pada tugas-tugas kalau mata kuliahnya dihapus? Kamu sendiri yang menentukan, lewat aturan
+`ON DELETE` di foreign key.
+
+<Callout type="analogi" title="Tiga cara menangani data yang ditinggal">
+
+- **RESTRICT**: perpustakaan kampus menolak menghapus keanggotaanmu selama kamu masih meminjam buku. Kembalikan dulu
+  bukunya, baru keanggotaan bisa ditutup.
+- **CASCADE**: saat kamu menghapus akun WhatsApp, semua chat milik akun itu ikut hilang. Chat itu tidak berarti tanpa
+  pemiliknya.
+- **SET NULL**: sebuah mata kuliah dihapus dari kurikulum. Catatan tugasmu tetap ada di buku, tetapi tulisan nama mata
+  kuliahnya kamu coret sampai kosong.
+
+Keanggotaan, akun, dan mata kuliah = parent. Catatan peminjaman, chat, dan catatan tugas = child.
+
+</Callout>
+
+| Aturan | Efek saat baris parent dihapus | Cocok untuk |
+| --- | --- | --- |
+| (tanpa aturan) / `RESTRICT` | Penghapusan **ditolak** selama masih ada child | Data penting yang tidak boleh ikut hilang |
+| `ON DELETE CASCADE` | Semua child **ikut terhapus** | Data yang tidak berarti tanpa parent-nya |
+| `ON DELETE SET NULL` | Kolom FK di child **diisi `NULL`** | Child tetap berguna walau parent hilang |
+
+Skema lab memakai `CASCADE` dan `SET NULL`. Klik **Reset DB** dulu, lalu jalankan dua perintah ini. Perintah pertama
+menghapus mata kuliah nomor 3. Perintah kedua melihat nasib tugas nomor 5 yang tadinya milik mata kuliah itu.
+
+```sql
+DELETE FROM courses WHERE id = 3;
+
+SELECT id, title, course_id FROM tasks WHERE id = 5;
+```
+
+```txt
+id | title                        | course_id
+5  | Laporan praktikum subnetting | NULL
+```
+
+Mata kuliah "Jaringan Komputer" sudah hilang. Tugasnya tetap ada, tetapi `course_id`-nya sekarang `NULL`. Itu efek
+aturan `ON DELETE SET NULL`. Sekarang coba hapus seorang user:
+
+```sql
+DELETE FROM users WHERE id = 2;
+
+SELECT
+  (SELECT COUNT(*) FROM courses) AS sisa_courses,
+  (SELECT COUNT(*) FROM tasks) AS sisa_tasks;
+```
+
+Perintah pertama menghapus user nomor 2, yaitu Sari. Perintah kedua menghitung sisa baris di tabel `courses` dan
+`tasks`. Kalau dijalankan setelah Reset DB, hasilnya `sisa_courses` 3 dan `sisa_tasks` 5. Dua mata kuliah dan tiga
+tugas milik Sari ikut terhapus karena aturan `ON DELETE CASCADE`. Ini masuk akal. Kalau akunnya dihapus, datanya juga
+harus ikut pergi.
+
+<Callout type="danger" title="CASCADE itu kuat sekaligus berbahaya">
+
+Satu `DELETE` bisa menghapus ratusan baris di tabel lain tanpa peringatan apa pun. Pakai `CASCADE` hanya untuk data
+yang benar-benar "milik" parent-nya. Di database sungguhan, pikirkan dulu baik-baik sebelum menghapus parent.
+
+</Callout>
+
+## Sekilas many-to-many: tabel penghubung
+
+Misalkan kamu ingin memberi label pada tugas, seperti "kelompok", "ujian", dan "praktikum". Satu tugas bisa punya
+banyak label. Satu label juga bisa dipakai banyak tugas. Hubungan seperti ini disebut **many-to-many** (banyak ke
+banyak, ditulis N : M). Satu kolom foreign key saja tidak cukup untuk menyimpannya.
+
+<Callout type="analogi" title="KRS adalah tabel penghubung">
+
+Satu mahasiswa mengambil banyak mata kuliah. Satu mata kuliah diambil banyak mahasiswa. Kampus tidak menulis daftar
+mata kuliah di biodata mahasiswa. Kampus juga tidak menulis daftar mahasiswa di data mata kuliah. Yang dipakai adalah
+lembar KRS. Setiap baris KRS hanya berisi dua hal: NIM dan kode mata kuliah.
+
+Daftar mahasiswa = `tasks`. Daftar mata kuliah = `labels`. Baris-baris KRS = tabel `task_labels`. NIM dan kode mata
+kuliah = dua foreign key di tabel penghubung.
+
+</Callout>
+
+Jadi jawabannya adalah **tabel penghubung** (*junction table*). Tabel ini berisi dua foreign key, satu ke setiap sisi:
+
+<Flow
+  nodes={["tasks", "task_labels", "labels"]}
+  labels={["1 : N", "N : 1"]}
+  caption="Many-to-many dipecah menjadi dua relasi one-to-many"
+/>
+
+```sql
+CREATE TABLE labels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE task_labels (
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+  PRIMARY KEY (task_id, label_id)
+);
+
+INSERT INTO labels (name) VALUES ('kelompok'), ('ujian'), ('praktikum');
+INSERT INTO task_labels (task_id, label_id) VALUES (1, 1), (1, 2), (2, 2), (5, 3), (6, 1);
+
+SELECT t.title, l.name AS label
+FROM tasks AS t
+JOIN task_labels AS tl ON tl.task_id = t.id
+JOIN labels AS l ON l.id = tl.label_id
+ORDER BY t.id;
+```
+
+Isi blok SQL di atas, dari atas ke bawah:
+
+1. Membuat tabel `labels`. Kata `UNIQUE` mencegah dua label dengan nama yang sama.
+2. Membuat tabel penghubung `task_labels`. Kolom `task_id` merujuk ke `tasks`, kolom `label_id` merujuk ke `labels`.
+3. Mengisi tiga label, lalu memasangkan tugas dengan label. Contohnya `(1, 2)` artinya "tugas 1 berlabel ujian".
+4. Menampilkan setiap tugas beserta labelnya dengan dua `JOIN` berturut-turut.
+
+Hasilnya:
+
+```txt
+title                        | label
+Desain ERD perpustakaan      | kelompok
+Desain ERD perpustakaan      | ujian
+Normalisasi tabel sampai 3NF | ujian
+Laporan praktikum subnetting | praktikum
+Query JOIN tiga tabel        | kelompok
+```
+
+Baris `PRIMARY KEY (task_id, label_id)` membuat **primary key gabungan**, yaitu primary key yang terdiri dari dua kolom
+sekaligus. Akibatnya, pasangan yang sama tidak bisa dimasukkan dua kali. Kalau kamu mencoba, muncul error
+`UNIQUE constraint failed`. Sama seperti KRS: kamu tidak bisa mendaftar mata kuliah yang sama dua kali.
+
+Semua perintah di atas bisa kamu jalankan di lab, karena SQL Playground mengizinkan `CREATE TABLE`. Cara menulis
+many-to-many di Prisma dibahas lagi saat kita memakai **ORM**, yaitu alat yang menerjemahkan kode JavaScript menjadi
+SQL.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Pesan error yang sering muncul">
+
+- **`ambiguous column name: id`**: kolom `id` ada di `tasks` dan juga di `courses`. Database bingung kamu maksud yang
+  mana. Biasakan menulis alias di depan nama kolom, misalnya `t.id` dan `c.name`.
+- **Hasil tiba-tiba 40 baris**: kamu menulis `FROM tasks JOIN courses` tanpa `ON`. SQLite lalu memasangkan setiap
+  tugas dengan setiap mata kuliah (8 × 5 = 40). Hasil seperti ini disebut *cartesian product*.
+- **`FOREIGN KEY constraint failed`**: kamu memasukkan FK yang tidak ada. Bisa juga kamu menghapus parent yang masih
+  punya child, padahal foreign key-nya tidak punya aturan `ON DELETE`.
+- **`LEFT JOIN` terasa seperti `INNER JOIN`**: kamu menyaring kolom tabel kanan di `WHERE`, misalnya
+  `WHERE c.sks = 3`. Baris yang berisi `NULL` ikut terbuang, karena `NULL = 3` tidak pernah bernilai benar.
+- **Mata kuliah tanpa tugas terhitung 1**: kamu memakai `COUNT(*)`. Ganti dengan `COUNT(t.id)`.
+
+</Callout>
+
+## Latihan
+
+Kerjakan di [SQL Playground](/lab/sql-playground). Klik **Reset DB** sebelum mulai, supaya datanya sama dengan
+contoh.
+
+<Exercise title="Daftar tugas yang belum selesai" difficulty="mudah" hints={["Tugas tanpa mata kuliah harus tetap muncul, jadi pakai `LEFT JOIN`.", "Saring dengan `t.done = 0`, urutkan dengan `ORDER BY t.due_date`."]}>
+
+Buat daftar tugas yang **belum selesai**, lengkap dengan info mata kuliahnya.
+
+1. Ambil kolom judul tugas, `due_date` (tanggal tenggat), nama mata kuliah, dan nama dosen.
+2. Pastikan tugas tanpa mata kuliah tetap muncul.
+3. Tampilkan hanya tugas yang belum selesai.
+4. Urutkan berdasarkan tanggal tenggat.
+5. Cek hasilnya. Seharusnya ada 5 baris.
+
+<Solution>
+
+```sql
+SELECT t.title, t.due_date, c.name AS mata_kuliah, c.lecturer AS dosen
+FROM tasks AS t
+LEFT JOIN courses AS c ON c.id = t.course_id
+WHERE t.done = 0
+ORDER BY t.due_date;
+```
+
+```txt
+title                        | due_date   | mata_kuliah        | dosen
+Beli buku catatan            | NULL       | NULL               | NULL
+Query JOIN tiga tabel        | 2025-03-05 | Basis Data         | Dr. Rina
+Normalisasi tabel sampai 3NF | 2025-03-08 | Basis Data         | Dr. Rina
+Buat layar daftar tugas      | 2025-03-10 | Pemrograman Mobile | Pak Hendra
+Laporan praktikum subnetting | 2025-03-12 | Jaringan Komputer  | Bu Maya
+```
+
+`WHERE t.done = 0` aman dipakai di sini karena yang disaring adalah kolom tabel **kiri** (`tasks`). Soal urutan: SQLite
+menganggap `NULL` sebagai nilai paling kecil. Jadi tugas tanpa tenggat muncul paling atas saat diurutkan naik.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Rekap tugas per user" difficulty="sedang" hints={["Mulai `FROM users` lalu `LEFT JOIN tasks` agar Budi yang belum punya tugas tetap muncul.", "`SUM` dari kelompok kosong menghasilkan `NULL`; bungkus dengan `COALESCE(..., 0)`."]}>
+
+Buat rekap tugas untuk **setiap user**.
+
+1. Tampilkan tiga kolom: nama user, jumlah tugas, dan jumlah tugas yang selesai.
+2. Pastikan semua user muncul, termasuk Budi yang belum punya tugas.
+3. Untuk Budi, kedua kolom angka harus berisi 0, bukan `NULL`.
+
+<Solution>
+
+```sql
+SELECT u.name,
+       COUNT(t.id) AS jumlah_tugas,
+       COALESCE(SUM(t.done), 0) AS selesai
+FROM users AS u
+LEFT JOIN tasks AS t ON t.user_id = u.id
+GROUP BY u.id;
+```
+
+```txt
+name           | jumlah_tugas | selesai
+Andi Pratama   | 5            | 2
+Sari Wulandari | 3            | 1
+Budi Santoso   | 0            | 0
+```
+
+Tanpa `COALESCE`, kolom `selesai` milik Budi berisi `NULL`. Sebabnya, tidak ada angka yang bisa dijumlahkan.
+`COALESCE(a, b)` mengambil nilai pertama yang tidak `NULL`. Jadi kalau hasil `SUM` kosong, yang dipakai adalah 0.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Di skema lab, kolom `tasks.course_id` berfungsi sebagai apa?",
+    options: ["Primary key tabel `tasks`", "Index unik", "Foreign key yang menunjuk ke `courses.id`", "Kolom agregat"],
+    answer: 2,
+    explain: "`course_id` berisi `id` milik tabel `courses`, jadi ia foreign key. Mirip NIM yang ditulis di lembar KRS. Primary key tabel `tasks` adalah `tasks.id`. `course_id` juga tidak unik, karena banyak tugas bisa punya mata kuliah yang sama.",
+  },
+  {
+    q: "Tugas \"Beli buku catatan\" tidak punya mata kuliah. Query mana yang tetap menampilkan tugas itu, lengkap dengan kolom nama mata kuliah?",
+    options: [
+      "`FROM tasks t LEFT JOIN courses c ON c.id = t.course_id`",
+      "`FROM tasks t INNER JOIN courses c ON c.id = t.course_id`",
+      "`FROM courses c INNER JOIN tasks t ON t.course_id = c.id`",
+      "`FROM courses c LEFT JOIN tasks t ON t.course_id = c.id`",
+    ],
+    answer: 0,
+    explain: "LEFT JOIN menyimpan semua baris tabel kiri, jadi tabel kirinya harus `tasks`. INNER JOIN membuang baris yang tidak punya pasangan. LEFT JOIN yang dimulai dari `courses` menyimpan semua mata kuliah, bukan tugas yang tidak punya mata kuliah.",
+  },
+  {
+    q: "Mata kuliah \"Statistika\" belum punya tugas. Berapa nilai `COUNT(*)` dan `COUNT(t.id)` di baris Statistika?",
+    code: "SELECT c.name, COUNT(*), COUNT(t.id)\nFROM courses c\nLEFT JOIN tasks t ON t.course_id = c.id\nGROUP BY c.id;",
+    options: ["0 dan 0", "1 dan 0", "1 dan 1", "0 dan 1"],
+    answer: 1,
+    explain: "LEFT JOIN tetap membuat satu baris untuk Statistika, dengan kolom tugas berisi NULL. `COUNT(*)` menghitung baris itu, jadi hasilnya 1. `COUNT(t.id)` melewati NULL, jadi hasilnya 0.",
+  },
+  {
+    q: "Foreign key `tasks.course_id` memakai `ON DELETE SET NULL`. Apa yang terjadi pada tugas-tugasnya saat mata kuliahnya dihapus?",
+    options: [
+      "Penghapusan mata kuliah ditolak",
+      "Tugas-tugasnya ikut terhapus",
+      "Tugas tetap ada, `course_id`-nya menjadi NULL",
+      "`course_id` diubah ke mata kuliah lain",
+    ],
+    answer: 2,
+    explain: "SET NULL mengosongkan foreign key di child, seperti mencoret nama mata kuliah di catatan tugas. Penghapusan ditolak terjadi kalau tidak ada aturan atau memakai RESTRICT. Child ikut terhapus terjadi kalau memakai CASCADE.",
+  },
+  {
+    q: "Satu tugas bisa punya banyak label, dan satu label bisa dipakai banyak tugas. Desain tabel mana yang tepat?",
+    options: [
+      "Kolom `label_id` di tabel `tasks`",
+      "Tabel penghubung `task_labels(task_id, label_id)`",
+      "Kolom teks `labels = 'ujian,kelompok'` di `tasks`",
+      "Kolom `task_id` di tabel `labels`",
+    ],
+    answer: 1,
+    explain: "Many-to-many butuh tabel penghubung yang berisi dua foreign key, seperti lembar KRS yang berisi NIM dan kode mata kuliah. Satu kolom FK di salah satu sisi hanya cukup untuk one-to-many. Teks yang dipisah koma tidak bisa diperiksa oleh database.",
+  },
+]} />
+
+## Ringkasan
+
+- **Primary key** adalah kolom unik penanda tiap baris, seperti NIM. **Foreign key** berisi primary key tabel lain,
+  dan database menolak nilai yang tidak ada (`FOREIGN KEY constraint failed`). Di SQLite, nyalakan dulu dengan
+  `PRAGMA foreign_keys = ON`.
+- Pada relasi **one-to-many** (courses → tasks), foreign key disimpan di sisi "many", yaitu `tasks.course_id`.
+- `INNER JOIN` hanya mengambil baris yang punya pasangan. `LEFT JOIN` menyimpan semua baris tabel kiri dan mengisi
+  `NULL` kalau pasangannya tidak ada.
+- `GROUP BY` memilah baris per kelompok, lalu `COUNT(t.id)` dan `SUM` menghitung isinya. Kelompokkan berdasarkan `id`,
+  dan saring kelompok dengan `HAVING`.
+- Saat parent dihapus: `ON DELETE CASCADE` ikut menghapus child, `ON DELETE SET NULL` mengosongkan FK-nya, dan tanpa
+  aturan penghapusan ditolak.
+- **Many-to-many** memakai tabel penghubung (seperti KRS) yang berisi dua FK dan primary key gabungan.
+
+Contekan singkat JOIN dan agregasi ada di [cheatsheet SQL](/cheatsheet/sql).
+
+<Callout type="capstone" title="Langkah capstone">
+
+Simpan ERD `users` → `courses` → `tasks` ini baik-baik. Di [Dasar Express.js](/belajar/crud-backend/express-dasar)
+kamu mulai membangun `belajar-api`. Lalu di [Database Sungguhan dengan Prisma + SQLite](/belajar/crud-backend/prisma-sqlite)
+relasi yang sama ditulis ulang sebagai model `Course` dan `Task` (dengan `courseId`) di schema Prisma.
+
+</Callout>

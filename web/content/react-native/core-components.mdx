@@ -1,0 +1,547 @@
+## Pengantar
+
+Coba buka aplikasi tugas kuliah apa saja di HP-mu. Isinya selalu dari bahan yang sama: kotak pembungkus, teks, gambar, daftar yang bisa digeser, kolom isian, dan tombol.
+
+Bahan itu mirip balok LEGO standar. Dengan balok yang sama, kamu bisa membangun rumah atau mobil. Di React Native, balok standar itu disebut **core components** (komponen inti). Komponen ini sudah tersedia tanpa install apa pun dan diubah menjadi **view native**, yaitu elemen tampilan asli Android atau iOS.
+
+Kamu akan mengenal komponen itu satu per satu, lalu merangkainya menjadi form "tambah tugas" kecil yang nanti dipakai lagi di capstone. Semua contoh bisa dijalankan di browser lewat **Expo Snack** (editor online dengan HP tiruan). Bisa juga disalin ke `src/app/index.js` di proyek `latihan-rn` dari pelajaran [Intro React Native & Expo](/belajar/react-native/intro-react-native-expo).
+
+## View dan Text
+
+<Callout type="analogi" title="Seperti map plastik dan kertas bertulisan">
+
+Saat mengumpulkan berkas KRS, kamu memasukkan lembar-lembar kertas ke map plastik. Map hanya mengelompokkan. Tulisannya selalu ada di kertas.
+
+Map = `View`, kertas bertulisan = `Text`. Map boleh dimasukkan ke map lain, tetapi tulisan tidak bisa melayang di dalam map tanpa kertas.
+
+</Callout>
+
+`<View>` adalah kotak pembungkus, mirip `<div>` di web. Gunanya mengelompokkan komponen lain dan mengatur **layout** (susunan posisi elemen di layar). Setiap `View` otomatis memakai **flexbox** (aturan yang menyusun isi dalam satu baris atau satu kolom). Arah bawaannya **kolom**, jadi isinya tersusun dari atas ke bawah.
+
+`<Text>` adalah satu-satunya komponen yang boleh berisi teks. Aturannya tegas: **semua teks wajib berada di dalam `<Text>`**, termasuk angka dan hasil ekspresi seperti `tugas.length`. `Text` boleh dimasukkan ke `Text` lain. Teks di dalamnya ikut memakai gaya induknya, jadi cocok untuk menebalkan sebagian kalimat.
+
+```jsx
+import { Text, View } from "react-native";
+
+export default function Ringkasan() {
+  const jumlah = 3;
+  return (
+    <View style={{ padding: 16, gap: 8 }}>
+      <Text style={{ fontSize: 20, fontWeight: "bold" }}>Halo, Sari</Text>
+      <Text>
+        Kamu punya <Text style={{ fontWeight: "bold" }}>{jumlah} tugas</Text> minggu ini.
+      </Text>
+    </View>
+  );
+}
+```
+
+Kode ini membuat kotak dengan jarak tepi 16 (`padding`) dan jarak antar-isi 8 (`gap`). Isinya judul tebal dan satu kalimat. Di tengah kalimat ada `Text` lain yang hanya menebalkan "3 tugas".
+
+Teks yang terlalu panjang bisa dipotong dengan **prop** (pengaturan yang kamu kirim ke komponen) `numberOfLines={1}`. Teks dipotong menjadi satu baris dan diberi elipsis ("…") di ujungnya.
+
+## Menampilkan gambar: Image dan expo-image
+
+<Callout type="analogi" title="Seperti menempel foto di mading">
+
+Foto yang sudah ada di tanganmu (gambar lokal) jelas ukurannya, jadi bisa langsung ditempel di mading. Foto yang masih dikirim teman lewat WhatsApp (gambar dari internet) belum jelas ukurannya. Kamu perlu menandai dulu kotak kosong untuknya di mading.
+
+Kotak kosong itu = `width` dan `height` di `style`. Tanpa kotak itu, React Native menyiapkan ruang berukuran nol, jadi gambarnya tidak terlihat.
+
+</Callout>
+
+Komponen `<Image>` bawaan React Native bisa menampilkan gambar lokal (file di proyekmu) dan gambar dari internet:
+
+```jsx
+import { Image } from "react-native";
+
+// Gambar lokal: ukuran dibaca otomatis dari file
+<Image source={require("../../assets/images/icon.png")} style={{ width: 64, height: 64 }} />
+
+// Gambar dari jaringan: WAJIB diberi width dan height
+<Image source={{ uri: "https://reactnative.dev/img/tiny_logo.png" }} style={{ width: 64, height: 64 }} />
+```
+
+Perhatikan bentuk `source`: gambar lokal memakai `require(...)` berisi **path relatif** (alamat file, dihitung dari file yang sedang kamu tulis). Gambar dari internet memakai objek `{ uri: "..." }`, dan ukurannya baru diketahui setelah diunduh.
+
+Untuk aplikasi sungguhan, Expo menyarankan library **`expo-image`**. Library ini lebih cepat dan punya **cache** di disk, yaitu salinan gambar yang disimpan di HP sehingga tidak perlu diunduh ulang. `expo-image` sudah tersedia di Expo Go dan terpasang di template SDK 58. Kalau belum ada, pasang dengan:
+
+```bash
+npx expo install expo-image
+```
+
+Prop penting `expo-image`:
+
+- `source`: alamat gambar, boleh langsung berupa string URL.
+- `contentFit`: cara gambar mengisi kotaknya (`"cover"`, `"contain"`, dan lainnya), pengganti `resizeMode`.
+- `placeholder`: gambar buram pengganti selama gambar asli dimuat.
+- `transition`: lama efek muncul perlahan dalam milidetik.
+
+Demo di bawah menampilkan keduanya. `RNImage` adalah `Image` bawaan yang diberi nama lain agar tidak bentrok dengan `Image` dari `expo-image`.
+
+<SnackEmbed name="Image vs expo-image" dependencies="expo-image" code={`import { Image as RNImage, StyleSheet, Text, View } from "react-native";
+import { Image } from "expo-image";
+
+export default function App() {
+  return (
+    <View style={styles.container}>
+      <Text style={styles.label}>Image bawaan React Native</Text>
+      <RNImage
+        source={{ uri: "https://reactnative.dev/img/tiny_logo.png" }}
+        style={styles.logo}
+        accessibilityLabel="Logo React Native"
+      />
+
+      <Text style={styles.label}>Image dari expo-image</Text>
+      <Image
+        source="https://picsum.photos/seed/basisdata/600/300"
+        placeholder={{ blurhash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj" }}
+        contentFit="cover"
+        transition={300}
+        style={styles.banner}
+        accessibilityLabel="Gambar sampul mata kuliah Basis Data"
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 24, gap: 12, justifyContent: "center" },
+  label: { fontWeight: "bold" },
+  logo: { width: 64, height: 64 },
+  banner: { width: "100%", height: 160, borderRadius: 12 },
+});
+`} />
+
+## ScrollView dan TextInput
+
+<Callout type="analogi" title="Seperti struk belanja yang panjang">
+
+Struk belanja bulanan di minimarket bisa lebih panjang dari tanganmu. Untuk membaca bagian bawahnya, kamu menggeser struk itu. Seluruh struk sudah tercetak, kamu hanya menggeser bagian yang terlihat.
+
+Struk = `ScrollView`, menggeser = **scroll**. Bedanya dengan web: di React Native, konten panjang tidak otomatis bisa digeser. Kamu harus membungkusnya sendiri dengan `ScrollView`.
+
+</Callout>
+
+Di React Native, konten yang lebih panjang dari layar akan **terpotong**. Bungkus konten dengan `<ScrollView>` agar bisa di-scroll. Dua prop yang sering dipakai:
+
+- `contentContainerStyle`: gaya untuk isi di dalam ScrollView, misalnya `padding` dan `gap`. Prop `style` biasa hanya mengatur bingkai luarnya.
+- `keyboardShouldPersistTaps="handled"`: tombol di dalam ScrollView tetap bisa ditekan saat keyboard terbuka. Tanpa ini, ketukan pertama hanya menutup keyboard.
+
+`ScrollView` menggambar **semua** isinya sekaligus, jadi cocok untuk form atau halaman pendek. Untuk daftar panjang, pakai `FlatList` di pelajaran [FlatList](/belajar/react-native/flatlist).
+
+`<TextInput>` adalah kolom isian, seperti kotak kosong di formulir pendaftaran. Cara memakainya sama dengan **controlled input** di React web: isi kolom selalu diambil dari **state** (data yang diingat komponen), dan setiap ketikan langsung memperbarui state itu. Bedanya, event-nya bernama `onChangeText` dan langsung memberi string.
+
+```jsx
+const [email, setEmail] = useState("");
+
+<TextInput
+  value={email}
+  onChangeText={setEmail}
+  placeholder="demo@kampus.ac.id"
+  keyboardType="email-address"
+  autoCapitalize="none"
+/>
+```
+
+`value={email}` membuat kolom selalu menampilkan isi state. `onChangeText={setEmail}` menyimpan teks terbaru ke state setiap kamu mengetik. Dua prop terakhir memunculkan keyboard dengan tombol `@` dan mematikan huruf kapital otomatis.
+
+Prop lain yang berguna: `secureTextEntry` (menyembunyikan kata sandi), `multiline` (lebih dari satu baris), `keyboardType="numeric"` (keyboard angka), dan `onSubmitEditing` (dipanggil saat Enter ditekan). Keyboard yang menutupi kolom isian dibahas di [Form & Keyboard](/belajar/react-native/form-keyboard).
+
+## Tombol dan kontrol
+
+### Pressable
+
+<Callout type="analogi" title="Seperti tombol lift">
+
+Saat kamu menekan tombol lift, lampunya menyala. Dari situ kamu tahu tekananmu tercatat. Tombol yang diam saja membuat orang ragu dan menekan berkali-kali.
+
+`Pressable` = tombol lift. Lampu yang menyala = gaya khusus saat `pressed` bernilai `true`. Tombol lift yang sedang dimatikan = `disabled`.
+
+</Callout>
+
+`<Pressable>` adalah cara modern untuk membuat elemen apa pun bisa ditekan. Urutan **event**-nya (kejadian yang bisa kamu tangani): `onPressIn` saat jari menyentuh, `onPressOut` saat jari diangkat, lalu `onPress`. Kalau jari ditahan lebih dari 500 milidetik, yang dipanggil adalah `onLongPress`.
+
+Kelebihan utama `Pressable` ada di prop `style`. Prop ini boleh berupa **fungsi** yang menerima `{ pressed }`, sehingga kamu bisa mengubah tampilan tombol selama sedang ditekan.
+
+```jsx
+<Pressable
+  onPress={() => console.log("Tugas disimpan")}
+  hitSlop={8}
+  style={({ pressed }) => [styles.button, pressed && { opacity: 0.6 }]}
+>
+  <Text style={styles.buttonText}>Simpan</Text>
+</Pressable>
+```
+
+Saat `pressed` bernilai `true`, gaya `{ opacity: 0.6 }` ikut dipasang sehingga tombol meredup. `hitSlop={8}` memperluas area sentuh 8 **dp** (satuan ukuran yang menyesuaikan kepadatan layar) ke segala arah, berguna untuk tombol kecil.
+
+Kalau `disabled` bernilai `true`, `onPress` tidak dipanggil. **Screen reader** (fitur HP yang membacakan isi layar untuk pengguna tunanetra) juga otomatis diberi tahu bahwa tombol sedang nonaktif.
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+```jsx
+<View onClick={simpan}>
+  Simpan
+</View>
+```
+
+`View` tidak punya `onClick`. Teks "Simpan" juga berada di luar `<Text>`, jadi aplikasi error.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+```jsx
+<Pressable onPress={simpan}>
+  <Text>Simpan</Text>
+</Pressable>
+```
+
+Sentuhan ditangani `onPress`, dan teksnya dibungkus `<Text>`.
+
+</CompareItem>
+</Compare>
+
+### Button, Switch, dan ActivityIndicator
+
+Tiga kontrol ini siap pakai:
+
+- **`<Button>`** adalah tombol jadi, contohnya `<Button title="Hapus" color="#dc2626" onPress={hapus} />`. Tampilannya mengikuti gaya bawaan Android atau iOS dan **tidak punya prop `style`**, jadi kebanyakan aplikasi memakai `Pressable`.
+- **`<Switch>`** adalah sakelar on/off, seperti sakelar lampu. Prop-nya `value` (posisi sekarang) dan `onValueChange` (fungsi saat digeser).
+- **`<ActivityIndicator>`** menampilkan lingkaran berputar tanda *loading* (sedang memuat), dengan prop seperti `size="large"` dan `color`.
+
+## SafeAreaView dan Platform
+
+<Callout type="analogi" title="Seperti menulis di papan ujian berjepit">
+
+Saat ujian, lembar jawabanmu dijepit di papan. Bagian paling atas kertas tertutup penjepit, jadi kamu mulai menulis sedikit di bawahnya.
+
+Penjepit = **notch** (poni di atas layar) atau *dynamic island*, status bar (baris jam dan baterai), dan garis navigasi di bawah. Area yang aman ditulisi = **safe area**. `SafeAreaView` otomatis memberi jarak supaya isi layarmu tidak tertutup "penjepit" itu.
+
+</Callout>
+
+React Native punya `SafeAreaView` bawaan. Masalahnya, dokumentasi resminya sudah menandainya **deprecated** (usang, tidak disarankan lagi dan bisa dihapus di versi mendatang). Versi bawaan itu juga hanya berefek di iOS. Pakai versi dari library `react-native-safe-area-context`, yang sudah ada di template SDK 58:
+
+```jsx
+import { SafeAreaView } from "react-native-safe-area-context";
+
+<SafeAreaView style={{ flex: 1 }} edges={["top", "bottom"]}>
+  {/* isi layar */}
+</SafeAreaView>
+```
+
+`edges={["top", "bottom"]}` artinya jarak aman hanya diberikan di sisi atas dan bawah.
+
+`SafeAreaView` butuh `SafeAreaProvider`, yaitu pembungkus paling luar yang mengukur area aman lalu membagikannya ke komponen di dalamnya. Di proyek Expo Router, provider ini sudah dipasang otomatis. Di Snack (satu file `App.js` tanpa Expo Router), kamu harus membungkus aplikasi dengan `<SafeAreaProvider>` sendiri, seperti di demo nanti. Detail safe area dan status bar dibahas lagi di [UI Native](/belajar/react-native/ui-native).
+
+Kadang perilaku aplikasi perlu dibedakan per sistem operasi. Untuk itu ada modul `Platform`:
+
+```jsx
+import { Platform } from "react-native";
+
+console.log(Platform.OS); // → "android", "ios", atau "web"
+const jarak = Platform.OS === "ios" ? 20 : 12;
+```
+
+`Platform.OS` berisi nama sistem operasi yang sedang berjalan. Di iOS, `jarak` bernilai 20, selain itu 12. Di proyek Expo, `process.env.EXPO_OS` berisi nilai yang sama. `Platform.select` dibahas di [Styling & Flexbox](/belajar/react-native/styling-flexbox).
+
+## Aksesibilitas
+
+<Callout type="analogi" title="Seperti membacakan layar HP untuk teman">
+
+Kamu menemani teman tunanetra memesan makanan lewat HP dan membacakan isi layar: "Tombol, pesan nasi goreng." Kalau tombolnya hanya ikon keranjang tanpa tulisan, kamu harus menebak artinya.
+
+Kamu = **screen reader**. "Pesan nasi goreng" = nama dari `aria-label`. Kata "tombol" = peran dari `role`. Bedanya, screen reader tidak bisa menebak. Tanpa label, ia hanya bilang "tombol".
+
+</Callout>
+
+**Aksesibilitas** artinya aplikasi bisa dipakai semua orang, termasuk penyandang disabilitas. Pengguna tunanetra memakai screen reader: TalkBack di Android dan VoiceOver di iOS. Agar mereka bisa memakai aplikasimu, beri tahu **nama** dan **peran** setiap elemen. React Native mendukung dua gaya prop:
+
+| Tujuan | Prop klasik | Prop gaya web (ARIA) |
+| --- | --- | --- |
+| Nama yang dibacakan | `accessibilityLabel="Hapus tugas"` | `aria-label="Hapus tugas"` |
+| Jenis elemen | `accessibilityRole="button"` | `role="button"` |
+| Status | `accessibilityState={{ checked: true }}` | `aria-checked={true}` |
+| Petunjuk tambahan | `accessibilityHint="Menghapus permanen"` | (tidak ada) |
+
+Kolom kanan memakai nama dari **ARIA**, standar aksesibilitas di web. Kedua gaya didukung di React Native 0.88. Kalau `role` dan `accessibilityRole` dipasang bersamaan, yang dipakai `role`. Pilih satu gaya dan pakai secara konsisten.
+
+Contoh pemakaian: tombol ikon tanpa teks wajib diberi label (misalnya "Hapus tugas"), `TextInput` diberi label sesuai fungsinya, dan judul layar diberi `role="heading"`.
+
+## Demo lengkap: form tambah tugas
+
+Demo berikut menggabungkan hampir semua komponen di atas. Ketik judul tugas, nyalakan sakelar "Prioritas tinggi", lalu tekan **Simpan**. Perhatikan tombol yang meredup saat ditekan dan tanda *loading* sebentar sebelum tugas baru muncul.
+
+<SnackEmbed name="Form tambah tugas" dependencies="react-native-safe-area-context" code={`import { useState } from "react";
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <TugasScreen />
+    </SafeAreaProvider>
+  );
+}
+
+function TugasScreen() {
+  const [judul, setJudul] = useState("");
+  const [penting, setPenting] = useState(false);
+  const [menyimpan, setMenyimpan] = useState(false);
+  const [tugas, setTugas] = useState([
+    { id: 1, title: "Rangkum bab normalisasi", course: "Basis Data", penting: true },
+    { id: 2, title: "Desain layar login", course: "Pemrograman Mobile", penting: false },
+  ]);
+
+  const nonaktif = judul.trim() === "" || menyimpan;
+
+  function simpan() {
+    if (nonaktif) return;
+    setMenyimpan(true);
+    setTimeout(() => {
+      setTugas((lama) => [
+        ...lama,
+        { id: Date.now(), title: judul.trim(), course: "Pemrograman Mobile", penting },
+      ]);
+      setJudul("");
+      setPenting(false);
+      setMenyimpan(false);
+    }, 800);
+  }
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Text style={styles.title} role="heading">Tugas Andi</Text>
+        <Text style={styles.muted}>Berjalan di: {Platform.OS}</Text>
+
+        <TextInput
+          style={styles.input}
+          value={judul}
+          onChangeText={setJudul}
+          placeholder="Judul tugas baru"
+          aria-label="Judul tugas baru"
+          onSubmitEditing={simpan}
+        />
+
+        <View style={styles.row}>
+          <Text>Prioritas tinggi</Text>
+          <Switch value={penting} onValueChange={setPenting} aria-label="Prioritas tinggi" />
+        </View>
+
+        <Pressable
+          onPress={simpan}
+          disabled={nonaktif}
+          role="button"
+          aria-label="Simpan tugas"
+          style={({ pressed }) => [
+            styles.button,
+            nonaktif && styles.buttonDisabled,
+            pressed && styles.buttonPressed,
+          ]}
+        >
+          {menyimpan ? (
+            <ActivityIndicator color="#ffffff" />
+          ) : (
+            <Text style={styles.buttonText}>Simpan</Text>
+          )}
+        </Pressable>
+
+        {tugas.map((t) => (
+          <View key={t.id} style={styles.card}>
+            <Text style={styles.cardTitle}>{t.title}</Text>
+            <Text style={styles.muted}>
+              {t.course}
+              {t.penting ? " · prioritas tinggi" : ""}
+            </Text>
+          </View>
+        ))}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: "#f8fafc" },
+  content: { padding: 16, gap: 12 },
+  title: { fontSize: 24, fontWeight: "bold" },
+  muted: { color: "#64748b" },
+  input: {
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: "#ffffff",
+  },
+  row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  button: { backgroundColor: "#2563eb", padding: 14, borderRadius: 8, alignItems: "center" },
+  buttonDisabled: { backgroundColor: "#94a3b8" },
+  buttonPressed: { opacity: 0.6 },
+  buttonText: { color: "#ffffff", fontWeight: "bold" },
+  card: { backgroundColor: "#ffffff", padding: 12, borderRadius: 8, gap: 4 },
+  cardTitle: { fontWeight: "bold" },
+});
+`} />
+
+Hal yang bisa kamu pelajari dari demo ini:
+
+- `nonaktif` bernilai `true` kalau judul masih kosong atau sedang menyimpan, sehingga tombol ikut nonaktif.
+- `setTimeout` 800 milidetik dipakai untuk **pura-pura** menyimpan ke server. Setelah itu tugas baru ditambahkan dan form dikosongkan.
+- Array style menggabungkan gaya dasar, gaya nonaktif, dan gaya saat ditekan. Nilai `false` di dalam array diabaikan.
+- Selama `menyimpan` bernilai `true`, teks tombol diganti `ActivityIndicator`.
+- Daftar tugas sementara digambar dengan `map` di dalam `ScrollView`. Nanti kita ganti dengan `FlatList`.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Error yang sering ditemui">
+
+- **`Text strings must be rendered within a <Text> component.`** Artinya ada teks, angka, atau spasi nyasar langsung di dalam `View` atau `Pressable`. Bungkus dengan `<Text>`. Waspadai juga pola `{jumlah && <Text>...</Text>}`. Saat `jumlah` bernilai `0`, angka `0` ikut tampil di luar `Text` dan memicu error ini. Pakai `{jumlah > 0 && ...}`.
+- **Gambar dari internet tidak muncul, tanpa pesan error.** `Image` belum diberi `width` dan `height`. Tambahkan ukuran di `style`.
+- **Tidak bisa mengetik di `TextInput`.** `value` diisi, tetapi `onChangeText` tidak memperbarui state, atau kamu memakai `onChange` dengan `e.target.value` seperti di web. Gunakan `onChangeText={setJudul}`.
+- **`No safe area value available. Make sure you are rendering <SafeAreaProvider> at the top of your app.`** Artinya kamu memakai `useSafeAreaInsets` tanpa provider. Di Snack, bungkus aplikasi dengan `SafeAreaProvider`.
+- **Peringatan bahwa `SafeAreaView` sudah deprecated.** Kamu mengimpor `SafeAreaView` dari `react-native`. Ganti impornya ke `react-native-safe-area-context`.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Form login sederhana" difficulty="sedang" hints={["Pakai dua state: `email` dan `password`.", "Tombol nonaktif jika salah satu isian masih kosong.", "Gunakan `secureTextEntry` untuk kata sandi."]}>
+
+Buat layar login di `src/app/index.js` (proyek `latihan-rn`) atau di Snack. Ikuti langkah ini:
+
+1. Buat judul "Masuk" dengan `role="heading"`.
+2. Tambahkan `TextInput` email dengan `keyboardType="email-address"`, `autoCapitalize="none"`, dan placeholder `demo@kampus.ac.id`.
+3. Tambahkan `TextInput` kata sandi yang hurufnya disembunyikan.
+4. Buat tombol `Pressable` "Masuk" yang meredup saat ditekan.
+5. Buat tombol itu nonaktif kalau salah satu isian masih kosong.
+6. Saat tombol ditekan, tampilkan teks "Halo, " diikuti email yang diisi.
+
+<Solution>
+
+```jsx title="src/app/index.js"
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+
+export default function Index() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [pesan, setPesan] = useState("");
+
+  const nonaktif = email.trim() === "" || password === "";
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title} role="heading">Masuk</Text>
+      <TextInput
+        style={styles.input}
+        value={email}
+        onChangeText={setEmail}
+        placeholder="demo@kampus.ac.id"
+        keyboardType="email-address"
+        autoCapitalize="none"
+        aria-label="Email"
+      />
+      <TextInput
+        style={styles.input}
+        value={password}
+        onChangeText={setPassword}
+        placeholder="Kata sandi"
+        secureTextEntry
+        aria-label="Kata sandi"
+      />
+      <Pressable
+        disabled={nonaktif}
+        onPress={() => setPesan("Halo, " + email.trim())}
+        role="button"
+        style={({ pressed }) => [
+          styles.button,
+          nonaktif && styles.buttonDisabled,
+          pressed && { opacity: 0.6 },
+        ]}
+      >
+        <Text style={styles.buttonText}>Masuk</Text>
+      </Pressable>
+      {pesan !== "" && <Text>{pesan}</Text>}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, justifyContent: "center", padding: 24, gap: 12 },
+  title: { fontSize: 28, fontWeight: "bold" },
+  input: { borderWidth: 1, borderColor: "#cbd5e1", borderRadius: 8, padding: 12 },
+  button: { backgroundColor: "#2563eb", padding: 14, borderRadius: 8, alignItems: "center" },
+  buttonDisabled: { backgroundColor: "#94a3b8" },
+  buttonText: { color: "#ffffff", fontWeight: "bold" },
+});
+```
+
+Penjelasan solusi:
+
+- Kedua input bersifat *controlled*: isinya selalu diambil dari state `email` dan `password`.
+- Variabel `nonaktif` dihitung ulang setiap kali komponen digambar ulang. Jadi tombol otomatis aktif begitu kedua isian terisi.
+- `pesan !== ""` menghasilkan `true` atau `false`, bukan string. Karena itu tidak ada string kosong yang tampil di luar `<Text>`.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Kamu ingin menampilkan jumlah tugas di layar. Kode mana yang benar di React Native?",
+    options: ["`<View>{jumlah} tugas</View>`", "`<View><p>{jumlah} tugas</p></View>`", "`<Text>{jumlah} tugas</Text>`", "`<span>{jumlah} tugas</span>`"],
+    answer: 2,
+    explain: "Semua teks, termasuk angka, wajib ada di dalam `<Text>`, seperti tulisan yang harus ada di kertas, bukan langsung di map. `<p>` dan `<span>` adalah tag web dan tidak ada di React Native.",
+  },
+  {
+    q: "Gambar dari `{ uri: \"https://...\" }` tidak muncul sama sekali. Apa penyebab yang paling mungkin?",
+    options: ["Belum diberi `width` dan `height`", "Harus memakai `require()`", "URL gambar wajib berakhiran `.jpg`", "`Image` hanya bisa menampilkan gambar lokal"],
+    answer: 0,
+    explain: "Ukuran gambar dari internet belum diketahui sebelum diunduh, jadi kamu wajib menyiapkan ukurannya. `require()` hanya untuk file lokal.",
+  },
+  {
+    q: "Bagaimana cara membuat `Pressable` berubah tampilan saat sedang ditekan, seperti lampu tombol lift?",
+    options: ["Memakai `:active` di file CSS", "Memberi prop `onClick`", "Membungkusnya dengan `Button`", "Memberi `style` berupa fungsi yang menerima `{ pressed }`"],
+    answer: 3,
+    explain: "`style={({ pressed }) => [...]}` dipanggil ulang setiap status tekan berubah. React Native tidak memakai file CSS dan tidak punya `onClick`. `Button` malah tidak bisa diberi `style`.",
+  },
+  {
+    q: "Dari mana sebaiknya `SafeAreaView` diimpor di proyek SDK 58?",
+    options: ["`react-native`", "`react-native-safe-area-context`", "`expo-router`", "`expo-image`"],
+    answer: 1,
+    explain: "`SafeAreaView` dari `react-native` sudah deprecated dan hanya berefek di iOS. Versi dari `react-native-safe-area-context` bekerja di Android dan iOS. `expo-router` dan `expo-image` tidak menyediakan komponen ini.",
+  },
+  {
+    q: "Prop mana yang membuat screen reader membacakan \"Hapus tugas\" untuk tombol ikon tempat sampah?",
+    options: ["`accessibilityHint=\"Hapus tugas\"`", "`role=\"Hapus tugas\"`", "`aria-label=\"Hapus tugas\"`", "`title=\"Hapus tugas\"`"],
+    answer: 2,
+    explain: "`aria-label` (atau `accessibilityLabel`) adalah nama yang dibacakan. `role` berisi jenis elemen seperti `button`, bukan nama. `accessibilityHint` hanya petunjuk tambahan, dan `title` bukan prop aksesibilitas di `Pressable`.",
+  },
+]} />
+
+## Ringkasan
+
+- `View` adalah kotak pembungkus yang menyusun isinya dari atas ke bawah. **Semua teks wajib ada di dalam `Text`.**
+- Gambar dari internet di `Image` wajib diberi `width` dan `height`. `expo-image` lebih cepat dan menyimpan cache, dengan prop seperti `contentFit`, `placeholder`, dan `transition`.
+- Konten panjang perlu dibungkus `ScrollView` agar bisa digeser. `TextInput` dikendalikan lewat `value` dan `onChangeText`.
+- Buat tombol dengan `Pressable`. Pakai `style={({ pressed }) => ...}` agar tombol bereaksi saat ditekan. `Button`, `Switch`, dan `ActivityIndicator` adalah kontrol siap pakai.
+- Impor `SafeAreaView` dari `react-native-safe-area-context` agar konten tidak tertutup notch. Pakai `Platform.OS` kalau perilaku perlu dibedakan per sistem operasi.
+- Pasang `aria-label` atau `accessibilityLabel`, plus `role` atau `accessibilityRole`, agar screen reader tahu nama dan jenis setiap elemen.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Form tugas di aplikasi `kuliah-app` (Track 3) memakai pola yang sama: `TextInput` terkendali, `Switch` atau pilihan prioritas, dan tombol `Pressable` yang menampilkan `ActivityIndicator` saat menyimpan ke API. Langkah berikutnya, rapikan tampilannya di [Styling & Flexbox](/belajar/react-native/styling-flexbox).
+
+</Callout>

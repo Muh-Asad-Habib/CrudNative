@@ -1,0 +1,677 @@
+## Pengantar
+
+Bayangkan layar utama aplikasi Tugas & Catatan Kuliah yang nanti kamu bangun. Ada daftar tugas. Ada tanda centang untuk tugas yang sudah selesai. Ada tulisan "3 tugas belum selesai" dan label "Tanpa mata kuliah" untuk tugas umum.
+
+Semua itu dikerjakan JavaScript dengan empat alat dasar:
+
+- **variabel**, tempat menyimpan satu nilai, misalnya nama mahasiswa;
+- **function**, kumpulan langkah yang bisa dipanggil berulang kali;
+- **array**, daftar berisi banyak nilai, misalnya semua tugasmu;
+- **object**, satu data dengan beberapa kolom, misalnya satu tugas beserta judul dan statusnya.
+
+Pelajaran ini memakai gaya JavaScript modern, yaitu versi ES6 (rilis 2015) ke atas. Gaya ini dipakai di Node.js, Express, dan React. Semua contoh memakai data tugas kuliah, jadi pola yang kamu latih hari ini akan muncul lagi di track berikutnya.
+
+### Cara menjalankan contoh
+
+Kamu sudah memasang Node.js di [Menyiapkan Tools](/belajar/fondasi/setup-tools). Sekarang buat folder latihan berisi satu file kosong:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+mkdir latihan-js
+cd latihan-js
+New-Item latihan.js
+code .
+```
+
+</Tab>
+<Tab>
+
+```bash
+mkdir latihan-js
+cd latihan-js
+touch latihan.js
+code .
+```
+
+</Tab>
+</Tabs>
+
+Perintah di atas membuat folder `latihan-js`, masuk ke folder itu, membuat file kosong `latihan.js`, lalu membukanya di VS Code.
+
+Cara mencoba setiap contoh:
+
+1. Tempel kode contoh ke `latihan.js`, lalu simpan.
+2. Jalankan `node latihan.js` di terminal.
+3. Cocokkan hasilnya dengan komentar `// → ...` di kode. Komentar itu menunjukkan output yang seharusnya muncul.
+
+`console.log(...)` artinya "tampilkan nilai ini di terminal". Perintah ini akan sering kamu lihat.
+
+Kalau kamu menempel beberapa contoh ke file yang sama, bisa muncul error "has already been declared". Hapus contoh sebelumnya atau buat file baru. Penyebabnya dibahas di bagian kesalahan umum.
+
+## Variabel: const dan let
+
+<Callout type="analogi" title="Seperti toples berlabel di dapur kos">
+
+Di dapur kos ada banyak toples. Supaya tidak tertukar, tiap toples diberi label: "Gula", "Garam", "Kopi". Saat butuh gula, kamu cukup mencari label "Gula".
+
+Variabel bekerja sama: **nama variabel = label**, **nilai = isi toples**.
+
+- `const` = label yang dilem permanen ke satu toples.
+- `let` = label yang boleh dicabut lalu ditempel ke toples lain.
+
+Bedanya dengan dapur sungguhan: satu nilai di JavaScript boleh punya beberapa label sekaligus.
+
+</Callout>
+
+Variabel adalah nama untuk menyimpan sebuah nilai. JavaScript modern memakai dua kata kunci untuk membuatnya:
+
+```js
+const namaMahasiswa = "Andi";
+let jumlahTugas = 3;
+
+jumlahTugas = jumlahTugas + 1;
+console.log(namaMahasiswa, jumlahTugas); // → Andi 4
+
+namaMahasiswa = "Sari"; // ✗ TypeError: Assignment to constant variable.
+```
+
+Baris demi baris:
+
+- Baris 1 membuat variabel `namaMahasiswa` berisi teks `"Andi"`.
+- Baris 2 membuat `jumlahTugas` berisi angka 3.
+- Baris 4 mengganti isi `jumlahTugas` menjadi 3 + 1 = 4. Ini boleh karena memakai `let`.
+- Baris 7 mencoba mengganti `namaMahasiswa`. Ini gagal karena memakai `const`.
+
+Aturan praktisnya:
+
+- Pakai **`const`** sebagai pilihan pertama. Nilainya tidak bisa diganti.
+- Pakai **`let`** hanya kalau nilainya memang akan berubah, misalnya penghitung jumlah tugas.
+- Hindari **`var`**. Itu cara lama dengan aturan yang membingungkan. Kamu masih akan menemukannya di tutorial lama.
+
+`const` dan `let` punya *block scope*, artinya variabel hanya berlaku di dalam satu blok. Blok adalah kode di antara kurung kurawal `{ }`, misalnya isi sebuah `if`. Mirip barang di kamar kos: penghuni kamar lain tidak tahu barang itu ada.
+
+```js
+if (true) {
+  let pesan = "Halo dari dalam blok";
+  console.log(pesan); // → Halo dari dalam blok
+}
+console.log(pesan); // ✗ ReferenceError: pesan is not defined
+```
+
+Variabel `pesan` dibuat di dalam blok `if`. Di luar blok, JavaScript tidak mengenalnya, jadi muncul `ReferenceError`.
+
+<Callout type="info" title="const mengunci label, bukan isi">
+
+`const task = { done: false }` lalu `task.done = true` itu **boleh**. Label `task` tetap menempel di toples yang sama. Kamu hanya mengganti isi di dalamnya. Yang dilarang adalah memindahkan label `task` ke nilai lain. Cara menjaga isi object agar tidak berubah (*immutable*) dibahas di [JavaScript Modern 2](/belajar/fondasi/javascript-modern-2).
+
+</Callout>
+
+## Tipe data dasar
+
+<Callout type="analogi" title="Seperti kolom formulir pendaftaran UKM">
+
+Formulir pendaftaran UKM punya kolom dengan jenis isian berbeda. Kolom nama diisi teks. Kolom angkatan diisi angka. Kolom "Sudah bayar iuran?" cukup dicentang ya atau tidak. Ada kolom yang belum diisi sama sekali, dan ada kolom yang sengaja kamu isi tanda "-".
+
+Di JavaScript: teks = string, angka = number, ya/tidak = boolean, belum diisi = `undefined`, sengaja dikosongkan = `null`.
+
+</Callout>
+
+Setiap nilai punya tipe, yaitu jenis datanya. Kamu bisa mengecek tipe sebuah nilai dengan `typeof`.
+
+| Tipe | Contoh | Hasil `typeof` |
+| --- | --- | --- |
+| string (teks) | `"Basis Data"`, `'Andi'` | `"string"` |
+| number (angka) | `3`, `3.5`, `-1` | `"number"` |
+| boolean | `true`, `false` | `"boolean"` |
+| undefined | variabel yang belum diberi nilai | `"undefined"` |
+| null | "sengaja dikosongkan" | `"object"` (keanehan lama JavaScript) |
+| object | `{ title: "Esai" }` | `"object"` |
+| array | `["Basis Data", "Statistika"]` | `"object"`, cek dengan `Array.isArray()` |
+
+Beberapa perilaku yang sering mengejutkan pemula:
+
+```js
+console.log(typeof "Basis Data");          // → string
+console.log(Array.isArray(["Basis Data"])); // → true
+
+console.log(0.1 + 0.2); // → 0.30000000000000004 (angka desimal tidak selalu presisi)
+console.log("3" + 2);   // → 32  (+ dengan string = menggabung teks)
+console.log("3" * 2);   // → 6   (string diubah jadi number)
+
+console.log(1 == "1");  // → true  (== mengubah tipe dulu)
+console.log(1 === "1"); // → false (=== ikut membandingkan tipe)
+```
+
+Arti tiap baris:
+
+- `0.1 + 0.2` tidak pas 0.3. Komputer menyimpan angka desimal dengan cara yang kadang meleset sedikit. Ini terjadi di hampir semua bahasa pemrograman.
+- `+` dengan teks berarti menyambung teks, bukan menjumlahkan. Jadi `"3" + 2` menjadi `"32"`.
+- `*` hanya berlaku untuk angka, jadi JavaScript mengubah `"3"` menjadi angka 3 dulu.
+- `==` mengubah tipe dulu sebelum membandingkan, sehingga angka 1 dan teks `"1"` dianggap sama. `===` ikut membandingkan tipe, jadi keduanya dianggap berbeda.
+
+Biasakan selalu memakai `===` (sama dengan) dan `!==` (tidak sama dengan).
+
+Satu istilah lagi: **falsy**, yaitu nilai yang dianggap "salah" saat diperiksa oleh `if`. Daftarnya ada enam: `false`, `0`, `""` (teks kosong), `null`, `undefined`, dan `NaN` (singkatan "Not a Number", hasil hitungan yang gagal, misalnya `"abc" * 2`). Semua nilai lain disebut **truthy** (dianggap "benar"), termasuk teks `"0"` dan array kosong. Istilah ini dipakai lagi saat membahas `??` di bagian akhir.
+
+## Template literal
+
+<Callout type="analogi" title="Seperti template pesan broadcast ketua kelas">
+
+Ketua kelas sering mengirim pesan dengan pola yang sama: "Tugas (judul) dikumpulkan (sekian) hari lagi." Setiap kali, ia hanya mengganti bagian yang kosong. Template literal = pola pesan itu. Bagian `${...}` = titik-titik yang diisi otomatis dari variabel.
+
+</Callout>
+
+Template literal adalah teks yang diapit tanda *backtick* (tombol di kiri angka 1 pada keyboard). Di dalamnya kamu bisa menyisipkan nilai dengan `${ekspresi}`. Ekspresi adalah potongan kode yang menghasilkan nilai, misalnya nama variabel atau `5 - 2`. Teksnya juga boleh lebih dari satu baris.
+
+```js
+const title = "Laporan Basis Data";
+const sisaHari = 2;
+
+console.log(`Tugas "${title}" dikumpulkan ${sisaHari} hari lagi.`);
+// → Tugas "Laporan Basis Data" dikumpulkan 2 hari lagi.
+
+console.log(`Sisa ${5 - 2} tugas`); // → Sisa 3 tugas
+```
+
+`${title}` diganti isi variabel `title`, dan `${5 - 2}` diganti hasil hitungannya, yaitu 3.
+
+Bandingkan dengan cara lama: `"Tugas " + title + " dikumpulkan " + sisaHari + " hari lagi."`. Cara lama lebih panjang dan spasinya mudah terlewat.
+
+## Function dan arrow function
+
+<Callout type="analogi" title="Seperti resep masakan">
+
+Resep nasi goreng ditulis sekali, lalu bisa dipakai kapan saja. Tiap kali memasak, kamu menyiapkan bahan, mengikuti langkahnya, dan mendapat sepiring nasi goreng.
+
+Function bekerja dengan cara yang sama:
+
+- **resep = function**, ditulis sekali dan dipakai berkali-kali;
+- **bahan = parameter**, nilai yang kamu masukkan;
+- **langkah memasak = isi function**;
+- **masakan jadi = nilai yang dikembalikan dengan `return`**.
+
+Memanggil function, misalnya `formatTugas("Esai")`, sama dengan mulai memasak memakai bahan tertentu.
+
+</Callout>
+
+**Function** adalah kumpulan langkah yang diberi nama supaya bisa dipakai berulang kali. Ia menerima **parameter** (input) dan mengembalikan hasil dengan `return`. Ada dua cara menulisnya. Cara kedua disebut **arrow function**, versi singkat yang memakai tanda panah `=>`.
+
+<Compare>
+<CompareItem title="Function biasa" tone="neutral">
+
+```js
+function formatTugas(title, priority = "sedang") {
+  return `${title} (prioritas ${priority})`;
+}
+```
+
+</CompareItem>
+<CompareItem title="Arrow function" tone="neutral">
+
+```js
+const formatTugas = (title, priority = "sedang") =>
+  `${title} (prioritas ${priority})`;
+```
+
+</CompareItem>
+</Compare>
+
+Keduanya menghasilkan hal yang sama. Pilih salah satu saja di file latihanmu, karena nama `formatTugas` tidak boleh dibuat dua kali.
+
+```js
+console.log(formatTugas("Laporan Basis Data", "tinggi"));
+// → Laporan Basis Data (prioritas tinggi)
+console.log(formatTugas("Kuis Pemrograman Mobile"));
+// → Kuis Pemrograman Mobile (prioritas sedang)
+```
+
+Panggilan pertama mengirim dua **argumen** (nilai yang kamu kirim saat memanggil function): judul dan prioritas. Panggilan kedua hanya mengirim judul. Karena itu dipakai `priority = "sedang"`, yang disebut **default parameter**: nilai cadangan kalau argumennya tidak dikirim. Function tanpa `return` akan mengembalikan `undefined`, artinya tidak ada hasil.
+
+Variasi penulisan arrow function:
+
+```js
+const kuadrat = (n) => n * n;         // satu ekspresi → otomatis di-return
+const sapa = () => "Halo, Andi!";      // tanpa parameter
+const hitungSks = (a, b) => {          // pakai kurung kurawal → WAJIB return
+  const total = a + b;
+  return total;
+};
+const buatTugas = (title) => ({ title, done: false }); // object dibungkus ()
+
+console.log(kuadrat(4), sapa(), hitungSks(3, 2)); // → 16 Halo, Andi! 5
+console.log(buatTugas("Esai"));                    // → { title: 'Esai', done: false }
+```
+
+Yang perlu kamu perhatikan:
+
+- `kuadrat` hanya berisi satu ekspresi, jadi hasilnya langsung dikembalikan tanpa menulis `return`.
+- `sapa` tidak butuh parameter, tapi tetap ditulis dengan kurung kosong `()`.
+- `hitungSks` memakai kurung kurawal karena isinya beberapa langkah. Di sini `return` wajib ditulis.
+- `buatTugas` mengembalikan object, jadi object-nya dibungkus kurung `( )`. Tanpa kurung itu, JavaScript mengira kurung kurawal adalah badan function.
+
+Di JavaScript, function adalah **nilai** biasa, sama seperti angka atau teks. Function bisa disimpan di variabel atau dikirim ke function lain. Function yang dikirim sebagai argumen disebut **callback**. Bayangkan kamu menitipkan kertas resep ke teman. Temanmu yang memutuskan kapan dan berapa kali resep itu dimasak.
+
+```js
+const jalankanDuaKali = (fn) => {
+  fn();
+  fn();
+};
+
+jalankanDuaKali(() => console.log("Semangat!"));
+// → Semangat!
+// → Semangat!
+```
+
+`jalankanDuaKali` menerima sebuah function bernama `fn`, lalu memanggilnya dua kali. Kita mengirim function kecil yang mencetak "Semangat!", jadi teks itu muncul dua kali.
+
+Pola callback ini dipakai di `map` dan `filter` (sebentar lagi kamu pelajari), di React untuk kode yang jalan saat tombol ditekan, dan di Express untuk menangani request. Di kursus ini, arrow function dipakai untuk callback pendek. `function` biasa dipakai untuk fungsi bernama di bagian atas file. Keduanya sah.
+
+## Object
+
+<Callout type="analogi" title="Seperti KTP">
+
+KTP berisi kolom dengan nama tetap: NIK, Nama, Tempat/Tgl Lahir, Alamat. Tiap kolom punya isi. Object di JavaScript sama: **nama kolom = key**, **isi kolom = value**, dan **satu KTP = satu object**.
+
+Kolom Alamat di KTP bahkan berisi kolom lagi (RT/RW, Kel/Desa, Kecamatan). Object juga boleh berisi object lain. Bedanya, KTP tidak bisa kamu ubah sendiri, sedangkan object boleh diubah dan ditambah kolomnya kapan saja.
+
+</Callout>
+
+Object adalah kumpulan pasangan `key: value` di dalam kurung kurawal. Satu pasangan key dan value disebut **property**. Biasanya satu object mewakili satu benda, misalnya satu tugas.
+
+```js
+const task = {
+  id: 1,
+  title: "Laporan Basis Data",
+  done: false,
+  priority: "tinggi",
+  course: "Basis Data",
+};
+
+console.log(task.title);       // → Laporan Basis Data
+console.log(task["priority"]); // → tinggi
+
+const kolom = "course";
+console.log(task[kolom]);      // → Basis Data (key diambil dari variabel)
+
+task.done = true;              // ubah property
+task.deadline = "2026-11-05";  // tambah property baru
+console.log(task.lecturer);    // → undefined (property tidak ada)
+```
+
+Ada dua cara membaca property:
+
+- **Notasi titik** (`task.title`) dipakai sehari-hari.
+- **Notasi kurung siku** (`task[kolom]`) dipakai kalau nama key tersimpan di variabel.
+
+Kamu juga bisa mengubah property (`task.done = true`) dan menambah property baru (`task.deadline`). Membaca property yang tidak ada tidak membuat error. Hasilnya `undefined`.
+
+Object boleh berisi object lain (*nested* atau bersarang), seperti kolom Alamat di KTP. Ada juga singkatan (*shorthand*): kalau nama variabel sama dengan nama key, cukup tulis sekali.
+
+```js
+const detail = {
+  title: "Laporan Basis Data",
+  course: { name: "Basis Data", lecturer: { name: "Bu Rina" } },
+};
+console.log(detail.course.lecturer.name); // → Bu Rina
+
+const judul = "Kuis Pemrograman Mobile";
+const done = false;
+console.log({ judul, done }); // → { judul: 'Kuis Pemrograman Mobile', done: false }
+
+console.log(Object.keys(detail)); // → [ 'title', 'course' ]
+```
+
+Bentuk object ini sangat mirip [JSON](/glosarium#json) yang kamu kenal di [Cara Kerja Web](/belajar/fondasi/cara-kerja-web). `JSON.stringify(task)` mengubah object menjadi teks JSON untuk dikirim lewat jaringan, dan `JSON.parse(teks)` mengubahnya kembali menjadi object.
+
+## Array
+
+Array adalah daftar nilai berurutan. Indeksnya dimulai dari **0**.
+
+```js
+const courses = ["Basis Data", "Pemrograman Mobile", "Jaringan Komputer"];
+
+console.log(courses[0]);     // → Basis Data
+console.log(courses.length); // → 3
+console.log(courses[3]);     // → undefined (indeks tidak ada)
+
+courses.push("Statistika");  // tambah di akhir (mengubah array asli)
+console.log(courses.includes("Basis Data")); // → true
+
+for (const course of courses) {
+  console.log(`- ${course}`);
+}
+// → - Basis Data
+// → - Pemrograman Mobile
+// → - Jaringan Komputer
+// → - Statistika
+```
+
+Di aplikasi nyata, isi array biasanya object. Data di bawah ini kita pakai sampai akhir pelajaran. Perhatikan tugas nomor 4 yang tidak punya mata kuliah (`course: null`).
+
+```js title="latihan.js"
+const tasks = [
+  { id: 1, title: "Laporan Basis Data", done: false, priority: "tinggi", course: "Basis Data" },
+  { id: 2, title: "Kuis Pemrograman Mobile", done: true, priority: "sedang", course: "Pemrograman Mobile" },
+  { id: 3, title: "Rangkuman Jaringan Komputer", done: false, priority: "rendah", course: "Jaringan Komputer" },
+  { id: 4, title: "Daftar ulang semester", done: false, priority: "tinggi", course: null },
+];
+```
+
+## Mengolah array: map, filter, find, reduce
+
+Menulis loop `for` manual untuk setiap kebutuhan itu melelahkan. Array punya method yang menerima callback dan mengerjakan loop-nya untukmu.
+
+| Method | Gunanya | Hasilnya |
+| --- | --- | --- |
+| `map` | Mengubah setiap elemen | Array baru, panjangnya sama |
+| `filter` | Menyaring elemen yang lolos syarat | Array baru, bisa lebih pendek |
+| `find` | Mencari **satu** elemen | Elemen pertama yang cocok, atau `undefined` |
+| `reduce` | Meringkas array jadi satu nilai | Apa saja: angka, string, object |
+
+### map: ubah setiap elemen
+
+```js
+const judul = tasks.map((task) => task.title);
+console.log(judul);
+// → [ 'Laporan Basis Data', 'Kuis Pemrograman Mobile', 'Rangkuman Jaringan Komputer', 'Daftar ulang semester' ]
+
+const label = tasks.map((t) => `${t.done ? "[x]" : "[ ]"} ${t.title}`);
+console.log(label[1]); // → [x] Kuis Pemrograman Mobile
+```
+
+Ekspresi `kondisi ? A : B` disebut operator ternary: hasilnya A kalau kondisi truthy, B kalau tidak.
+
+### filter: saring
+
+```js
+const belumSelesai = tasks.filter((task) => !task.done);
+console.log(belumSelesai.length); // → 3
+
+const pentingDanBelum = tasks.filter((t) => t.priority === "tinggi" && !t.done);
+console.log(pentingDanBelum.map((t) => t.title));
+// → [ 'Laporan Basis Data', 'Daftar ulang semester' ]
+```
+
+### find: cari satu
+
+```js
+console.log(tasks.find((task) => task.id === 3).title); // → Rangkuman Jaringan Komputer
+console.log(tasks.find((task) => task.id === 99));      // → undefined
+```
+
+Selalu ingat bahwa `find` bisa menghasilkan `undefined`. Mengakses `.title` dari hasil yang `undefined` adalah sumber error paling umum di aplikasi CRUD.
+
+### reduce: ringkas jadi satu nilai
+
+`reduce` menerima callback `(akumulator, elemen) => akumulatorBaru` dan sebuah **nilai awal**. Akumulator adalah "hasil sementara" yang dibawa dari satu elemen ke elemen berikutnya.
+
+```js
+const jumlahSelesai = tasks.reduce((total, task) => (task.done ? total + 1 : total), 0);
+console.log(jumlahSelesai); // → 1
+
+const mataKuliah = [
+  { name: "Basis Data", sks: 3 },
+  { name: "Pemrograman Mobile", sks: 4 },
+  { name: "Statistika", sks: 2 },
+];
+const totalSks = mataKuliah.reduce((total, mk) => total + mk.sks, 0);
+console.log(totalSks); // → 9
+```
+
+### Merangkai method
+
+Karena `map` dan `filter` mengembalikan array baru, kamu bisa merangkainya (*chaining*):
+
+<Flow nodes={["4 tugas", "3 tugas belum selesai", "2 tugas penting", "2 judul kapital"]} labels={["filter(!done)", "filter(tinggi)", "map(title)"]} caption="Data mengalir dari satu method ke method berikutnya" />
+
+```js
+const judulPenting = tasks
+  .filter((t) => !t.done)
+  .filter((t) => t.priority === "tinggi")
+  .map((t) => t.title.toUpperCase());
+
+console.log(judulPenting); // → [ 'LAPORAN BASIS DATA', 'DAFTAR ULANG SEMESTER' ]
+console.log(tasks.length); // → 4 (array asli tidak berubah)
+```
+
+<Callout type="tip" title="Kenapa ini penting untuk React">
+
+Di React, `map` dipakai untuk merender daftar komponen dan `filter` untuk fitur seperti "sembunyikan tugas selesai". Keduanya tidak mengubah array asli, sifat yang sangat disukai React.
+
+</Callout>
+
+## Destructuring, spread, dan rest
+
+Tiga sintaks ini membuat kode pengolah object dan array jauh lebih ringkas.
+
+### Destructuring: membongkar nilai
+
+```js
+const task = tasks[0];
+
+const { title, priority } = task;  // ambil property dari object
+console.log(title, priority);      // → Laporan Basis Data tinggi
+
+const [pertama, kedua] = tasks;    // ambil elemen dari array (berdasarkan urutan)
+console.log(pertama.id, kedua.id); // → 1 2
+
+function labelSingkat({ title, done }) { // destructuring langsung di parameter
+  return `${done ? "[x]" : "[ ]"} ${title}`;
+}
+console.log(labelSingkat(task)); // → [ ] Laporan Basis Data
+```
+
+### Spread dan rest: dua peran titik tiga
+
+Tanda `...` punya dua peran, tergantung posisinya:
+
+| Posisi | Nama | Arti |
+| --- | --- | --- |
+| Di sisi kanan `=`, di dalam `[]` atau object literal, atau saat memanggil function | **Spread** | Membongkar isi menjadi elemen terpisah |
+| Di sisi kiri `=` atau di daftar parameter | **Rest** | Mengumpulkan "sisanya" menjadi satu |
+
+```js
+// Spread: salin lalu timpa / gabungkan
+const tugasSelesai = { ...task, done: true };
+console.log(task.done, tugasSelesai.done); // → false true
+
+const tugasBaru = { id: 5, title: "Esai Kewarganegaraan", done: false, priority: "sedang", course: "Kewarganegaraan" };
+const semuaTugas = [...tasks, tugasBaru];
+console.log(tasks.length, semuaTugas.length); // → 4 5
+
+// Rest: kumpulkan sisanya
+const { id, ...tanpaId } = task;
+console.log(id);      // → 1
+console.log(tanpaId); // → { title: 'Laporan Basis Data', done: false, priority: 'tinggi', course: 'Basis Data' }
+
+function jumlahkanSks(...daftarSks) {
+  return daftarSks.reduce((total, sks) => total + sks, 0);
+}
+console.log(jumlahkanSks(3, 2, 4)); // → 9
+```
+
+Pada `{ ...task, done: true }`, property yang ditulis belakangan menimpa yang di depan. Pola "salin lalu timpa" ini adalah inti update data di React. Di [JavaScript Modern 2](/belajar/fondasi/javascript-modern-2) kita memakainya untuk mengubah array tugas tanpa merusak data lama, lengkap dengan rename dan nilai default saat destructuring.
+
+## Optional chaining dan nullish coalescing
+
+Ingat tugas nomor 4 yang `course`-nya `null`? Kode ini akan meledak:
+
+```js
+tasks[3].course.toUpperCase();
+// ✗ TypeError: Cannot read properties of null (reading 'toUpperCase')
+```
+
+Dua operator modern menyelesaikannya:
+
+- **Optional chaining `?.`**: kalau nilai di kirinya `null` atau `undefined`, hentikan dan hasilkan `undefined`. Tidak ada error.
+- **Nullish coalescing `??`**: kalau nilai di kirinya `null` atau `undefined`, pakai nilai cadangan di kanan.
+
+```js
+console.log(tasks[3].course?.toUpperCase()); // → undefined (aman, tidak error)
+console.log(tasks[0].course?.toUpperCase()); // → BASIS DATA
+
+console.log(tasks[3].course ?? "Tanpa mata kuliah"); // → Tanpa mata kuliah
+
+const hasil = tasks.find((t) => t.id === 99);
+console.log(hasil?.title ?? "Tugas tidak ditemukan"); // → Tugas tidak ditemukan
+```
+
+Kenapa tidak memakai `||` saja? Karena `||` menganggap **semua** nilai falsy sebagai kosong, termasuk `0` dan `""` yang sebenarnya sah:
+
+```js
+const progres = { persen: 0 };
+
+console.log(progres.persen || 50); // → 50 ✗ angka 0 dianggap kosong
+console.log(progres.persen ?? 50); // → 0  ✓ hanya null/undefined yang diganti
+```
+
+## Kesalahan umum
+
+<Callout type="warning" title="Pesan error yang paling sering muncul">
+
+- **`TypeError: Assignment to constant variable.`** Kamu mengganti nilai variabel `const`. Pakai `let` atau buat variabel baru.
+- **`SyntaxError: Identifier 'title' has already been declared`** Nama yang sama dideklarasikan dua kali di cakupan yang sama. Biasanya terjadi karena menempel beberapa contoh ke satu file. Ganti nama atau pisahkan file.
+- **`TypeError: Cannot read properties of undefined (reading 'title')`** Nilai di kiri titik ternyata `undefined`, misalnya `find` tidak menemukan apa pun. Cek dulu hasilnya atau pakai `?.`.
+- **`ReferenceError: tugass is not defined`** Salah ketik nama variabel, atau variabel dipakai di luar blok tempat ia dibuat.
+
+</Callout>
+
+Satu bug lagi tidak memunculkan pesan error sama sekali, jadi lebih licik:
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+```js
+const judul = tasks.map((t) => { t.title; });
+console.log(judul); // → [ undefined, undefined, undefined, undefined ]
+```
+
+Kurung kurawal membuat badan function biasa, jadi tanpa `return` hasilnya `undefined`.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+```js
+const judul = tasks.map((t) => t.title);
+console.log(judul); // → [ 'Laporan Basis Data', ... ]
+```
+
+Tanpa kurung kurawal, ekspresi otomatis di-return. Atau tulis `return t.title;` di dalam kurung kurawal.
+
+</CompareItem>
+</Compare>
+
+## Latihan
+
+<Exercise title="Ringkasan tugas belum selesai" difficulty="mudah" hints={["Pakai `filter` untuk tugas dengan `done` bernilai `false`.", "Hitung tugas selesai dengan `reduce`, lalu bagi dengan `tasks.length`.", "`Math.round()` membulatkan angka."]}>
+
+Pakai array `tasks` berisi 4 tugas di atas. Buat:
+
+1. Array `judulSisa` berisi judul tugas yang **belum** selesai.
+2. Kalimat `3 tugas belum selesai, progres 25%`. Angka dihitung dari data, bukan ditulis manual.
+
+<Solution>
+
+```js
+const sisa = tasks.filter((t) => !t.done);
+const judulSisa = sisa.map((t) => t.title);
+
+const jumlahSelesai = tasks.reduce((n, t) => (t.done ? n + 1 : n), 0);
+const persen = Math.round((jumlahSelesai / tasks.length) * 100);
+
+console.log(judulSisa);
+// → [ 'Laporan Basis Data', 'Rangkuman Jaringan Komputer', 'Daftar ulang semester' ]
+console.log(`${sisa.length} tugas belum selesai, progres ${persen}%`);
+// → 3 tugas belum selesai, progres 25%
+```
+
+`filter` lalu `map` menghasilkan daftar judul. `reduce` menghitung tugas selesai (1 dari 4 = 25%).
+
+</Solution>
+</Exercise>
+
+<Exercise title="Label tugas dan tambah tugas tanpa mengubah array" difficulty="sedang" hints={["Destructuring di parameter: `({ title, priority, course }) => ...`", "Gunakan `course ?? \"Tanpa mata kuliah\"`.", "Array baru: `[...daftar, tugasBaru]`."]}>
+
+1. Tulis arrow function `labelTugas(task)` yang menghasilkan teks seperti `Daftar ulang semester · Tanpa mata kuliah · prioritas tinggi`. Pakai destructuring dan `??`.
+2. Tulis `tambahTugas(daftar, title, course = null)` yang mengembalikan **array baru** berisi tugas tambahan (`done: false`, `priority: "sedang"`). Array asli harus tetap berisi 4 tugas.
+
+<Solution>
+
+```js
+const labelTugas = ({ title, priority, course }) =>
+  `${title} · ${course ?? "Tanpa mata kuliah"} · prioritas ${priority}`;
+
+console.log(labelTugas(tasks[3]));
+// → Daftar ulang semester · Tanpa mata kuliah · prioritas tinggi
+
+const tambahTugas = (daftar, title, course = null) => [
+  ...daftar,
+  { id: daftar.length + 1, title, done: false, priority: "sedang", course },
+];
+
+const baru = tambahTugas(tasks, "Esai Kewarganegaraan", "Kewarganegaraan");
+console.log(tasks.length, baru.length); // → 4 5
+```
+
+Spread menyalin semua tugas lama ke array baru, jadi `tasks` tidak tersentuh. Membuat `id` dari `length + 1` cukup untuk latihan. Nanti database yang membuatkan id.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Apa output kode berikut?",
+    code: "const tasks = [{ done: true }, { done: false }, { done: false }];\nconsole.log(tasks.filter((t) => !t.done).length);",
+    options: ["`1`", "`2`", "`3`", "`[false, false]`"],
+    answer: 1,
+    explain: "`filter` menyimpan elemen yang callback-nya bernilai true. Ada dua tugas dengan `done: false`, jadi panjangnya 2. Ia mengembalikan elemen aslinya, bukan nilai `false`.",
+  },
+  {
+    q: "Kata kunci mana yang sebaiknya kamu pakai secara default untuk mendeklarasikan variabel?",
+    options: ["`var`", "`let`", "`const`", "Bebas, semuanya sama saja"],
+    answer: 2,
+    explain: "`const` mencegah nilai diganti tanpa sengaja. Pakai `let` hanya bila nilainya memang akan diganti. `var` adalah gaya lama dengan aturan scope yang membingungkan.",
+  },
+  {
+    q: "Apa hasil `tasks.find((t) => t.id === 99)` jika tidak ada tugas dengan id 99?",
+    options: ["`undefined`", "`null`", "`[]` (array kosong)", "Melempar error"],
+    answer: 0,
+    explain: "`find` mengembalikan `undefined` saat tidak ada yang cocok. Array kosong adalah hasil `filter`, dan `find` tidak melempar error. Error baru muncul kalau kamu mengakses property dari hasil `undefined` itu.",
+  },
+  {
+    q: "Apa output kode berikut?",
+    code: "const tambah = (a, b) => { a + b; };\nconsole.log(tambah(2, 3));",
+    options: ["`5`", "`\"23\"`", "Error", "`undefined`"],
+    answer: 3,
+    explain: "Arrow function dengan kurung kurawal butuh `return` eksplisit. Tanpa `return`, hasilnya `undefined`. Tulis `(a, b) => a + b` agar otomatis di-return.",
+  },
+  {
+    q: "Apa output kode berikut?",
+    code: "const sks = 0;\nconsole.log(sks ?? 3, sks || 3);",
+    options: ["`0 0`", "`0 3`", "`3 3`", "`3 0`"],
+    answer: 1,
+    explain: "`??` hanya memakai cadangan bila nilainya `null` atau `undefined`, jadi hasilnya 0. `||` memakai cadangan untuk semua nilai falsy, termasuk 0, jadi hasilnya 3.",
+  },
+]} />
+
+## Ringkasan
+
+- Pakai `const` secara default dan `let` bila nilai akan diganti. Selalu bandingkan dengan `===`.
+- Template literal dengan `${ekspresi}` menggantikan penggabungan string memakai `+`.
+- Arrow function cocok untuk callback. Kalau memakai kurung kurawal, jangan lupa `return`.
+- Object menyimpan data satu tugas, array menyimpan banyak tugas. Akses dengan titik atau kurung siku.
+- `map` mengubah, `filter` menyaring, `find` mencari satu (bisa `undefined`), dan `reduce` meringkas. Semuanya tidak mengubah array asli.
+- Destructuring membongkar nilai. Spread `...` menyalin atau menggabungkan, sedangkan rest `...` mengumpulkan sisanya.
+- `?.` mencegah error pada `null` atau `undefined`, dan `??` memberi nilai cadangan tanpa menganggap `0` atau `""` kosong.
+
+Simpan [cheatsheet JavaScript](/cheatsheet/javascript) sebagai contekan cepat.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Array `tasks` di pelajaran ini adalah versi mini dari data yang nanti dikirim API ke aplikasimu. Fungsi seperti `labelTugas` dan rantai `filter` lalu `map` akan kamu tulis lagi saat menampilkan daftar tugas di layar HP.
+
+</Callout>

@@ -1,0 +1,989 @@
+## Pengantar
+
+Sejauh ini Aplikasi Tugas & Catatan Kuliah hidup di laptopmu. API jalan di `localhost:3000`, database berupa file `dev.db`, dan aplikasi dibuka lewat Expo Go. Begitu laptop ditutup, semuanya ikut mati. Sari, teman sekelasmu, tidak bisa mencoba aplikasinya.
+
+<Callout type="analogi" title="Seperti memindahkan warung dari rumah ke ruko">
+
+Selama ini kamu berjualan dari ruang tamu rumah. Hanya tetangga yang tahu, dan warung tutup saat kamu tidur. Supaya semua orang bisa belanja kapan saja, kamu pindah ke ruko di pinggir jalan.
+
+- Ruang tamu rumah = laptopmu (`localhost`).
+- Ruko di pinggir jalan = server yang online 24 jam.
+- Alamat ruko = URL publik API.
+- Proses pindahan = **deploy**.
+
+Bedanya dengan pindahan sungguhan: rumah lama tetap kamu pakai. Laptop tetap jadi dapur untuk mencoba resep baru, dan ruko hanya menerima versi yang sudah teruji.
+
+</Callout>
+
+Pelajaran terakhir ini membawa proyekmu ke dunia nyata. Ada empat hal yang akan kamu kerjakan:
+
+1. **Deploy** API dengan database PostgreSQL, artinya memasang API di server yang online 24 jam.
+2. Membuat file APK dengan **EAS Build**. APK adalah file pemasang aplikasi Android, jadi aplikasimu bisa dipasang di HP siapa pun.
+3. Mengirim perbaikan kecil tanpa build ulang lewat **EAS Update** (update OTA).
+4. Menyusun **CI** (*Continuous Integration*) dengan GitHub Actions. Setiap kali kamu `git push`, test dan typecheck berjalan otomatis.
+
+<Flow nodes={["git push", "GitHub Actions (test)", "PaaS: API + PostgreSQL", "EAS Build / Update", "HP pengguna"]} labels={["memicu", "lolos → deploy", "URL publik", "APK / OTA"]} caption="Alur rilis yang akan kita bangun" />
+
+Diagram di atas adalah alur rilis lengkapnya. Kamu push kode, GitHub menjalankan test, server memasang API versi baru, lalu EAS mengirim aplikasi ke HP pengguna.
+
+Kita memakai kode dari API pendamping (`api/`) dan `kuliah-app` versi TypeScript milikmu. Keduanya diasumsikan berdampingan di akar satu repo, yaitu folder `api/` dan `kuliah-app/`. Lihat juga entri glosarium [deploy](/glosarium#deploy), [CI/CD](/glosarium#ci-cd), dan [EAS](/glosarium#eas).
+
+## Environment dan environment variable
+
+<Callout type="analogi" title="Seperti kunci yang tidak ditempel di pintu">
+
+Kamu menitipkan kamar kos ke teman selama libur. Kuncinya tidak kamu tempel di pintu. Kamu menyerahkannya langsung ke orang yang berhak. Kunci kamar kos juga berbeda dengan kunci rumah orang tuamu.
+
+- Pintu = kode aplikasi, yang bisa dilihat siapa saja yang membuka repo.
+- Kunci = **secret**, misalnya `JWT_ACCESS_SECRET`.
+- Menyerahkan kunci langsung = mengisi **environment variable** di dashboard server.
+- Kunci kos vs kunci rumah = nilai development vs production yang berbeda.
+
+Bedanya: kunci yang hilang bisa dicari lagi. Secret yang sempat masuk Git harus dianggap sudah disalin orang lain, jadi wajib diganti.
+
+</Callout>
+
+**Environment** adalah "tempat" aplikasi berjalan. Ada tiga:
+
+- `development`: laptopmu.
+- `test`: saat Vitest menjalankan test.
+- `production`: server sungguhan yang dipakai pengguna.
+
+Kodenya sama, tapi konfigurasinya berbeda. Perbedaan itu disimpan di [environment variable](/glosarium#env-variable), yaitu nilai pengaturan yang dibaca dari luar kode.
+
+API pendamping sudah memeriksa semua variabelnya dengan Zod di satu tempat:
+
+```ts title="api/src/config/env.ts"
+const envSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  DATABASE_URL: z.string().min(1, "wajib diisi, contoh: file:./dev.db"),
+  JWT_ACCESS_SECRET: z.string().min(32, "minimal 32 karakter"),
+  CORS_ORIGIN: z.string().min(1).default("*"),
+  UPLOAD_DIR: z.string().min(1).default("uploads"),
+});
+```
+
+Setiap baris di `envSchema` adalah satu aturan. Contohnya:
+
+- `NODE_ENV` hanya boleh salah satu dari tiga environment tadi.
+- `PORT` harus angka 1 sampai 65535, dengan nilai bawaan 3000.
+- `JWT_ACCESS_SECRET` minimal 32 karakter dan tidak punya nilai bawaan, jadi wajib diisi.
+
+Kalau satu variabel salah, server langsung berhenti dengan pesan yang jelas. Prinsip ini disebut **fail fast** (gagal secepatnya). Lebih baik gagal saat deploy daripada diam-diam rusak saat dipakai pengguna.
+
+| Variabel | Development | Production |
+| --- | --- | --- |
+| `NODE_ENV` | `development` | `production` |
+| `PORT` | `3000` | biasanya diisi otomatis oleh platform |
+| `DATABASE_URL` | `file:./dev.db` | URL PostgreSQL dari platform |
+| `JWT_ACCESS_SECRET` | string contoh | string acak 48 byte, **berbeda** dari development |
+| `CORS_ORIGIN` | `*` | origin web yang diizinkan (aplikasi native tidak terpengaruh CORS) |
+| `UPLOAD_DIR` | `uploads` | folder di *persistent volume* |
+
+Istilah *persistent volume* di baris terakhir akan dijelaskan di bagian Deploy ke PaaS.
+
+Sekarang buat secret production yang benar-benar acak. Simpan **hanya** di dashboard platform, jangan di Git:
+
+<Tabs items={["Windows (PowerShell)", "macOS/Linux"]}>
+<Tab>
+
+```powershell
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+</Tab>
+<Tab>
+
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+# atau: openssl rand -hex 48
+```
+
+</Tab>
+</Tabs>
+
+Perintah ini meminta modul `crypto` bawaan Node membuat 48 byte acak. Hasilnya ditampilkan sebagai 96 karakter heksadesimal (angka 0 sampai 9 dan huruf a sampai f). Salin hasil itu ke dashboard platform.
+
+<Callout type="danger" title="Secret tidak boleh masuk Git">
+
+`.env` sudah ada di `.gitignore` API pendamping, jadi file itu tidak ikut ke Git. Yang di-commit hanya `.env.example`, berisi nilai contoh. Kalau secret sempat ter-push, anggap sudah bocor. Buat secret baru dan ganti nilainya di server. Menghapus commit saja tidak cukup, karena salinan repo bisa sudah tersebar.
+
+</Callout>
+
+## Dari SQLite ke PostgreSQL dengan Prisma
+
+SQLite sangat cocok untuk belajar, tapi di server ia punya batas. Kamu sudah membahasnya di [Performa Backend](/belajar/expert/performa-backend):
+
+- Hanya satu proses yang boleh menulis dalam satu waktu.
+- File database ikut hilang kalau disk server di-reset.
+
+[PostgreSQL](/glosarium#postgresql) adalah server database terpisah yang kuat melayani banyak koneksi sekaligus. Hampir semua platform hosting menyediakannya sebagai layanan terkelola. Artinya, instalasi, backup, dan pembaruannya diurus oleh platform.
+
+Kabar baiknya, berkat Prisma, kode service tidak perlu diubah. Yang berubah hanya tiga hal: *provider* (jenis database di schema), *adapter* (penghubung Prisma ke database), dan [migrasi](/glosarium#migration).
+
+<Steps>
+<Step title="Jalankan PostgreSQL lokal dengan Docker">
+
+Kamu butuh Docker Desktop. Docker menjalankan program di dalam "kotak" terpisah yang disebut **container**. Satu perintah ini menyalakan PostgreSQL 17 di port 5432:
+
+```bash
+docker run --name kuliah-db -e POSTGRES_PASSWORD=rahasia -e POSTGRES_DB=belajar_crud -p 5432:5432 -d postgres:17
+```
+
+Arti bagian-bagiannya:
+
+- `--name kuliah-db` memberi nama container.
+- `-e` mengisi environment variable: password `rahasia` dan nama database `belajar_crud`.
+- `-p 5432:5432` membuka port supaya laptopmu bisa terhubung ke database.
+- `-d` menjalankan container di latar belakang.
+
+</Step>
+<Step title="Ganti driver adapter">
+
+Prisma 7 terhubung ke database lewat *driver adapter*, semacam colokan khusus untuk tiap jenis database. Pasang adapter PostgreSQL dan lepas adapter SQLite. Jalankan dari folder `api/`:
+
+```bash
+npm install @prisma/adapter-pg
+npm uninstall @prisma/adapter-better-sqlite3 @types/better-sqlite3
+```
+
+</Step>
+<Step title="Ubah provider dan adapter">
+
+```diff title="api/prisma/schema.prisma"
+ datasource db {
+-  provider = "sqlite"
++  provider = "postgresql"
+ }
+```
+
+```ts title="api/src/lib/prisma.ts"
+import { PrismaPg } from "@prisma/adapter-pg";
+import { env } from "../config/env.ts";
+import { PrismaClient } from "../generated/prisma/client.ts";
+
+const adapter = new PrismaPg({ connectionString: env.DATABASE_URL });
+
+export const prisma = new PrismaClient({ adapter });
+```
+
+Diff schema hanya mengganti satu kata: `sqlite` menjadi `postgresql`. File `prisma.ts` membuat adapter `PrismaPg` dari `DATABASE_URL`, lalu memberikannya ke `PrismaClient`. Bagian lain aplikasi tetap memanggil `prisma` seperti biasa.
+
+Adapter ini juga punya pengaturan *connection pool* (`max`, `connectionTimeoutMillis`) yang sudah dibahas di [Performa Backend](/belajar/expert/performa-backend). Untuk awal, nilai bawaannya sudah cukup.
+
+</Step>
+<Step title="Isi DATABASE_URL dan buat ulang migrasi">
+
+URL di bawah berisi lima bagian: jenis database, user, password, alamat server dengan port, dan nama database.
+
+```dotenv title="api/.env"
+DATABASE_URL="postgresql://postgres:rahasia@localhost:5432/belajar_crud"
+```
+
+Folder `prisma/migrations` lama berisi SQL khusus SQLite. File `migration_lock.toml` di dalamnya juga mencatat `provider = "sqlite"`. Jadi hapus folder itu, lalu buat migrasi awal yang baru:
+
+```bash
+npx prisma migrate dev --name init
+npm run db:seed
+```
+
+`migrate dev --name init` menulis file SQL baru untuk PostgreSQL dan langsung menerapkannya. `db:seed` mengisi data contoh. Commit folder `prisma/migrations` yang baru, karena folder inilah yang nanti diterapkan di server.
+
+</Step>
+</Steps>
+
+Ada satu perbedaan perilaku. Di PostgreSQL, filter `contains` membedakan huruf besar dan kecil, jadi kata "rapat" tidak menemukan "Rapat". Tambahkan `mode: "insensitive"` di filter pencarian `q` pada `tasks.service.ts` dan `courses.service.ts`, misalnya `{ title: { contains: query.q, mode: "insensitive" } }`.
+
+Ingat lagi bahwa migrasi itu seperti catatan renovasi rumah. Prisma punya dua perintah migrasi dengan peran berbeda:
+
+<Compare>
+<CompareItem title="prisma migrate dev" tone="neutral">
+
+Hanya untuk **laptop**. Perintah ini membandingkan schema dengan database, lalu **menulis** catatan renovasi (file migrasi) baru. Kadang ia menawarkan reset database, dan data bisa hilang.
+
+</CompareItem>
+<CompareItem title="prisma migrate deploy" tone="good">
+
+Untuk **production dan CI**. Perintah ini hanya **menjalankan** migrasi yang sudah di-commit dan belum pernah dijalankan. Ia tidak pernah menulis migrasi baru dan tidak pernah me-reset data.
+
+</CompareItem>
+</Compare>
+
+## Membungkus API dalam Docker
+
+<Callout type="analogi" title="Seperti mi instan dalam cup">
+
+Mi instan cup sudah berisi mi, bumbu, dan wadah dalam satu paket. Di dapur mana pun, cara menyajikannya sama: tuang air panas, tunggu tiga menit. Hasilnya pun sama.
+
+- Cup yang lengkap = **image Docker**, paket berisi Node.js, dependency, dan kode API.
+- Menyeduh cup = menjalankan image menjadi **container**, yaitu program yang sedang berjalan.
+- Air panas = environment variable yang diberikan saat menjalankan, misalnya `DATABASE_URL`.
+- Dapur mana pun = laptopmu atau server PaaS.
+
+Bedanya: cup habis setelah dimakan. Satu image bisa dijalankan menjadi banyak container sekaligus, dan image-nya tetap utuh.
+
+</Callout>
+
+Platform hosting berbeda-beda, tapi hampir semuanya bisa menjalankan image Docker. Image berisi sistem operasi mini, Node.js, dependency, dan kode hasil build. Kalau image jalan di laptopmu, besar kemungkinan ia jalan sama persis di server.
+
+Kita memakai **multi-stage build**, yaitu Dockerfile dengan beberapa tahap:
+
+- Tahap `build` punya semua devDependency (TypeScript, Vitest) untuk meng-compile kode.
+- Tahap `runtime` hanya menyalin hasil yang dibutuhkan untuk menjalankan server.
+
+Hasilnya, image akhir lebih kecil dan lebih aman, karena alat build tidak ikut terbawa.
+
+Ada satu persiapan dulu. Container akan menjalankan `prisma migrate deploy` saat start, jadi CLI `prisma` harus ikut ke production. Pindahkan dari `devDependencies` ke `dependencies`:
+
+```bash
+npm install --save-prod prisma@7
+```
+
+Lalu tambahkan dua file di folder `api/`:
+
+```dockerfile title="api/Dockerfile"
+# ---------- base: Node 22 + OpenSSL (dibutuhkan engine migrasi Prisma) ----------
+FROM node:22-slim AS base
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+# ---------- build: install semua dependency, generate client, compile TS ----------
+FROM base AS build
+COPY package.json package-lock.json prisma.config.ts ./
+COPY prisma ./prisma
+# postinstall menjalankan `prisma generate`, jadi schema harus sudah tersalin
+RUN npm ci
+COPY tsconfig.json tsconfig.build.json ./
+COPY src ./src
+RUN npm run build && npm prune --omit=dev
+
+# ---------- runtime: hanya yang dibutuhkan untuk menjalankan server ----------
+FROM base AS runtime
+ENV NODE_ENV=production
+COPY --from=build --chown=node:node /app/package.json ./
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/prisma ./prisma
+COPY --from=build --chown=node:node /app/prisma.config.ts ./
+RUN mkdir -p uploads && chown node:node uploads
+USER node
+EXPOSE 3000
+# Terapkan migrasi dulu, lalu `exec` agar Node menerima sinyal SIGTERM dari platform
+CMD ["sh", "-c", "npx prisma migrate deploy && exec node dist/server.js"]
+```
+
+```txt title="api/.dockerignore"
+node_modules
+dist
+.env
+*.db
+uploads
+uploads-test
+tests
+```
+
+File `.dockerignore` berisi daftar yang **tidak** boleh masuk image. Misalnya `node_modules` (dipasang ulang di dalam image), `.env` (berisi secret), file database lokal, dan folder upload.
+
+Cara membaca Dockerfile dari atas ke bawah:
+
+1. `FROM node:22-slim AS base` memulai dari image Node 22 versi ramping, lalu memasang OpenSSL yang dibutuhkan Prisma.
+2. Tahap `build` menyalin `package.json` dan folder `prisma`, menjalankan `npm ci`, menyalin kode `src`, lalu meng-compile. `npm prune --omit=dev` membuang devDependency setelahnya.
+3. Tahap `runtime` mulai lagi dari `base` yang bersih. Ia hanya menyalin `node_modules`, `dist`, dan file Prisma dari tahap `build`.
+4. `CMD` adalah perintah saat container start: terapkan migrasi, lalu jalankan server.
+
+Beberapa keputusan penting di Dockerfile itu:
+
+- **`npm ci`**, bukan `npm install`. `npm ci` memasang versi persis dari `package-lock.json`, jadi build hari ini dan minggu depan hasilnya sama.
+- **`npm run build`** menjalankan `tsc -p tsconfig.build.json`. Opsi `rewriteRelativeImportExtensions` mengubah import `./config/env.ts` menjadi `./config/env.js` di folder `dist/`, karena yang dijalankan Node adalah file `.js` hasil compile.
+- **`USER node`** membuat proses tidak berjalan sebagai root (admin penuh). Kalau ada celah keamanan, kerusakannya lebih terbatas.
+- **`exec node ...`**: `server.ts` sudah menangani `SIGTERM`, yaitu sinyal "tolong berhenti" dari platform. Saat menerima sinyal itu, server menutup koneksi dan memanggil `prisma.$disconnect()`. Tanpa `exec`, sinyal berhenti di proses `sh`, lalu server dimatikan paksa.
+
+Coba di laptop dulu. PostgreSQL berjalan di laptop (disebut *host*), bukan di dalam container. Dari dalam container, `localhost` berarti container itu sendiri. Karena itu, alamat laptop ditulis `host.docker.internal`:
+
+```bash
+docker build -t kuliah-api ./api
+docker run --rm -p 3000:3000 -e DATABASE_URL="postgresql://postgres:rahasia@host.docker.internal:5432/belajar_crud" -e JWT_ACCESS_SECRET="isi-dengan-string-acak-minimal-32-karakter-ya" kuliah-api
+```
+
+```txt
+No pending migrations to apply.
+API berjalan di http://localhost:3000/api
+```
+
+`docker build` membuat image bernama `kuliah-api` dari folder `api/`. `docker run` menjalankannya, membuka port 3000, dan memberi dua environment variable lewat `-e`. Flag `--rm` menghapus container setelah berhenti. Baris log pertama menandakan migrasi sudah cocok, dan baris kedua menandakan server siap.
+
+## Deploy ke PaaS
+
+**PaaS** (*Platform as a Service*) seperti Render, Railway, atau Fly.io menjalankan container untukmu. Kamu tidak mengurus server, cukup menghubungkan repo GitHub. Ini mirip menyewa kios di mal: listrik, keamanan, dan kebersihan diurus pengelola, kamu tinggal berjualan.
+
+Tampilan dashboard tiap platform berbeda dan cepat berubah. Karena itu, berikut langkah umumnya saja. Cek dokumentasi resmi platform pilihanmu untuk detail dan batas paket gratisnya.
+
+<Steps>
+<Step title="Push repo ke GitHub">
+
+Pastikan `api/Dockerfile`, `api/.dockerignore`, dan `api/prisma/migrations` ikut ter-commit, sedangkan `.env` tidak.
+
+</Step>
+<Step title="Buat database PostgreSQL terkelola">
+
+Buat layanan PostgreSQL di platform, lalu salin **connection string**-nya, yaitu URL lengkap untuk terhubung ke database. Kalau ada pilihan *internal URL*, pakai itu untuk API. Internal URL berjalan di jaringan privat platform, jadi lebih cepat dan tidak terbuka ke internet.
+
+</Step>
+<Step title="Buat web service dari repo">
+
+Pilih repo, set **root directory** ke `api`, lalu pilih runtime **Docker**. Platform akan menemukan `api/Dockerfile` sendiri.
+
+</Step>
+<Step title="Isi environment variable">
+
+Isi `NODE_ENV=production`, `DATABASE_URL`, `JWT_ACCESS_SECRET`, `CORS_ORIGIN`, dan `UPLOAD_DIR`. Biarkan `PORT` diisi platform. Server kita membacanya dari `env.PORT` dan listen di `0.0.0.0`, artinya menerima koneksi dari luar container.
+
+</Step>
+<Step title="Atur health check dan volume">
+
+Isi *health check path* dengan `/api/ready`. Endpoint ini kita buat di bagian berikutnya. Lalu pasang *persistent volume*, yaitu disk yang tidak ikut terhapus saat deploy ulang, ke folder upload (misalnya `/app/uploads`). Dengan begitu, lampiran tidak hilang.
+
+</Step>
+<Step title="Deploy, lalu baca log">
+
+Setelah status *live*, uji URL publiknya dari laptop. Kalau gagal, buka tab *Logs* dan baca pesan error paling atas.
+
+</Step>
+</Steps>
+
+<Tabs items={["Windows (PowerShell)", "macOS/Linux"]}>
+<Tab>
+
+```powershell
+Invoke-RestMethod https://kuliah-api.example.com/api/health
+curl.exe -s https://kuliah-api.example.com/api/ready
+```
+
+</Tab>
+<Tab>
+
+```bash
+curl -s https://kuliah-api.example.com/api/health
+curl -s https://kuliah-api.example.com/api/ready
+```
+
+</Tab>
+</Tabs>
+
+```txt
+{"status":"ok"}
+{"status":"ok","database":"ok"}
+```
+
+Jawaban pertama berarti proses API hidup. Jawaban kedua berarti database juga terhubung. Bedanya dijelaskan di bagian berikutnya.
+
+<Callout type="warning" title="Disk container itu sementara">
+
+Container di PaaS biasanya dibuat ulang setiap deploy. File yang ditulis ke disk biasa, seperti foto lampiran di `uploads/`, akan **hilang**. Ada dua solusi:
+
+1. Pasang persistent volume ke folder upload.
+2. Untuk skala lebih besar, simpan file di *object storage* seperti S3 atau R2, lalu simpan URL-nya di database.
+
+</Callout>
+
+## Health check dan logging
+
+### Liveness vs readiness
+
+Bayangkan satpam toko mengecek kasir sebelum toko buka. Pertanyaan pertama: "Kasirnya sudah datang?" Pertanyaan kedua: "Mesin kasirnya sudah menyala?" Kasir yang datang tanpa mesin kasir belum bisa melayani pembeli. Server juga dicek dengan dua pertanyaan seperti itu.
+
+`GET /api/health` di `api/src/app.ts` hanya menjawab `{ status: "ok" }`. Itu **liveness check**, artinya "prosesnya hidup". Endpoint itu sengaja tidak menyentuh database. Test di `api/tests/app.test.ts` juga mengharapkan bentuk persis itu, jadi jangan diubah.
+
+Untuk deploy, kita butuh **readiness check**, artinya "siap melayani, termasuk database". Tambahkan endpoint baru (**saran pengembangan**):
+
+```ts title="api/src/app.ts" {1,6-13}
+import { prisma } from "./lib/prisma.ts";
+
+// ...di dalam createApp(), setelah route /api/health:
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+app.get("/api/ready", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: "ok", database: "ok" });
+  } catch {
+    res.status(503).json({ status: "error", database: "unreachable" });
+  }
+});
+```
+
+Endpoint baru ini mengirim query paling sederhana, `SELECT 1`, ke database. Kalau database menjawab, respons-nya 200 dengan `database: "ok"`. Kalau gagal, blok `catch` menangkap error dan membalas status `503 Service Unavailable`.
+
+Status 503 memberi tahu platform: "jangan kirim trafik ke instance ini dulu". Jadi kalau versi baru salah `DATABASE_URL`, platform tetap memakai versi lama yang sehat.
+
+### Log yang berguna di production
+
+Di production, platform mengumpulkan semua yang ditulis ke **stdout/stderr**, yaitu keluaran teks program dari `console.log` dan `console.error`. Hasilnya tampil di tab *Logs*. Log ini seperti buku catatan kejadian di pos satpam. Saat ada masalah, kamu membacanya untuk tahu apa yang terjadi dan kapan.
+
+Saat ini `morgan("dev")`, si pencatat request, hanya aktif di development. Tambahkan log production dalam format JSON, satu baris per request. Format ini mudah dicari dan difilter:
+
+```ts title="api/src/app.ts"
+if (env.NODE_ENV === "development") {
+  app.use(morgan("dev"));
+} else if (env.NODE_ENV === "production") {
+  app.use(
+    morgan((tokens, req, res) =>
+      JSON.stringify({
+        time: tokens.date(req, res, "iso"),
+        method: tokens.method(req, res),
+        url: tokens.url(req, res),
+        status: Number(tokens.status(req, res)),
+        ms: Number(tokens["response-time"](req, res)),
+      }),
+    ),
+  );
+}
+```
+
+Di development, kode tetap memakai format `dev` yang berwarna dan enak dibaca mata. Di production, setiap request diubah menjadi objek berisi waktu, method, URL, status, dan lama proses dalam milidetik. Objek itu lalu ditulis sebagai JSON. Contoh hasilnya:
+
+```txt
+{"time":"2026-11-02T03:14:07.512Z","method":"GET","url":"/api/tasks?page=1","status":200,"ms":12.4}
+```
+
+Error 500 sudah dicatat oleh `api/src/middleware/error-handler.ts` lewat `console.error`. Di production, yang dicatat hanya pesan singkatnya. Prinsipnya: catat **apa yang terjadi**, tapi jangan pernah mencatat password, header `Authorization`, atau token. Baca juga entri [logging](/glosarium#logging).
+
+## CI dengan GitHub Actions
+
+<Callout type="analogi" title="Seperti QC otomatis di pabrik">
+
+Di pabrik minuman, setiap botol lewat mesin QC (*quality control*) sebelum masuk kardus. Mesin mengecek isi, tutup, dan label. Botol yang cacat langsung disisihkan, jadi tidak sampai ke toko.
+
+- Botol baru di ban berjalan = kode yang kamu `git push`.
+- Mesin QC = **GitHub Actions**, layanan GitHub yang menjalankan perintah secara otomatis.
+- Daftar hal yang dicek mesin = file **workflow** `ci.yml`.
+- Botol cacat disisihkan = tanda silang merah di GitHub, dan kode itu tidak di-deploy.
+
+Bedanya: mesin QC di pabrik dirancang oleh orang lain. Di sini, mesin hanya mengecek apa yang sudah kamu tulis sebagai test. Bagian kode yang tidak punya test tetap bisa lolos walau rusak.
+
+</Callout>
+
+**CI** (*Continuous Integration*) artinya setiap perubahan kode langsung diperiksa secara otomatis. Pemeriksaan berjalan setiap kamu push atau membuka **pull request** (permintaan menggabungkan kode ke branch utama). Dengan begitu, kode yang rusak ketahuan olehmu sebelum di-deploy, bukan oleh pengguna. Test yang kamu tulis di [Testing Backend](/belajar/expert/testing-backend) dan [Testing Mobile](/belajar/expert/testing-mobile) kini dijalankan otomatis setiap hari.
+
+API sekarang memakai PostgreSQL, jadi test juga butuh PostgreSQL. GitHub Actions bisa menyalakan database sementara di mesin CI. Database ini disebut **service container**, yaitu container yang hidup selama pemeriksaan berjalan, lalu dibuang. Ubah `api/tests/test-env.ts` supaya alamat database test bisa diatur dari luar:
+
+```ts title="api/tests/test-env.ts" {4-6}
+// Environment khusus test: database & folder upload terpisah dari development.
+export const testEnv = {
+  NODE_ENV: "test",
+  DATABASE_URL:
+    process.env.TEST_DATABASE_URL ??
+    "postgresql://postgres:rahasia@localhost:5432/belajar_crud_test",
+  JWT_ACCESS_SECRET: "rahasia-khusus-test-yang-panjangnya-lebih-dari-32-karakter",
+  CORS_ORIGIN: "*",
+  UPLOAD_DIR: "uploads-test",
+} as const;
+```
+
+Baris 4 sampai 6 artinya: kalau `TEST_DATABASE_URL` diisi (seperti di CI nanti), pakai nilai itu. Kalau tidak, pakai database lokal di laptopmu. Operator `??` memilih nilai di kanan hanya bila nilai di kiri kosong (`undefined` atau `null`).
+
+File test lain tidak perlu diubah. `tests/global-setup.ts` tetap menjalankan `npx prisma migrate deploy` ke URL itu, dan `resetDatabase()` memakai `deleteMany()` yang juga bekerja di PostgreSQL.
+
+File workflow disimpan di folder `.github/workflows/` di **akar repo**. Workflow di bawah berisi dua **job** (kelompok pekerjaan) yang berjalan bersamaan: `api` dan `mobile`. Tiap job berisi beberapa **step** (langkah) yang dijalankan berurutan. Kalau kamu sudah membuat `mobile-test.yml` di pelajaran Testing Mobile, hapus file itu, karena job `mobile` di bawah sudah menggantikannya. Nomor versi action di file lama (misalnya `@v5`) boleh berbeda dengan di sini. Keduanya tetap jalan, cukup pakai yang terbaru.
+
+```yaml title=".github/workflows/ci.yml"
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: belajar_crud_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/belajar_crud_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kuliah-app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: kuliah-app/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test -- --ci
+```
+
+Cara membaca workflow itu:
+
+- `on` adalah pemicunya: push ke branch `main` dan setiap pull request.
+- `runs-on: ubuntu-latest` meminjam komputer Linux dari GitHub untuk tiap job.
+- `services.postgres` menyalakan PostgreSQL 17. Bagian `options` menyuruh GitHub menunggu sampai database siap (dicek dengan `pg_isready`) sebelum step pertama jalan.
+- `defaults.run.working-directory` membuat semua perintah `run` berjalan di dalam folder `api/` atau `kuliah-app/`.
+- `actions/checkout` mengunduh kode repo. `actions/setup-node` memasang Node 22 dan menyimpan cache npm, jadi instalasi berikutnya lebih cepat.
+- `npm ci` di job `api` juga menjalankan `postinstall` (`prisma generate`). Karena itu, typecheck bisa mengenali tipe Prisma Client.
+- `npm test -- --ci` meneruskan flag `--ci` ke Jest. Kalau ada snapshot baru, Jest tidak menyimpannya diam-diam, tapi langsung menggagalkan test.
+
+Password `postgres` di workflow itu aman ditulis terbuka, karena databasenya hanya hidup beberapa menit di mesin CI. Nilai yang benar-benar rahasia disimpan di **Settings → Secrets and variables → Actions**. Di dalam workflow, nilai itu dibaca dengan `secrets.NAMA_SECRET` di dalam ekspresi `${{ }}`.
+
+<Callout type="tip" title="Jadikan CI penjaga pintu">
+
+Di pengaturan repo GitHub, aktifkan *branch protection* (aturan pengaman branch) untuk `main`. Wajibkan job `api` dan `mobile` lulus sebelum pull request boleh di-merge. Banyak PaaS juga punya opsi "deploy hanya setelah check GitHub lulus". Kalau keduanya aktif, kode yang gagal test tidak akan sampai ke server.
+
+</Callout>
+
+## Build aplikasi dengan EAS Build
+
+<Callout type="analogi" title="Seperti mencetak buku di percetakan">
+
+Kamu sudah selesai menulis naskah buku, tapi tidak punya mesin cetak. Kamu mengirim file naskah ke percetakan, memilih jenis cetakan, lalu menerima buku jadi.
+
+- Naskah = kode `kuliah-app`.
+- Percetakan = **EAS Build**, server Expo yang mengubah kode menjadi aplikasi.
+- Jenis cetakan (draf untuk dikoreksi atau cetakan final untuk dijual) = **profil build**, misalnya `preview` atau `production`.
+- Buku jadi = file APK atau AAB yang bisa dipasang di HP atau diunggah ke toko aplikasi.
+
+Bedanya: percetakan hanya menyalin naskah. EAS Build meng-compile kodemu, jadi kode yang error bisa membuat build gagal.
+
+</Callout>
+
+Selama ini kamu membuka aplikasi lewat Expo Go. Pengguna biasa tidak memakai Expo Go. Mereka butuh aplikasi yang bisa dipasang sendiri. **EAS Build** (EAS = *Expo Application Services*) membangun aplikasi Android dan iOS di server Expo. Kamu tidak perlu memasang Android Studio atau Xcode di laptop.
+
+<Steps>
+<Step title="Pasang EAS CLI dan login">
+
+Kamu butuh akun Expo (gratis untuk mendaftar).
+
+```bash
+npm install -g eas-cli
+eas login
+eas whoami
+```
+
+`npm install -g` memasang EAS CLI secara global, jadi perintah `eas` bisa dipakai dari folder mana saja. `eas whoami` menampilkan nama akun yang sedang login.
+
+</Step>
+<Step title="Rapikan identitas aplikasi">
+
+`name` adalah nama yang muncul di bawah ikon aplikasi. `slug` adalah nama pendek proyek di URL Expo. Ubah keduanya di `kuliah-app/app.json` sebelum `eas init`, karena slug langsung tertaut ke proyek EAS.
+
+Tambahkan juga ID paket yang unik. ID ini seperti NIM untuk aplikasi: toko aplikasi memakainya untuk membedakan aplikasimu dari aplikasi lain. Kalau ID diganti setelah rilis, toko menganggapnya aplikasi yang berbeda.
+
+```json title="kuliah-app/app.json (sebagian)"
+{
+  "expo": {
+    "name": "Tugas Kuliah",
+    "slug": "tugas-kuliah",
+    "version": "1.0.0",
+    "android": {
+      "package": "id.ac.kampus.tugaskuliah"
+    },
+    "ios": {
+      "bundleIdentifier": "id.ac.kampus.tugaskuliah"
+    }
+  }
+}
+```
+
+</Step>
+<Step title="Tautkan proyek dan buat eas.json">
+
+```bash
+eas init
+eas build:configure
+```
+
+`eas init` membuat proyek di akun Expo-mu dan mencatat ID-nya di `app.json` (`extra.eas.projectId`). `eas build:configure` membuat file `eas.json`, tempat pengaturan build disimpan.
+
+</Step>
+</Steps>
+
+### Profil build di eas.json
+
+Kamu butuh aplikasi untuk tiga keperluan: mencoba sendiri, dibagikan ke penguji, dan dikirim ke toko aplikasi. Tiap keperluan punya **profil** sendiri di `eas.json`, seperti jenis cetakan tadi:
+
+```json title="kuliah-app/eas.json"
+{
+  "cli": {
+    "version": ">= 27.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "environment": "development",
+      "channel": "development"
+    },
+    "preview": {
+      "distribution": "internal",
+      "environment": "preview",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production": {
+      "environment": "production",
+      "channel": "production",
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
+```
+
+| Profil | Untuk siapa | Hasil Android |
+| --- | --- | --- |
+| `development` | kamu sendiri; [development build](/glosarium#development-build), butuh paket `expo-dev-client` | APK yang memuat kode dari Metro |
+| `preview` | teman/dosen penguji | APK yang bisa langsung dipasang |
+| `production` | Play Store / App Store | AAB untuk diunggah ke toko |
+
+Arti pengaturan di file itu:
+
+- `distribution: "internal"` artinya aplikasi dibagikan lewat link, bukan lewat toko aplikasi.
+- `buildType: "apk"` membuat APK. Tanpa opsi ini, Android menghasilkan **AAB** (*Android App Bundle*). AAB hanya diterima Play Store dan tidak bisa langsung dipasang di HP.
+- `environment` memilih kumpulan environment variable EAS yang dipakai saat build.
+- `channel` dipakai EAS Update. Bagian berikutnya membahasnya.
+- `appVersionSource: "remote"` bersama `autoIncrement` membuat EAS menaikkan nomor build secara otomatis. Nomor ini disebut `versionCode` di Android dan `buildNumber` di iOS.
+
+### EXPO_PUBLIC_API_URL per environment
+
+Ingat klien API di `kuliah-app/src/lib/api.ts`:
+
+```ts title="kuliah-app/src/lib/api.ts (sebagian)"
+// Variabel EXPO_PUBLIC_* disisipkan saat bundling, jadi restart Metro setelah mengubah `.env`.
+export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').replace(
+```
+
+Baris itu membaca alamat API dari `EXPO_PUBLIC_API_URL`. Kalau variabelnya kosong, aplikasi memakai `http://localhost:3000`.
+
+Variabel [EXPO_PUBLIC_*](/glosarium#expo-public-env) **ditanam** ke kode JavaScript saat **bundling**, yaitu proses menggabungkan semua file JavaScript menjadi satu paket. Mirip alamat penerbit yang dicetak di halaman buku: setelah dicetak, alamat itu ada di setiap salinan. Masalahnya, file `.env` di laptopmu tidak ikut ke server EAS, dan memang tidak boleh di-commit. Jadi simpan URL API per environment sebagai **EAS environment variable**, yaitu variabel yang disimpan di proyek Expo-mu:
+
+```bash
+eas env:set --name EXPO_PUBLIC_API_URL --value https://kuliah-api.example.com --environment preview --environment production --visibility plaintext
+eas env:list --environment preview
+```
+
+Perintah pertama menyimpan URL API untuk environment `preview` dan `production` sekaligus. Kalau variabelnya sudah ada, nilainya diperbarui. Perintah kedua menampilkan daftar variabel, jadi kamu bisa memastikan hasilnya.
+
+Visibility `plaintext` (terlihat biasa) tepat untuk nilai ini. Semua variabel `EXPO_PUBLIC_*` toh bisa dibaca siapa pun yang membongkar aplikasimu. Karena itu, jangan pernah menaruh secret seperti `JWT_ACCESS_SECRET` di variabel `EXPO_PUBLIC_*`.
+
+### Build APK untuk diuji
+
+```bash
+eas build -p android --profile preview
+```
+
+```txt
+✔ Build finished
+🤖 Android app:
+https://expo.dev/artifacts/eas/...apk
+```
+
+Perintah ini meminta EAS membuat aplikasi Android (`-p android`) dengan profil `preview`. Build berjalan di server Expo dan biasanya butuh beberapa menit.
+
+Saat build pertama, EAS menawarkan membuat **keystore** Android. Keystore adalah kunci tanda tangan aplikasi, mirip cap resmi di surat. HP memakai tanda tangan itu untuk memastikan update berikutnya datang dari pembuat yang sama. Jawab ya dan biarkan EAS menyimpannya. Semua kredensial bisa dilihat dan dikelola dengan `eas credentials`. Termasuk di dalamnya keystore, sertifikat iOS, dan kunci FCM/APNs untuk push notification dari pelajaran [Real-time](/belajar/expert/real-time).
+
+Setelah build selesai, buka link atau pindai QR dari halaman build di HP Android. Unduh APK-nya, lalu pasang. Untuk iOS di HP fisik, kamu butuh akun Apple Developer Program yang berbayar. Tanpa akun itu, kamu masih bisa membuat build untuk iOS Simulator dengan menambahkan `"ios": { "simulator": true }` di sebuah profil.
+
+### Versi aplikasi dan eas submit
+
+`version` di `app.json` (`1.0.0`) adalah nomor versi yang dilihat pengguna. Naikkan saat merilis fitur, misalnya menjadi `1.1.0`. Nomor build internal (`versionCode`/`buildNumber`) diurus EAS lewat `autoIncrement`, jadi kamu tidak perlu mengubahnya.
+
+Untuk masuk toko aplikasi, buat build `production`, lalu kirim dengan **EAS Submit**:
+
+```bash
+eas build -p android --profile production
+eas submit -p android --latest
+```
+
+`eas submit --latest` mengunggah build terakhir ke Google Play Console atau App Store Connect. Kamu tetap butuh akun developer di masing-masing toko. Khusus Android, unggahan pertama biasanya harus dilakukan manual di Play Console. EAS juga butuh *service account key* Google, semacam surat kuasa agar EAS boleh mengunggah atas namamu. Ikuti panduan resmi [EAS Submit](https://docs.expo.dev/submit/introduction/) saat kamu siap.
+
+## Update OTA dengan EAS Update
+
+<Callout type="analogi" title="Seperti lembar ralat untuk buku yang sudah dicetak">
+
+Buku sudah dicetak dan dibagikan, lalu ternyata ada salah ketik. Penerbit tidak mencetak ulang semua buku. Ia mengirim lembar ralat untuk diselipkan ke buku.
+
+- Buku cetakan = aplikasi hasil EAS Build yang sudah terpasang di HP.
+- Lembar ralat = **update OTA**, berisi kode JavaScript dan gambar yang baru.
+- Edisi buku = **runtime version**. Ralat untuk edisi 1 hanya cocok untuk buku edisi 1.
+- Daftar penerima ralat = **channel**. Ralat untuk penguji tidak dikirim ke pembeli umum.
+
+Bedanya: lembar ralat bisa mengganti isi halaman, tapi tidak bisa mengganti sampul atau jilid. Update OTA juga begitu. Ia tidak bisa mengubah bagian native seperti izin kamera atau ikon aplikasi.
+
+</Callout>
+
+Misalnya Andi menemukan typo "Prioritas Tingi" di aplikasi yang sudah terpasang di HP 30 teman. Membuat build baru lalu meminta semua orang memasang APK baru itu repot. **EAS Update** mengirim [update OTA](/glosarium#ota-update) (*over-the-air*, lewat internet). Aplikasi mengunduh sendiri bundle JavaScript dan aset baru, tanpa perlu dipasang ulang.
+
+Siapkan dulu, cukup sekali:
+
+```bash
+npx expo install expo-updates
+eas update:configure
+```
+
+`expo-updates` adalah paket yang membuat aplikasi bisa memeriksa dan mengunduh update. `eas update:configure` menambahkan `updates.url` dan `runtimeVersion` ke `app.json`:
+
+```json title="kuliah-app/app.json (sebagian)"
+{
+  "expo": {
+    "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/ID-PROYEK-KAMU"
+    }
+  }
+}
+```
+
+`updates.url` adalah alamat tempat aplikasi menanyakan update baru. `runtimeVersion` dengan policy `appVersion` artinya "edisi" aplikasi mengikuti `version`, di sini `1.0.0`.
+
+Lalu **build ulang** APK preview supaya `expo-updates` ikut di dalamnya. Setelah itu, setiap perbaikan JavaScript cukup dikirim dengan:
+
+```bash
+eas update --channel preview --environment preview --message "Perbaiki typo label prioritas"
+```
+
+Sejak Expo SDK 55, flag `--environment` wajib diisi. Flag itu memastikan `EXPO_PUBLIC_API_URL` di update sama dengan yang dipakai saat build. `--message` adalah catatan singkat yang tampil di dashboard Expo.
+
+Tiga istilah dari analogi tadi, kini versi teknisnya:
+
+- **Channel**: label yang ditanam di build lewat `eas.json`. APK `preview` hanya menerima update dari channel `preview`, jadi update untuk penguji tidak nyasar ke pengguna production.
+- **Runtime version**: penanda bahwa kode native di build cocok dengan update. Dengan policy `appVersion`, update hanya dikirim ke build yang `version`-nya sama.
+- **Kapan diterapkan**: secara bawaan, aplikasi memeriksa update saat dibuka dan mengunduhnya di belakang layar. Update baru dipakai saat aplikasi dibuka berikutnya. Jadi untuk melihat hasilnya, tutup lalu buka aplikasi dua kali.
+
+<Compare>
+<CompareItem title="Cukup EAS Update" tone="good">
+
+Perubahan teks, warna, layout, logika JavaScript, validasi form, perbaikan bug di layar, atau gambar di folder `assets`.
+
+</CompareItem>
+<CompareItem title="Wajib build baru" tone="bad">
+
+Menambah paket dengan kode native (misalnya `expo-camera`), mengubah izin, ikon, splash, `android.package`, atau upgrade SDK Expo. Naikkan `version`, lalu jalankan `eas build`.
+
+</CompareItem>
+</Compare>
+
+Kalau update ternyata membawa bug, terbitkan lagi versi sebelumnya dengan `eas update:republish` atau `eas update:rollback`. Untuk mencegahnya, uji dulu di channel `preview`, baru kirim ke `production`.
+
+## Alternatif: EAS Workflows
+
+Selain GitHub Actions, Expo punya **EAS Workflows**. Isinya juga file YAML, disimpan di folder `.eas/workflows/`, tapi dijalankan di server Expo. Layanan ini cocok untuk langkah khas aplikasi: build, update, dan submit.
+
+```yaml title="kuliah-app/.eas/workflows/preview.yml"
+name: Rilis preview
+
+on:
+  push:
+    branches: ['main']
+
+jobs:
+  build_android:
+    name: Build APK preview
+    type: build
+    params:
+      platform: android
+      profile: preview
+
+  publish_update:
+    name: Kirim update ke channel preview
+    needs: [build_android]
+    type: update
+    environment: preview
+    params:
+      channel: preview
+```
+
+Workflow ini punya dua job. `build_android` membuat APK dengan profil `preview`. `publish_update` menunggu build selesai (`needs`), lalu mengirim update ke channel `preview`.
+
+Jalankan manual dengan `eas workflow:run .eas/workflows/preview.yml`. Supaya pemicu `on.push` aktif, hubungkan repo GitHub di halaman pengaturan proyek di expo.dev. Test E2E Maestro dari [Testing Mobile](/belajar/expert/testing-mobile) juga cocok ditaruh di sini sebagai job `type: maestro` setelah job build.
+
+Pembagian yang rapi: **GitHub Actions** untuk test, lint, dan typecheck, sedangkan **EAS Workflows** untuk build dan update. Jangan menjalankan build di setiap push kalau tidak perlu, karena kuota build gratis terbatas. Itu sebabnya contoh di atas hanya dipicu oleh push ke `main`.
+
+## Checklist rilis
+
+Sebelum membagikan aplikasi, cek tabel ini baris demi baris, seperti mengecek isi tas sebelum berangkat ujian.
+
+| Bagian | Cek sebelum rilis |
+| --- | --- |
+| Secret | `JWT_ACCESS_SECRET` production acak & berbeda; tidak ada `.env` di Git |
+| Database | Provider `postgresql`, folder migrasi baru ter-commit, `migrate deploy` berhasil di log |
+| API | `NODE_ENV=production`, `CORS_ORIGIN` terisi, `/api/ready` menjawab 200 lewat HTTPS |
+| Upload | Volume terpasang di `UPLOAD_DIR` atau sudah pakai object storage |
+| Log | Request tercatat sebagai JSON, tanpa token/password |
+| CI | Job `api` dan `mobile` hijau di `main`, branch protection aktif |
+| Mobile | `EXPO_PUBLIC_API_URL` per environment di EAS, memakai `https://` |
+| Versi | `version` di `app.json` dinaikkan bila ada perubahan native |
+| Build | APK `preview` sudah dicoba login, CRUD tugas, dan upload lampiran di HP asli |
+| Update | Update OTA diuji di channel `preview` sebelum `production` |
+
+## Kesalahan umum
+
+<Callout type="warning" title="Error yang sering muncul saat rilis pertama">
+
+- **`Error: P1001: Can't reach database server at localhost:5432`** saat start di PaaS. Artinya `DATABASE_URL` masih menunjuk `localhost`. Di server, `localhost` adalah container itu sendiri, bukan database. Ganti dengan connection string dari platform.
+- **`ValidationError: The 'X-Forwarded-For' header is set but the Express 'trust proxy' setting is false (default)`** dari `express-rate-limit` (kode `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`). Artinya API berada di belakang **proxy** platform, yaitu perantara yang meneruskan request ke container. Tanpa pengaturan, semua pengguna terlihat datang dari satu IP, jadi rate limit menghitung mereka sebagai satu orang. Tambahkan `app.set("trust proxy", 1)` di `createApp()` agar IP asli pengguna terbaca.
+- **`TypeError: Network request failed`** di APK preview, padahal di Expo Go lancar. Artinya `EXPO_PUBLIC_API_URL` di EAS belum diisi atau masih `http://192.168...`. Build release Android secara bawaan menolak HTTP biasa (*cleartext*, tanpa enkripsi). Pakai URL `https://` dari PaaS, lalu build ulang.
+- **`Konfigurasi environment tidak valid: - JWT_ACCESS_SECRET: minimal 32 karakter`** di log deploy. Artinya variabel itu belum diisi di dashboard. Ini fail fast dari `env.ts`, dan pesannya sudah menyebut variabel mana yang salah.
+- **Update OTA tidak pernah muncul.** Penyebabnya biasanya salah satu dari tiga: channel build dan channel update berbeda, `runtimeVersion` tidak cocok karena `version` sudah dinaikkan, atau APK dibuat sebelum `expo-updates` dipasang.
+- **`npm ci` gagal di CI karena lock file tidak sinkron.** Artinya kamu mengubah `package.json` tanpa meng-commit `package-lock.json`. Jalankan `npm install` di laptop, lalu commit kedua file itu.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Readiness check yang teruji" difficulty="sedang" hints={["Tambahkan test baru di `api/tests/app.test.ts`.", "Cukup uji jalur sukses: database test sedang hidup.", "Bentuk respons: `{ status: \"ok\", database: \"ok\" }`."]}>
+
+1. Tambahkan endpoint `GET /api/ready` dari bagian health check ke `api/src/app.ts`.
+2. Tulis test Supertest di `api/tests/app.test.ts`. Pastikan endpoint itu menjawab 200 dengan body yang tepat.
+3. Jalankan `npm test`. Pastikan test lama untuk `/api/health` tetap lulus.
+
+<Solution>
+
+```ts title="api/tests/app.test.ts (tambahan)"
+it("GET /api/ready → 200 saat database terjangkau", async () => {
+  const res = await api().get("/api/ready").expect(200);
+  expect(res.body).toEqual({ status: "ok", database: "ok" });
+});
+```
+
+```txt
+✓ tests/app.test.ts (11 tests)
+```
+
+Test ini memakai helper `api()` dari `tests/helpers.ts`, sama seperti test `/api/health` di atasnya. `.expect(200)` mengecek status, lalu `toEqual` mengecek isi body.
+
+Jalur `503` lebih sulit diuji karena butuh database yang mati. Salah satu caranya `vi.spyOn(prisma, "$queryRaw").mockRejectedValueOnce(new Error("down"))`, yaitu memalsukan query supaya gagal satu kali. Untuk readiness check, menguji jalur sukses sudah cukup.
+
+</Solution>
+</Exercise>
+
+<Exercise title="OTA atau build baru?" difficulty="mudah" hints={["Tanyakan: apakah ada kode native yang berubah?", "Paket yang butuh `npx expo install` dan plugin di `app.json` biasanya native."]}>
+
+Untuk tiap perubahan berikut, tentukan apakah cukup `eas update` atau harus `eas build` baru. Ingat analogi lembar ralat: isi halaman boleh diralat, sampul dan jilid tidak.
+
+1. Mengganti warna chip prioritas "Tinggi" menjadi merah tua.
+2. Menambahkan `expo-notifications` untuk pengingat deadline.
+3. Memperbaiki bug: tugas tanpa mata kuliah membuat layar detail crash.
+4. Mengganti ikon aplikasi.
+5. Mengubah `EXPO_PUBLIC_API_URL` karena API pindah domain.
+
+<Solution>
+
+1. **Update OTA**: hanya style di JavaScript.
+2. **Build baru**: `expo-notifications` membawa kode native dan izin. Naikkan `version` dulu.
+3. **Update OTA**: ini perbaikan logika JavaScript.
+4. **Build baru**: ikon adalah aset native yang dibaca sistem operasi saat aplikasi dipasang.
+5. **Update OTA**: `EXPO_PUBLIC_*` ditanam di bundle JavaScript. Ubah nilainya dengan `eas env:set`, lalu jalankan `eas update --channel production --environment production`. Build berikutnya juga memakai nilai baru, jadi instalasi baru langsung benar.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Perintah Prisma mana yang tepat dijalankan di server production saat deploy?",
+    options: ["`prisma migrate dev`", "`prisma migrate reset`", "`prisma migrate deploy`", "`prisma db push --force-reset`"],
+    answer: 2,
+    explain: "`migrate deploy` hanya menjalankan migrasi yang sudah di-commit, tanpa membuat migrasi baru. `migrate dev` khusus laptop karena membuat migrasi baru dan bisa menawarkan reset. `reset` dan `--force-reset` menghapus data.",
+  },
+  {
+    q: "Kenapa `EXPO_PUBLIC_API_URL` disimpan sebagai EAS environment variable, bukan hanya di `.env`?",
+    options: ["Karena `.env` di laptop tidak ikut ke server EAS, padahal nilainya ditanam saat bundling", "Karena EAS mengenkripsi semua isi aplikasi", "Karena variabel `EXPO_PUBLIC_*` dibaca dari server saat aplikasi berjalan", "Karena `.env` hanya bekerja di iOS"],
+    answer: 0,
+    explain: "Nilai `EXPO_PUBLIC_*` ditanam ke kode saat bundling, dan bundling terjadi di server EAS. Server itu tidak punya `.env` milikmu karena file itu tidak di-commit. Jadi EAS memakai variabel dari `environment` di `eas.json` atau flag `--environment`. Nilainya juga tidak dibaca dari server saat aplikasi berjalan.",
+  },
+  {
+    q: "Kamu menambahkan `expo-camera` ke aplikasi. Apa langkah rilis yang benar?",
+    options: ["`eas update --channel production` saja", "Naikkan `version`, lalu `eas build` baru", "Cukup restart Metro", "Hapus `runtimeVersion` dari `app.json`"],
+    answer: 1,
+    explain: "`expo-camera` membawa kode native, dan kode native tidak bisa dikirim lewat update OTA (lembar ralat tidak bisa mengganti jilid). Menaikkan `version` membuat runtime version baru, jadi update lama tidak dikirim ke build yang tidak cocok.",
+  },
+  {
+    q: "Di workflow GitHub Actions kita, apa fungsi blok `services: postgres`?",
+    options: ["Men-deploy database ke production", "Menyalakan PostgreSQL sementara agar test API bisa berjalan", "Membuat backup database setiap push", "Menggantikan `prisma migrate deploy`"],
+    answer: 1,
+    explain: "Service container hanya hidup selama job berjalan, lalu dibuang. Test terhubung ke database itu lewat `TEST_DATABASE_URL`. `global-setup.ts` tetap menjalankan `migrate deploy` untuk membuat tabelnya, jadi blok ini tidak menggantikan migrasi.",
+  },
+  {
+    q: "Kenapa `CMD` di Dockerfile memakai `exec node dist/server.js`?",
+    options: ["Agar Node berjalan lebih cepat", "Agar Node menjadi proses utama dan menerima `SIGTERM`, sehingga shutdown rapi di `server.ts` berjalan", "Karena `node` tidak bisa dijalankan tanpa `exec`", "Agar migrasi dijalankan dua kali"],
+    answer: 1,
+    explain: "Tanpa `exec`, proses `sh` menjadi proses utama dan tidak meneruskan sinyal berhenti ke Node. Platform lalu mematikan container secara paksa, tanpa menutup koneksi database. `exec` tidak mempercepat Node dan tidak mengulang migrasi.",
+  },
+]} />
+
+## Ringkasan
+
+- Pengaturan yang berbeda antar-environment disimpan di environment variable dan diperiksa sekali di `env.ts`. Secret production dibuat acak dan hanya disimpan di dashboard platform.
+- Pindah ke PostgreSQL cukup dengan mengganti `provider`, memakai `@prisma/adapter-pg`, dan membuat ulang migrasi. Di server, selalu pakai `prisma migrate deploy`.
+- Dockerfile multi-stage (Node 22) menghasilkan image kecil. Saat start, container menjalankan migrasi, lalu `exec node dist/server.js` sebagai user `node`.
+- Di PaaS, kamu mengisi environment variable, memasang health check `/api/ready` yang ikut mengecek database, memasang volume untuk upload, dan menulis log JSON ke stdout.
+- GitHub Actions memeriksa setiap push: `npm ci`, typecheck, dan test untuk `api/` (dengan PostgreSQL sementara), serta lint, typecheck, dan Jest untuk `kuliah-app/`.
+- EAS Build memakai profil `development`, `preview`, dan `production`. `EXPO_PUBLIC_API_URL` disimpan per environment di EAS. APK untuk penguji dibuat dengan `eas build -p android --profile preview`.
+- EAS Update mengirim perubahan JavaScript lewat channel. Perubahan native butuh `version` baru dan build baru.
+
+## Selamat, kamu sudah sampai garis akhir!
+
+Coba lihat ke belakang. Kamu mulai dari variabel dan fungsi JavaScript, lalu membangun `belajar-api` sendiri, belajar SQL dan Prisma, membuat layar React Native pertama, menghubungkannya ke API dengan TanStack Query dan JWT, menulis test, dan sekarang merilis semuanya ke internet. Itu perjalanan lengkap seorang developer full-stack mobile.
+
+<Callout type="capstone" title="Langkah capstone terakhir">
+
+1. Deploy API capstone ke PaaS dengan PostgreSQL, lalu catat URL publiknya.
+2. Pasang workflow `.github/workflows/ci.yml` dan pastikan kedua job hijau.
+3. Buat APK `preview` yang mengarah ke URL production, lalu bagikan ke Sari dan Andi untuk diuji.
+4. Kirim satu perbaikan kecil lewat `eas update` dan pastikan muncul di HP mereka.
+5. Tulis README singkat: cara menjalankan lokal, URL API, dan link build terbaru. Itu portofolio pertamamu.
+
+</Callout>
+
+Langkah selanjutnya yang layak kamu jelajahi:
+
+- **Monitoring error** di production, misalnya dengan Sentry, supaya crash di HP pengguna terlihat olehmu.
+- **Push notification** dengan `expo-notifications` untuk pengingat deadline tugas.
+- **Mendalami pelajaran expert lain** yang belum kamu baca: [Keamanan API](/belajar/expert/keamanan-api), [Real-time](/belajar/expert/real-time), [Offline-first](/belajar/expert/offline-first), dan [Performa Mobile](/belajar/expert/performa-mobile).
+- **Rilis ke toko**: siapkan ikon, screenshot, kebijakan privasi, lalu `eas submit`.
+
+Simpan [cheatsheet](/cheatsheet/prisma) favoritmu, terus membangun, dan selamat merilis aplikasi pertamamu!

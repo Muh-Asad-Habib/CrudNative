@@ -1,0 +1,528 @@
+## Variabel & tipe data
+
+Variabel adalah wadah bernama untuk menyimpan nilai. Bayangkan toples berlabel di dapur. `const` berarti label menempel permanen di satu toples, walau isinya (misalnya isi object) masih bisa diganti. `let` berarti labelnya boleh dipindah ke toples lain.
+
+Pakai `const` secara default. Pakai `let` hanya untuk nilai yang memang akan diisi ulang (di-*assign* ulang). Hindari `var`, cara lama yang aturannya membingungkan.
+
+```js
+const kampus = "Universitas Nusantara";
+let sks = 3;
+sks = 4; // boleh, karena memakai let
+
+const task = { title: "Kuis Basis Data" };
+task.title = "UTS Basis Data"; // boleh: isi object tetap bisa diubah
+// task = {}; → TypeError: Assignment to constant variable.
+```
+
+| Tipe | Isinya | Contoh | `typeof` |
+| --- | --- | --- | --- |
+| string | teks | `"Andi"`, `'Sari'`, `` `Halo` `` | `"string"` |
+| number | angka bulat atau desimal | `3`, `3.5`, `NaN` | `"number"` |
+| boolean | benar atau salah | `true`, `false` | `"boolean"` |
+| null | sengaja dikosongkan | `null` | `"object"` (bug lama JavaScript) |
+| undefined | belum diisi | variabel tanpa nilai | `"undefined"` |
+| bigint | bilangan bulat sangat besar | `10n` | `"bigint"` |
+| object | kumpulan data | `{}`, `[]`, `new Date()` | `"object"`; cek array dengan `Array.isArray(x)` |
+| function | perintah yang bisa dipanggil | `() => {}` | `"function"` |
+
+**Falsy** artinya nilai yang dianggap "salah" saat dipakai di `if`. Hanya ada delapan: `false`, `0`, `-0`, `0n`, `""`, `null`, `undefined`, dan `NaN`. Semua nilai lain *truthy* (dianggap benar), termasuk `"0"`, `[]`, dan `{}`.
+
+## Operator penting
+
+Operator adalah simbol untuk membandingkan atau mengolah nilai. Bandingkan selalu dengan `===` dan `!==`. Keduanya mengecek nilai sekaligus tipenya, jadi tidak ada konversi tipe diam-diam.
+
+Ibaratnya satpam kampus: `===` mencocokkan nama dan foto di KTM, sedangkan `==` hanya mencocokkan nama.
+
+| Operator | Contoh | Hasil |
+| --- | --- | --- |
+| `===` / `!==` | `3 === "3"` | `false` (tipe beda: angka vs teks) |
+| `==` | `3 == "3"` | `true`, hindari |
+| `&&` | `isLogin && "Halo"` | nilai kanan jika kiri truthy |
+| `??` | `limit ?? 10` | nilai kanan hanya jika kiri `null`/`undefined` |
+| `?.` | `task.course?.name` | `undefined` jika `course` kosong, bukan error |
+| ternary | `done ? "Selesai" : "Belum"` | if/else dalam satu baris |
+| `%` / `**` | `7 % 2`, `2 ** 3` | `1` (sisa bagi), `8` (pangkat) |
+
+```js
+const limit = 0;
+console.log(limit || 10); // → 10 (0 falsy, jadi diganti)
+console.log(limit ?? 10); // → 0  (hanya null/undefined yang diganti)
+
+let filter;
+filter ??= "semua"; // isi jika masih null/undefined
+```
+
+<Callout type="warning" title="|| vs ??">
+
+`||` mengganti **semua** nilai falsy. Akibatnya `0`, `""`, dan `false` yang sebenarnya sah ikut terganti. Untuk nilai default angka atau boolean, pakai `??`.
+
+</Callout>
+
+## String & angka
+
+Template literal adalah string yang ditulis dengan backtick (tanda petik miring). Di dalamnya kamu bisa menyisipkan nilai lewat `${...}`. Mirip template surat izin yang bagian namanya dikosongkan, lalu kamu tinggal mengisinya.
+
+```js
+const nama = "Sari";
+const jumlah = 3;
+console.log(`Halo ${nama}, kamu punya ${jumlah} tugas`);
+// → Halo Sari, kamu punya 3 tugas
+```
+
+| Kode | Gunanya | Hasil |
+| --- | --- | --- |
+| `"  Basis Data ".trim().toLowerCase()` | buang spasi di pinggir, jadikan huruf kecil | `"basis data"` |
+| `"UTS-Basis-Data".split("-")` | pecah teks jadi array | `["UTS", "Basis", "Data"]` |
+| `"Basis Data".includes("Data")` | cek ada potongan teks itu | `true` |
+| `"7".padStart(3, "0")` | tambah nol di depan | `"007"` |
+| `"a-b-c".replaceAll("-", " ")` | ganti semua kemunculan | `"a b c"` |
+| `Number("42")` / `Number("abc")` | ubah teks jadi angka | `42` / `NaN` |
+| `parseInt("42px", 10)` | ambil angka di awal teks | `42` |
+| `(3.456).toFixed(2)` | bulatkan ke 2 desimal | `"3.46"` (string) |
+| `Number.isNaN(Number("abc"))` | cek hasil "bukan angka" | `true` |
+
+Nilai dari query string (bagian `?page=2` di URL), input form, dan `req.params` **selalu string**. Ubah dulu dengan `Number(...)` sebelum dihitung, karena `"2" + 1` menghasilkan `"21"`, bukan `3`.
+
+## Fungsi
+
+Fungsi adalah kumpulan perintah yang diberi nama supaya bisa dipanggil berkali-kali. Mirip resep: ditulis sekali, dimasak berulang dengan bahan (argumen) yang berbeda.
+
+Arrow function (ditulis dengan `=>`) lebih ringkas dan menjadi gaya utama di React. Function biasa tetap berguna untuk fungsi bernama di level atas file.
+
+<Tabs items={["Function biasa", "Arrow function", "Arrow mengembalikan object"]}>
+<Tab>
+
+```js
+function hitungSks(courses) {
+  return courses.reduce((total, c) => total + c.sks, 0);
+}
+```
+
+</Tab>
+<Tab>
+
+```js
+const hitungSks = (courses) => courses.reduce((total, c) => total + c.sks, 0);
+const sapa = (nama = "Mahasiswa") => `Halo ${nama}`; // parameter default
+```
+
+</Tab>
+<Tab>
+
+```js
+// Bungkus object dengan kurung, kalau tidak dianggap blok fungsi
+const buatTask = (title) => ({ title, done: false, priority: "sedang" });
+```
+
+</Tab>
+</Tabs>
+
+```js title="Rest parameter & callback"
+const total = (...angka) => angka.reduce((a, b) => a + b, 0);
+total(2, 3, 4); // → 9
+
+setTimeout(() => console.log("2 detik kemudian"), 2000); // fungsi sebagai argumen
+```
+
+`...angka` mengumpulkan semua argumen menjadi satu array. *Callback* adalah fungsi yang kamu titipkan ke fungsi lain untuk dipanggil nanti, seperti fungsi di dalam `setTimeout` di atas.
+
+## Method array
+
+Array adalah daftar berurutan, misalnya daftar tugas. Method array adalah perintah bawaan untuk mengolah daftar itu tanpa menulis perulangan sendiri. Bayangkan tumpukan formulir tugas di meja: `filter` memilih yang belum selesai, `map` menyalin tiap formulir ke format lain, `find` mencari satu formulir tertentu.
+
+Data contoh untuk semua potongan kode di bagian ini:
+
+```js
+const tasks = [
+  { id: 1, title: "Laporan Basis Data", done: false, priority: "tinggi" },
+  { id: 2, title: "Kuis Pemrograman Mobile", done: true, priority: "sedang" },
+  { id: 3, title: "Rangkuman Jaringan Komputer", done: false, priority: "tinggi" },
+];
+```
+
+| Method | Kegunaan | Contoh → hasil | Mengubah asli? |
+| --- | --- | --- | --- |
+| `map` | Ubah tiap elemen | `tasks.map((t) => t.id)` → `[1, 2, 3]` | Tidak |
+| `filter` | Saring elemen | `tasks.filter((t) => !t.done).length` → `2` | Tidak |
+| `find` | Elemen pertama yang cocok | `tasks.find((t) => t.id === 2)?.title` → `"Kuis Pemrograman Mobile"` | Tidak |
+| `findIndex` | Indeksnya, `-1` jika tidak ada | `tasks.findIndex((t) => t.id === 9)` → `-1` | Tidak |
+| `some` / `every` | Ada satu / semua cocok? | `tasks.some((t) => t.done)` → `true` | Tidak |
+| `includes` | Ada nilainya? | `[1, 2, 3].includes(3)` → `true` | Tidak |
+| `reduce` | Ringkas jadi satu nilai | lihat contoh di bawah | Tidak |
+| `at` | Ambil dengan indeks negatif | `tasks.at(-1).id` → `3` | Tidak |
+| `slice` | Potong salinan | `tasks.slice(0, 2)` → 2 elemen pertama | Tidak |
+| `toSorted` | Urutkan salinan | `[10, 9, 1].toSorted((a, b) => a - b)` → `[1, 9, 10]` | Tidak |
+| `flat` / `flatMap` | Ratakan array bersarang | `[[1, 2], [3]].flat()` → `[1, 2, 3]` | Tidak |
+| `push` / `pop` | Tambah / ambil di akhir | `arr.push(4)` | **Ya** |
+| `splice` | Sisip / hapus di tengah | `arr.splice(1, 1)` | **Ya** |
+| `sort` / `reverse` | Urutkan / balik di tempat | `arr.sort()` | **Ya** |
+
+Di React, method dengan tanda **Ya** di kolom terakhir jangan dipakai langsung pada state. State harus diganti dengan array baru, bukan diubah di tempat.
+
+```js title="reduce & groupBy"
+const jumlahSelesai = tasks.reduce((jumlah, t) => (t.done ? jumlah + 1 : jumlah), 0);
+// → 1
+
+const perPrioritas = tasks.reduce((acc, t) => {
+  acc[t.priority] = (acc[t.priority] ?? 0) + 1;
+  return acc;
+}, {});
+// → { tinggi: 2, sedang: 1 }
+
+const grup = Object.groupBy(tasks, (t) => t.priority); // Node 21+
+// → { tinggi: [task1, task3], sedang: [task2] }
+```
+
+`reduce` berjalan dari elemen pertama sampai terakhir sambil membawa satu "tabungan" (`acc`). Di contoh kedua, tabungannya berupa object yang menghitung jumlah tugas per prioritas.
+
+<Callout type="warning" title="sort() mengurutkan sebagai string dan mengubah array">
+
+`[10, 9, 1].sort()` menghasilkan `[1, 10, 9]` karena angka dibandingkan sebagai teks, seperti mengurutkan kata di kamus. Selalu beri fungsi pembanding, misalnya `(a, b) => a - b` untuk angka atau `(a, b) => a.title.localeCompare(b.title, "id")` untuk teks. Pakai `toSorted` jika array asli (misalnya state React) tidak boleh berubah.
+
+</Callout>
+
+## Object
+
+Object menyimpan pasangan kunci-nilai (*key-value*). Mirip KTM: ada kolom `nama`, `nim`, dan `prodi`, masing-masing dengan isinya. Beberapa jalan pintas penulisan di bawah sering muncul di kode React dan Express.
+
+```js
+const name = "Basis Data";
+const field = "lecturer";
+
+const course = {
+  name, // shorthand untuk name: name
+  [field]: "Bu Rina", // computed key → lecturer: "Bu Rina"
+  sks: 3,
+  label() {
+    return `${this.name} (${this.sks} SKS)`;
+  },
+};
+
+course.name; // → "Basis Data"
+course["sks"]; // → 3
+"sks" in course; // → true
+```
+
+| Fungsi | Hasil untuk `{ name: "Basis Data", sks: 3 }` |
+| --- | --- |
+| `Object.keys(obj)` | `["name", "sks"]` (daftar kunci) |
+| `Object.values(obj)` | `["Basis Data", 3]` (daftar isi) |
+| `Object.entries(obj)` | `[["name", "Basis Data"], ["sks", 3]]` (pasangan kunci & isi) |
+| `Object.fromEntries(entries)` | kebalikan dari `entries`: daftar pasangan jadi object lagi |
+| `structuredClone(obj)` | salinan penuh sampai lapis terdalam (*deep copy*), termasuk `Date` |
+
+```js title="Perulangan"
+for (const task of tasks) console.log(task.title); // nilai array
+for (const [key, value] of Object.entries(course)) console.log(key, value); // isi object
+```
+
+`for...in` mengulang **kunci**, bukan nilai, dan bisa ikut membaca properti warisan dari object induk. Jadi jangan dipakai untuk array.
+
+## Destructuring
+
+Destructuring mengambil isi object atau array ke beberapa variabel dalam satu baris. Seperti membongkar kardus paket: barang yang kamu perlu langsung diambil, sisanya tetap di kardus (`...lainnya`).
+
+```js
+const course = { name: "Basis Data", lecturer: "Bu Rina", sks: 3 };
+
+const { name, sks: jumlahSks, ruang = "Lab 2", ...lainnya } = course;
+// name → "Basis Data", jumlahSks → 3, ruang → "Lab 2" (default)
+// lainnya → { lecturer: "Bu Rina" }
+
+const [pertama, , ketiga = "-"] = ["Andi", "Sari"];
+// pertama → "Andi", ketiga → "-"
+
+let a = 1, b = 2;
+[a, b] = [b, a]; // tukar nilai → a = 2, b = 1
+```
+
+`sks: jumlahSks` artinya ambil `sks`, tapi simpan dengan nama `jumlahSks`. `ruang = "Lab 2"` dipakai karena `course` tidak punya `ruang`.
+
+```jsx title="Di parameter fungsi (pola props React)"
+import { Text } from "react-native";
+
+export function TaskCard({ title, done = false, onToggle }) {
+  return <Text onPress={onToggle}>{done ? "✓" : "○"} {title}</Text>;
+}
+```
+
+```js title="Respons API proyek ini"
+const { data, meta } = await res.json(); // list → { data, meta }
+const { page, totalPages } = meta;
+```
+
+## Spread & update immutable
+
+Spread `...` menyalin isi array atau object ke wadah baru. *Immutable* artinya data lama tidak diubah. Kamu membuat salinan baru yang sudah berisi perubahan.
+
+<Callout type="analogi" title="Seperti menyerahkan revisi tugas ke dosen">
+
+Kalau kamu mencoret kertas yang sama lalu menyerahkannya lagi, dosen mengira itu kertas lama dan tidak memeriksa ulang. Kalau kamu menyerahkan kertas baru yang sudah direvisi, dosen langsung tahu ada perubahan. Dosen = React, kertas baru = **referensi baru** (alamat data yang berbeda di memori).
+
+</Callout>
+
+React mendeteksi perubahan state dari referensi baru, jadi selalu buat salinan. Jangan mengubah data lama.
+
+| Operasi | Kode immutable |
+| --- | --- |
+| Tambah item | `[...tasks, taskBaru]` |
+| Tambah di depan | `[taskBaru, ...tasks]` |
+| Ubah satu item | `tasks.map((t) => (t.id === id ? { ...t, done: !t.done } : t))` |
+| Hapus item | `tasks.filter((t) => t.id !== id)` |
+| Gabung array | `[...tugasKuliah, ...tugasOrganisasi]` |
+| Ubah field object | `{ ...course, sks: 4 }` |
+| Gabung object | `{ ...defaultFilter, ...filterDariUser }` (yang kanan menang) |
+| Hapus field object | `const { lecturer, ...tanpaDosen } = course;` |
+
+<Compare>
+<CompareItem title="Mutasi (state tidak ter-update)" tone="bad">
+
+```js
+task.done = true;
+setTasks(tasks); // referensi sama → React tidak render ulang
+```
+
+</CompareItem>
+<CompareItem title="Immutable" tone="good">
+
+```js
+setTasks((prev) =>
+  prev.map((t) => (t.id === id ? { ...t, done: true } : t))
+);
+```
+
+</CompareItem>
+</Compare>
+
+<Callout type="note" title="Spread hanya menyalin satu lapis">
+
+`{ ...task }` adalah *shallow copy* (salinan satu lapis). Object di dalamnya, misalnya `task.course`, masih dipakai bersama oleh data lama dan salinannya. Salin juga lapis dalamnya, `{ ...task, course: { ...task.course, name: "Basis Data Lanjut" } }`, atau gunakan `structuredClone`.
+
+</Callout>
+
+## Optional chaining & nullish coalescing
+
+Gunakan `?.` (*optional chaining*) untuk membaca data yang mungkin belum ada, lalu `??` (*nullish coalescing*) untuk memberi nilai cadangan. Seperti membuka loker teman: kalau lokernya kosong, kamu tidak panik, tinggal pakai barang cadangan sendiri.
+
+```js
+const task = { title: "UTS", course: null };
+
+task.course?.name; // → undefined (tanpa TypeError)
+task.course?.name ?? "Tanpa mata kuliah"; // → "Tanpa mata kuliah"
+task.tags?.[0]; // akses indeks → undefined
+task.onDone?.(); // panggil fungsi jika ada → undefined
+```
+
+Tanpa `?.`, `task.course.name` melempar `TypeError: Cannot read properties of null (reading 'name')`. Ini error yang paling sering muncul saat data API belum selesai dimuat.
+
+## Modules (ESM)
+
+ESM (*ECMAScript Modules*) adalah sistem modul standar JavaScript. Setiap file adalah modul. Tandai bagian yang boleh dipakai file lain dengan `export`, lalu ambil di file lain dengan `import`.
+
+Mirip perpustakaan kampus: hanya buku yang ditandai "boleh dipinjam" (`export`) yang bisa dibawa keluar, dan kamu harus menyebut judulnya dengan tepat (`import { judul }`).
+
+<Tabs items={["Named export", "Default export"]}>
+<Tab>
+
+```js title="src/lib/format.js"
+export const formatSks = (sks) => `${sks} SKS`;
+export function formatTanggal(iso) {
+  return new Date(iso).toLocaleDateString("id-ID");
+}
+```
+
+```js title="src/server.js"
+import { formatSks, formatTanggal as tgl } from "./lib/format.js";
+import * as format from "./lib/format.js"; // semua sebagai satu object
+```
+
+</Tab>
+<Tab>
+
+```js title="src/lib/hitung-sks.js"
+export default function hitungSks(courses) {
+  return courses.reduce((total, c) => total + c.sks, 0);
+} // maksimal satu default export per file
+```
+
+```js title="src/server.js"
+import hitungSks from "./lib/hitung-sks.js"; // nama bebas, tanpa kurung kurawal
+```
+
+</Tab>
+</Tabs>
+
+```js title="Pola lain"
+import { readFile } from "node:fs/promises"; // modul bawaan Node, awalan node:
+
+const seed = JSON.parse(await readFile("seed.json", "utf8")); // top-level await
+const { formatSks } = await import("./lib/format.js"); // dynamic import
+console.log(import.meta.dirname); // folder file ini, pengganti __dirname
+export { formatTanggal } from "./lib/format.js"; // re-export
+```
+
+*Top-level await* artinya `await` boleh dipakai langsung di luar fungsi. *Dynamic import* memuat modul baru saat baris itu dijalankan. *Re-export* meneruskan export dari file lain, jadi pemakai cukup import dari satu tempat.
+
+Supaya Node membaca file `.js` sebagai ESM, tambahkan ini di `package.json`:
+
+```json title="package.json"
+{ "type": "module" }
+```
+
+<Callout type="warning" title="Error: Cannot find module">
+
+Di Node ESM, path relatif **wajib** memakai ekstensi. `import x from "./format"` menghasilkan `ERR_MODULE_NOT_FOUND`, jadi tulis `"./format.js"`. Di proyek Expo, Metro (alat yang menggabungkan kode aplikasi) mengizinkan import tanpa ekstensi. Jika muncul `SyntaxError: Cannot use import statement outside a module`, berarti `"type": "module"` belum ada di `package.json`.
+
+</Callout>
+
+## Promise & async/await
+
+Kode asinkron (*asynchronous*) adalah kode yang hasilnya datang belakangan, misalnya mengambil data dari server. Program tidak berhenti sambil menunggu.
+
+<Callout type="analogi" title="Seperti pesan GoFood">
+
+Setelah memesan, kamu dapat nomor pesanan (**Promise**) dan bisa lanjut mengerjakan tugas. Kalau makanan sampai, pesanan selesai (*resolve*). Kalau restoran tutup, pesanan gagal (*reject*). `await` artinya kamu memilih menunggu di depan pintu sampai kurir datang. Hanya kamu yang menunggu (fungsi `async` itu), penghuni kos lain (kode lain) tetap beraktivitas.
+
+</Callout>
+
+`await` hanya menunda fungsi `async` tempat ia berada. *Event loop* adalah pengatur antrean yang menentukan kode mana jalan duluan. Kode *sinkron* (baris biasa yang langsung dikerjakan) selalu didahulukan. Setelah itu baru *microtask* (antrean khusus hasil Promise), lalu timer seperti `setTimeout`:
+
+```js title="Urutan event loop"
+console.log("1: sinkron");
+setTimeout(() => console.log("4: timer"), 0);
+Promise.resolve().then(() => console.log("3: microtask"));
+console.log("2: sinkron");
+// → 1, 2, 3, 4: kode sinkron dulu, lalu Promise, baru timer
+```
+
+```js title="Membuat & memakai Promise"
+const tunggu = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function muatTugas(id) {
+  try {
+    await tunggu(500);
+    const res = await fetch(`http://localhost:3000/api/tasks/${id}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { data } = await res.json();
+    return data;
+  } catch (err) {
+    console.error("Gagal memuat:", err.message);
+    throw err; // teruskan agar pemanggil tahu
+  } finally {
+    console.log("selesai"); // selalu jalan
+  }
+}
+```
+
+Urutannya: tunggu 0,5 detik, minta data ke API, lempar error jika status bukan 2xx, lalu ambil `data` dari body. `catch` menangkap error, sedangkan `finally` selalu jalan, berhasil atau gagal.
+
+| Fungsi | Selesai ketika | Jika ada yang gagal |
+| --- | --- | --- |
+| `Promise.all([...])` | Semua sukses | Langsung gagal (reject) dengan error pertama |
+| `Promise.allSettled([...])` | Semua selesai | Tidak pernah gagal; tiap hasil berisi `status` |
+| `Promise.race([...])` | Yang pertama selesai | Ikut hasil pertama, sukses atau gagal |
+| `Promise.any([...])` | Yang pertama sukses | Gagal hanya jika semua gagal |
+
+```js
+const [tasksRes, coursesRes] = await Promise.all([
+  fetch("http://localhost:3000/api/tasks"),
+  fetch("http://localhost:3000/api/courses"),
+]); // berjalan paralel, bukan bergantian
+```
+
+<Callout type="danger" title="async di dalam forEach tidak ditunggu">
+
+`ids.forEach(async (id) => await hapus(id))` langsung lanjut tanpa menunggu. Pakai `for (const id of ids) await hapus(id)` untuk menghapus satu per satu, atau `await Promise.all(ids.map(hapus))` untuk menghapus bersamaan.
+
+</Callout>
+
+## fetch
+
+`fetch` mengirim request HTTP dan mengembalikan `Response` (object balasan dari server). Body (isi balasan) dibaca terpisah dengan `res.json()` atau `res.text()`.
+
+Seperti mengirim paket lewat JNE: kamu menulis alamat (URL), jenis kiriman (`method`), label isi (`headers`), dan barangnya (`body`). Yang kembali lebih dulu adalah resi berisi status (`res.status`), lalu paketnya kamu buka sendiri (`res.json()`).
+
+```js title="POST JSON dengan timeout"
+const controller = new AbortController();
+const timer = setTimeout(() => controller.abort(), 10_000);
+
+try {
+  const res = await fetch("http://localhost:3000/api/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: "Laporan Basis Data", priority: "tinggi" }),
+    signal: controller.signal,
+  });
+  const body = res.status === 204 ? null : await res.json();
+  if (!res.ok) throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
+  console.log(body.data); // → { id: 4, title: "Laporan Basis Data", ... }
+} finally {
+  clearTimeout(timer);
+}
+```
+
+`AbortController` membatalkan request jika lebih dari 10 detik. Status 204 (*No Content*) tidak punya body, jadi tidak dibaca dengan `res.json()`.
+
+<Callout type="warning" title="fetch tidak melempar error untuk 404 atau 500">
+
+Promise `fetch` hanya gagal (reject) untuk masalah jaringan (`TypeError: fetch failed` di Node, `TypeError: Network request failed` di React Native) atau pembatalan (`AbortError`). Status 4xx dan 5xx tetap dianggap berhasil, sama seperti resi berstatus "alamat tidak ditemukan" tetap resi yang sah. Jadi **selalu cek `res.ok`**, yang bernilai `true` hanya untuk status 200 sampai 299.
+
+</Callout>
+
+## Class & error
+
+Class adalah cetakan untuk membuat object dengan bentuk yang sama, seperti cetakan kue. Class jarang dipakai di komponen React modern, tapi berguna untuk membuat error khusus seperti `HttpError` di backend.
+
+```js title="src/lib/http-error.js"
+export class HttpError extends Error {
+  constructor(status, code, message, details) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+try {
+  throw new HttpError(404, "NOT_FOUND", "Tugas tidak ditemukan");
+} catch (err) {
+  if (err instanceof HttpError) console.log(err.status, err.code);
+  // → 404 NOT_FOUND
+}
+```
+
+`extends Error` artinya `HttpError` mewarisi semua sifat `Error` biasa, lalu ditambah `status`, `code`, dan `details`. `instanceof` mengecek apakah sebuah error dibuat dari cetakan `HttpError`.
+
+## Tanggal & JSON
+
+API mengirim tanggal sebagai string ISO 8601, format standar seperti `"2026-11-05T16:59:00.000Z"`. Ubah menjadi `Date` hanya saat perlu menghitung atau menampilkan.
+
+JSON itu seperti formulir kertas: hanya bisa berisi teks, angka, benar/salah, daftar, dan kolom bernama. Tanggal harus ditulis sebagai teks, dan fungsi tidak bisa ditulis sama sekali.
+
+```js
+new Date().toISOString(); // → "2026-10-30T12:04:30.608Z" (selalu UTC)
+
+new Date("2026-11-05T23:59:00+07:00").toLocaleDateString("id-ID", {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+  timeZone: "Asia/Jakarta",
+}); // → "5 November 2026"
+
+JSON.stringify({ title: "UTS", note: undefined, at: new Date(0) });
+// → '{"title":"UTS","at":"1970-01-01T00:00:00.000Z"}'
+
+JSON.parse('{"done":true}').done; // → true
+```
+
+`JSON.stringify` (object jadi teks) membuang `undefined` dan fungsi, serta mengubah `Date` menjadi string. `JSON.parse` (teks jadi object) tidak mengubahnya kembali menjadi `Date`, jadi bungkus sendiri dengan `new Date(...)`.
+
+## Pelajari lebih lanjut
+
+- [JavaScript Modern 1](/belajar/fondasi/javascript-modern-1): variabel, fungsi, array, dan object.
+- [JavaScript Modern 2](/belajar/fondasi/javascript-modern-2): destructuring, spread, dan modules.
+- [Asynchronous JavaScript](/belajar/fondasi/async-javascript): Promise, async/await, dan fetch.
+- [State & Event](/belajar/react-native/state-event): update state secara immutable.
+- [TypeScript End-to-End](/belajar/expert/typescript-end-to-end): menambahkan tipe ke JavaScript.
+- Bereksperimen di [React Playground](/lab/react-playground).

@@ -1,0 +1,894 @@
+## Pengantar
+
+Sari sudah memakai aplikasi tugas kuliahmu selama tiga semester. Tugasnya kini lebih dari 5.000. Layar daftar tugas mulai terasa "mikir" sebelum muncul. Di laptopmu, dengan 10 data contoh, semuanya cepat. Jadi lambatnya dari mana?
+
+Banyak orang langsung menebak: "pasti Prisma lambat" atau "pasang Redis saja". Tebakan seperti itu sering salah dan membuang waktu. Cara yang lebih aman punya empat langkah: ukur, cari bottleneck, perbaiki satu hal, lalu ukur lagi.
+
+<Callout type="analogi" title="Seperti kantin yang antreannya mengular">
+
+Saat jam istirahat, antrean kantin kampus panjang sekali. Pemilik kantin bisa menebak, "Tambah kompor saja." Padahal setelah diamati, kompornya santai. Yang lambat adalah satu-satunya kasir yang harus menghitung kembalian receh.
+
+- Mengamati antrean dengan jam tangan = **mengukur**
+- Kasir yang membuat semua orang menunggu = **bottleneck**
+- Menambah kasir kedua, lalu mengamati lagi = **perbaiki satu hal, ukur lagi**
+
+Kalau pemilik membeli kompor baru, uangnya habis dan antrean tetap panjang. Begitu juga server: memperbaiki bagian yang salah tidak membuatnya lebih cepat.
+
+</Callout>
+
+**Bottleneck** adalah bagian paling lambat yang menahan kecepatan seluruh sistem. Di backend, bottleneck bisa berupa query database, kode yang berat, atau ukuran data yang terlalu besar.
+
+<Flow nodes={["Ukur", "Temukan bottleneck", "Perbaiki satu hal", "Ukur lagi"]} labels={["autocannon + log", "query log / profil", "bandingkan angka"]} caption="Siklus optimasi: jangan lompat langsung ke perbaikan" />
+
+Kita bekerja langsung di API pendamping `api/` (TypeScript). Setiap kutipan kode menyebut path file-nya. Ada juga kode yang **tidak** ada di API pendamping. Kode itu diberi label **saran pengembangan**, artinya langkah yang bisa kamu tambahkan sendiri di salinan proyekmu.
+
+Pelajaran ini melanjutkan [Arsitektur Bersih](/belajar/expert/clean-architecture). Di sana semua query database sudah dikumpulkan di file service. Karena letaknya di satu tempat, query itu lebih mudah dicari dan dipercepat.
+
+## Ukur dulu, baru optimasi
+
+Sebelum mengubah apa pun, kamu butuh angka. Angka pertama yang kamu kumpulkan disebut **baseline** (angka awal sebagai pembanding). Setelah setiap perbaikan, kamu membandingkan angka baru dengan baseline. Kalau angkanya tidak membaik, perubahan itu tidak berguna.
+
+### Waktu per request
+
+Cara paling sederhana adalah mencatat berapa lama setiap **request** (permintaan dari aplikasi ke API) diproses. API pendamping sudah melakukannya saat development. Pencatatnya adalah **morgan**, sebuah **middleware** (kode yang dilewati setiap request sebelum sampai ke route, seperti satpam di gerbang kampus yang mencatat setiap tamu):
+
+```ts title="api/src/app.ts"
+if (env.NODE_ENV === "development") {
+  app.use(morgan("dev"));
+}
+```
+
+Kode ini artinya: kalau server berjalan dalam mode development, pasang morgan. Setiap request lalu tercetak satu baris di terminal:
+
+```txt
+GET /api/tasks?limit=20 200 9.871 ms - 9474
+```
+
+Cara membaca baris itu:
+
+- `GET /api/tasks?limit=20` = request yang masuk
+- `200` = status code (berhasil)
+- `9.871 ms` = waktu respons, sekitar 10 milidetik
+- `9474` = ukuran isi respons dalam byte, sekitar 9 KB
+
+Morgan hanya aktif di development. Kamu mungkin ingin catatan yang juga jalan di production dan menandai request yang lambat. Untuk itu, buat middleware timing sendiri (**saran pengembangan**):
+
+```ts title="api/src/middleware/timing.ts"
+import type { NextFunction, Request, Response } from "express";
+
+const SLOW_MS = 200;
+
+export function timing(req: Request, res: Response, next: NextFunction) {
+  const start = process.hrtime.bigint();
+  res.on("finish", () => {
+    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    const label = ms > SLOW_MS ? "LAMBAT" : "ok";
+    console.log(`[${label}] ${req.method} ${req.originalUrl} ${res.statusCode} ${ms.toFixed(1)}ms`);
+  });
+  next();
+}
+```
+
+Cara kerjanya mirip stopwatch:
+
+- `process.hrtime.bigint()` mencatat waktu mulai dalam nanodetik. Waktu ini tidak terpengaruh kalau jam laptop diubah.
+- `res.on("finish", ...)` menunggu sampai respons selesai dikirim, lalu menghitung selisih waktunya.
+- Pembagian `1e6` mengubah nanodetik menjadi milidetik.
+- Request yang lebih dari 200 ms diberi label `LAMBAT` supaya mudah dicari di log.
+
+Pasang `app.use(timing)` di `createApp()`, sebelum router, supaya semua request ikut diukur.
+
+### Melihat query Prisma
+
+Durasi request belum menjawab **kenapa** sebuah request lambat. Kamu perlu melihat **query** (perintah ke database) yang dikirim Prisma dalam bentuk SQL. Prisma 7 bisa memberi tahu setiap kali ia menjalankan query. Kabar itu disebut **event**, dan isinya teks SQL, parameter, serta durasinya. Berikut caranya (**saran pengembangan**, aktif hanya bila `LOG_QUERIES=true`):
+
+```diff title="api/src/lib/prisma.ts"
+ const adapter = new PrismaBetterSqlite3({ url: env.DATABASE_URL });
+
+-export const prisma = new PrismaClient({ adapter });
++export const prisma = new PrismaClient({
++  adapter,
++  log: [{ emit: "event", level: "query" }],
++});
++
++if (process.env.LOG_QUERIES === "true") {
++  prisma.$on("query", (e) => {
++    console.log(`[prisma] ${e.duration}ms ${e.query}`);
++  });
++}
+```
+
+Perubahan ini punya dua bagian:
+
+- Opsi `log: [{ emit: "event", level: "query" }]` meminta Prisma mengirim event untuk setiap query.
+- Blok `if` memasang pendengar dengan `prisma.$on("query", ...)`. Setiap event dicetak sebagai satu baris: durasi lalu teks SQL-nya. Blok ini hanya aktif kalau variabel lingkungan `LOG_QUERIES` bernilai `"true"`, jadi log tidak membanjiri terminal setiap saat.
+
+Jalankan server dengan variabel itu:
+
+<Tabs items={["Windows (PowerShell)", "macOS/Linux"]}>
+<Tab>
+
+```powershell
+$env:LOG_QUERIES = "true"; npm run dev
+```
+
+</Tab>
+<Tab>
+
+```bash
+LOG_QUERIES=true npm run dev
+```
+
+</Tab>
+</Tabs>
+
+Panggil `GET /api/tasks?limit=20` dari aplikasi atau `Invoke-RestMethod`, lalu lihat terminal API:
+
+```txt
+[prisma] 0ms SELECT COUNT(*) AS `_count$_all` FROM (SELECT `main`.`Task`.`id` FROM `main`.`Task` WHERE `main`.`Task`.`userId` = ? LIMIT ? OFFSET ?) AS `sub`
+[prisma] 1ms SELECT `main`.`Task`.`id`, `main`.`Task`.`title`, ... FROM `main`.`Task` WHERE `main`.`Task`.`userId` = ? ORDER BY `main`.`Task`.`createdAt` DESC, `main`.`Task`.`id` DESC LIMIT ? OFFSET ?
+[prisma] 0ms SELECT `main`.`Course`.`id`, `main`.`Course`.`name`, `main`.`Course`.`color` FROM `main`.`Course` WHERE `main`.`Course`.`id` IN (?,?,?)
+[prisma] 0ms SELECT `main`.`Attachment`.`id`, ... FROM `main`.`Attachment` WHERE `main`.`Attachment`.`taskId` IN (?,?,?, ...) ORDER BY `main`.`Attachment`.`id` ASC
+GET /api/tasks?limit=20 200 9.871 ms - 9474
+```
+
+Ada empat query untuk satu halaman:
+
+1. Menghitung total tugas (untuk `meta.total`).
+2. Mengambil 20 tugas.
+3. Mengambil mata kuliah dari tugas-tugas itu.
+4. Mengambil lampiran dari tugas-tugas itu.
+
+Ingat angka **empat** ini. Sebentar lagi kamu akan melihat kode yang jumlah query-nya ikut membengkak saat datanya bertambah.
+
+### Uji beban dengan autocannon
+
+Satu request yang cepat belum tentu tetap cepat saat 50 mahasiswa membuka aplikasi bersamaan. Kantin yang sepi juga terasa cepat. Ujiannya baru terlihat saat jam istirahat.
+
+**Load test** (uji beban) meniru jam istirahat itu. Alatnya mengirim banyak request sekaligus, lalu mengukur dua hal:
+
+- **Latensi**: berapa lama satu request menunggu sampai dijawab.
+- **Throughput**: berapa request yang selesai dalam satu detik.
+
+Kita pakai **autocannon**, alat load test yang berjalan di Node.
+
+<Steps>
+<Step title="Perbanyak data">
+
+Sepuluh tugas contoh terlalu sedikit untuk memunculkan masalah. Buat skrip **seed** (skrip pengisi data contoh) tambahan sebagai **saran pengembangan**, lalu jalankan `npx tsx prisma/seed-banyak.ts`:
+
+```ts title="api/prisma/seed-banyak.ts"
+import { prisma } from "../src/lib/prisma.ts";
+
+const STATUSES = ["TODO", "IN_PROGRESS", "DONE"] as const;
+const PRIORITIES = ["LOW", "MEDIUM", "HIGH"] as const;
+
+const user = await prisma.user.findUniqueOrThrow({ where: { email: "demo@kampus.ac.id" } });
+const courses = await prisma.course.findMany({ where: { userId: user.id }, select: { id: true } });
+
+const data = Array.from({ length: 5000 }, (_, i) => ({
+  title: `Latihan soal #${i + 1}`,
+  description: "Kerjakan soal bab 3 lalu unggah foto jawabannya.",
+  status: STATUSES[i % 3] ?? "TODO",
+  priority: PRIORITIES[i % 3] ?? "MEDIUM",
+  deadline: new Date(Date.now() + (i % 60) * 86_400_000),
+  userId: user.id,
+  courseId: courses[i % courses.length]?.id ?? null,
+}));
+
+const { count } = await prisma.task.createMany({ data });
+console.log(`Ditambahkan ${count} tugas untuk ${user.email}`);
+await prisma.$disconnect();
+```
+
+Skrip ini mencari user demo dan mata kuliahnya. Lalu ia membuat 5.000 tugas palsu dengan status, prioritas, dan deadline yang bergiliran. `createMany` menyimpan semuanya dalam satu perintah, jadi prosesnya cepat. Outputnya:
+
+```txt
+Ditambahkan 5000 tugas untuk demo@kampus.ac.id
+```
+
+</Step>
+<Step title="Ambil access token lalu jalankan autocannon">
+
+Semua endpoint tugas wajib login. Jadi skrip ini login dulu, menyimpan access token, lalu mengirimnya di header `Authorization`. Arti opsi autocannon:
+
+- `-c 50` = 50 koneksi berjalan bersamaan, seperti 50 mahasiswa membuka aplikasi di detik yang sama.
+- `-d 10` = tes berjalan selama 10 detik.
+- `-H` = menambah header, dengan format `nama=nilai`.
+
+<Tabs items={["Windows (PowerShell)", "macOS/Linux"]}>
+<Tab>
+
+```powershell
+$login = Invoke-RestMethod -Method Post -Uri "http://localhost:3000/api/auth/login" -ContentType "application/json" `
+  -Body (@{ email = "demo@kampus.ac.id"; password = "password123" } | ConvertTo-Json)
+$token = $login.data.accessToken
+npx autocannon -c 50 -d 10 -H "Authorization=Bearer $token" "http://localhost:3000/api/tasks?limit=20"
+```
+
+</Tab>
+<Tab>
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login -H "Content-Type: application/json" \
+  -d '{"email":"demo@kampus.ac.id","password":"password123"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.accessToken')
+npx autocannon -c 50 -d 10 -H "Authorization=Bearer $TOKEN" "http://localhost:3000/api/tasks?limit=20"
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step title="Baca hasilnya">
+
+```txt
+Running 10s test @ http://localhost:3000/api/tasks?limit=20
+50 connections
+
+┌─────────┬───────┬───────┬───────┬───────┬──────────┬─────────┬────────┐
+│ Stat    │ 2.5%  │ 50%   │ 97.5% │ 99%   │ Avg      │ Stdev   │ Max    │
+├─────────┼───────┼───────┼───────┼───────┼──────────┼─────────┼────────┤
+│ Latency │ 38 ms │ 45 ms │ 71 ms │ 84 ms │ 47.12 ms │ 9.87 ms │ 191 ms │
+└─────────┴───────┴───────┴───────┴───────┴──────────┴─────────┴────────┘
+┌───────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┐
+│ Stat      │ 1%     │ 2.5%   │ 50%    │ 97.5%  │ Avg    │ Stdev  │ Min    │
+├───────────┼────────┼────────┼────────┼────────┼────────┼────────┼────────┤
+│ Req/Sec   │ 912    │ 912    │ 1,061  │ 1,120  │ 1,050  │ 55.4   │ 912    │
+├───────────┼────────┼────────┼────────┼────────┼────────┼────────┼────────┤
+│ Bytes/Sec │ 9.9 MB │ 9.9 MB │ 11.5 MB│ 12.1 MB│ 11.4 MB│ 600 kB │ 9.9 MB │
+└───────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┘
+
+Req/Bytes counts sampled once per second.
+# of samples: 10
+
+11k requests in 10.03s, 114 MB read
+```
+
+Angka di laptopmu pasti berbeda. Yang perlu kamu kuasai adalah cara membacanya:
+
+- Kolom **50%** (median) = pengalaman user biasa. Separuh request selesai lebih cepat dari 45 ms.
+- Kolom **99%** (p99) = pengalaman 1% user yang paling sial. Hanya 1% request yang lebih lambat dari 84 ms.
+- **Req/Sec Avg** = throughput, rata-rata request yang selesai per detik.
+
+Perhatikan p99, jangan hanya rata-rata. Rata-rata bisa terlihat bagus padahal sebagian kecil user menunggu lama sekali. Kalau muncul baris `non 2xx responses`, artinya sebagian request gagal. Cek penyebabnya dulu sebelum menyimpulkan apa pun. Simpan hasil ini sebagai **baseline** untuk dibandingkan setelah setiap perbaikan.
+
+</Step>
+</Steps>
+
+<Callout type="tip" title="Ukur di kondisi yang mirip production">
+
+`npm run dev` memakai `tsx watch` dan morgan. Keduanya menambah beban kerja, jadi angkanya lebih buruk dari kenyataan. Untuk angka yang jujur:
+
+1. Jalankan `npm run build`, lalu `npm start` (yang menjalankan `node dist/server.js`).
+2. Tutup aplikasi berat lain di laptopmu.
+3. Ulangi tes 2 sampai 3 kali. Percobaan pertama biasanya lebih lambat karena server masih "pemanasan".
+
+</Callout>
+
+## N+1 query: musuh yang tidak kelihatan
+
+<Callout type="analogi" title="Seperti bolak-balik ke warung untuk tiap barang">
+
+Ibumu menitip daftar belanja berisi 20 barang. Kamu bisa membawa daftar itu ke warung dan membeli semuanya sekali jalan. Atau kamu bisa jalan ke warung, beli gula, pulang, lalu jalan lagi untuk beli kopi, dan seterusnya sampai 20 kali.
+
+- Membaca daftar belanja = **1 query** untuk mengambil daftar tugas.
+- Tiap perjalanan untuk satu barang = **1 query tambahan** per tugas (inilah **N**).
+- Membawa daftar dan membeli semuanya sekaligus = **satu query gabungan** untuk semua tugas.
+
+Bedanya dengan warung: database tidak capek berjalan. Yang mahal adalah "ongkos jalan" tiap query, yaitu waktu kirim perintah, tunggu, dan terima jawaban.
+
+</Callout>
+
+**N+1 query** terjadi saat kode mengambil sebuah daftar (1 query), lalu menjalankan query lagi untuk **setiap** item di daftar itu (N query). Dengan 10 data, masalah ini tidak terasa. Dengan 20 item per halaman, satu request menjadi 21 query. Kalau 50 user membuka halaman itu bersamaan, database harus melayani 1.050 query sekaligus.
+
+<Compare>
+<CompareItem title="Hindari: query di dalam loop" tone="bad">
+
+```ts
+const tasks = await prisma.task.findMany({ where: { userId }, take: 20 });
+for (const task of tasks) {
+  // 1 query tambahan per tugas → 1 + 20 query
+  task.course = task.courseId
+    ? await prisma.course.findUnique({ where: { id: task.courseId } })
+    : null;
+}
+```
+
+</CompareItem>
+<CompareItem title="API pendamping: include sekali jalan" tone="good">
+
+```ts title="api/src/modules/tasks/tasks.service.ts"
+const taskQueryArgs = {
+  omit: { userId: true },
+  include: {
+    course: { select: { id: true, name: true, color: true } },
+    attachments: { orderBy: { id: "asc" } },
+  },
+} satisfies Prisma.TaskDefaultArgs;
+```
+
+</CompareItem>
+</Compare>
+
+Kode pertama (Hindari) bertanya ke database satu per satu, "mata kuliah tugas ini apa?", sebanyak 20 kali. Kode kedua memakai `include`, artinya "sekalian bawakan mata kuliah dan lampirannya".
+
+Dengan `include`, Prisma mengumpulkan semua `courseId` dulu. Lalu ia mengambil semua mata kuliahnya dalam **satu** query `WHERE id IN (...)`, seperti yang terlihat di log tadi. Jumlah query tetap empat, berapa pun isi halamannya.
+
+Cara termudah mendeteksi N+1:
+
+1. Nyalakan `LOG_QUERIES`.
+2. Panggil endpoint sekali, lalu hitung baris log `[prisma]`.
+3. Naikkan `limit`, panggil lagi, dan hitung ulang.
+
+Kalau jumlah query ikut naik saat `limit` dinaikkan, hampir pasti ada N+1.
+
+Pola yang sama dipakai untuk menghitung relasi. `courses.service.ts` tidak menjalankan `count` untuk tiap mata kuliah. Ia meminta database menghitung semuanya sekaligus:
+
+```ts title="api/src/modules/courses/courses.service.ts"
+// Kolom userId tidak dikirim ke client; jumlah tugas dihitung oleh database.
+const courseQueryArgs = {
+  omit: { userId: true },
+  include: { _count: { select: { tasks: true } } },
+} satisfies Prisma.CourseDefaultArgs;
+```
+
+`_count` artinya "hitung jumlah tugas milik tiap mata kuliah", dan database mengerjakannya di dalam query yang sama. `omit: { userId: true }` membuang kolom `userId` dari hasil karena aplikasi tidak membutuhkannya.
+
+Ada satu pengecualian di kode API pendamping. `findTasksByPriority` di `tasks.service.ts` memang menjalankan query di dalam loop. Tapi loop-nya paling banyak **tiga** putaran (LOW, MEDIUM, HIGH). Jumlah query-nya tidak ikut bertambah walaupun tugasnya makin banyak, jadi itu bukan N+1. Pilihan ini sengaja diambil karena prioritas disimpan sebagai teks.
+
+### Ambil kolom seperlunya
+
+Bayangkan kamu hanya butuh nama dan NIM teman sekelas, tapi yang difotokopi seluruh biodatanya. Kertasnya boros dan lama dibawa. Data juga begitu. Setiap kolom yang diambil harus dibaca dari disk, diubah menjadi teks JSON, lalu dikirim lewat jaringan seluler ke HP user.
+
+`omit: { userId: true }` di atas sudah membuang satu kolom. Layar **daftar** di aplikasi biasanya juga tidak butuh `description` (bisa sampai 2.000 karakter) atau detail tiap lampiran. Kamu bisa membuat bentuk khusus untuk daftar (**saran pengembangan**):
+
+```ts title="api/src/modules/tasks/tasks.service.ts"
+const taskListArgs = {
+  select: {
+    id: true,
+    title: true,
+    status: true,
+    priority: true,
+    deadline: true,
+    course: { select: { id: true, name: true, color: true } },
+    _count: { select: { attachments: true } },
+  },
+} satisfies Prisma.TaskDefaultArgs;
+```
+
+`select` adalah daftar kolom yang boleh diambil. Hanya kolom bernilai `true` yang dibaca. Untuk lampiran, kode ini hanya meminta jumlahnya lewat `_count`, cukup untuk menampilkan ikon "3 lampiran" di daftar.
+
+Detail lengkap tetap tersedia di `GET /api/tasks/:id` saat user membuka satu tugas. Ukur dampaknya dengan membandingkan ukuran body sebelum dan sesudah perubahan:
+
+<Tabs items={["Windows (PowerShell)", "macOS/Linux"]}>
+<Tab>
+
+```powershell
+curl.exe -s -o NUL -w "%{size_download} byte`n" -H "Authorization: Bearer $token" "http://localhost:3000/api/tasks?limit=50"
+```
+
+</Tab>
+<Tab>
+
+```bash
+curl -s -o /dev/null -w "%{size_download} byte\n" -H "Authorization: Bearer $TOKEN" "http://localhost:3000/api/tasks?limit=50"
+```
+
+</Tab>
+</Tabs>
+
+Perintah ini membuang isi respons (`-o NUL` atau `-o /dev/null`) dan hanya mencetak ukurannya dalam byte. Jalankan sekali sebelum dan sekali sesudah memakai `taskListArgs`, lalu bandingkan angkanya.
+
+## Index database
+
+<Callout type="analogi" title="Seperti indeks di belakang buku">
+
+Kamu mencari kata "normalisasi" di buku Basis Data setebal 500 halaman. Tanpa indeks di belakang buku, kamu harus membuka halaman 1 sampai 500. Dengan indeks, kamu lihat "normalisasi ... hal. 212", lalu langsung ke halaman itu.
+
+- Membalik semua halaman = **full table scan**, database membaca semua baris.
+- Daftar indeks di belakang buku = **index** database.
+- Halaman tambahan untuk daftar indeks = **ruang disk** yang dipakai index.
+
+Bedanya: indeks buku dicetak sekali. Index database harus diperbarui setiap kali ada data baru atau data berubah.
+
+</Callout>
+
+**Index** adalah struktur tambahan yang membuat database bisa langsung melompat ke baris yang dicari. Tanpa index, database melakukan **full table scan**, yaitu membaca semua baris satu per satu. API pendamping sudah menyiapkan beberapa index:
+
+```prisma title="api/prisma/schema.prisma"
+model Task {
+  // ...
+  @@index([userId, status])
+  @@index([userId, deadline])
+  @@index([courseId])
+}
+
+model Attachment {
+  // ...
+  @@index([taskId])
+}
+```
+
+Baris `@@index([...])` di dalam model artinya "buatkan index untuk kolom-kolom ini". Misalnya `@@index([taskId])` mempercepat pencarian lampiran milik satu tugas.
+
+`@@index([userId, status])` adalah **composite index** (index gabungan dari dua kolom atau lebih). Urutan kolomnya penting. Index ini membantu filter `userId` saja, atau `userId` + `status`. Index ini **tidak** membantu filter `status` saja.
+
+Bayangkan daftar kontak yang diurutkan berdasarkan kota, lalu nama. Mencari "semua Andi di Bandung" cepat, karena kamu langsung ke bagian Bandung. Mencari "semua Andi di seluruh Indonesia" tetap lambat, karena Andi tersebar di bagian setiap kota.
+
+Sekarang cocokkan index dengan query yang paling sering dipakai. Urutan default daftar tugas adalah `-createdAt` (terbaru dulu). Jadi query yang paling sering berbentuk `WHERE userId = ? ORDER BY createdAt DESC, id DESC`. Kamu bisa bertanya ke SQLite bagaimana ia akan menjalankan query itu dengan `EXPLAIN QUERY PLAN` (skrip **saran pengembangan**, jalankan `npx tsx prisma/explain.ts`):
+
+```ts title="api/prisma/explain.ts"
+import { prisma } from "../src/lib/prisma.ts";
+
+const plan = await prisma.$queryRawUnsafe<{ detail: string }[]>(
+  `EXPLAIN QUERY PLAN
+   SELECT id, title FROM "Task" WHERE "userId" = 1
+   ORDER BY "createdAt" DESC, id DESC LIMIT 20`,
+);
+for (const row of plan) console.log(row.detail);
+await prisma.$disconnect();
+```
+
+Skrip ini mengirim SQL mentah lewat `$queryRawUnsafe`. Awalan `EXPLAIN QUERY PLAN` membuat SQLite tidak menjalankan query-nya. SQLite hanya menjelaskan langkah yang akan ia ambil. Hasilnya:
+
+```txt
+SEARCH Task USING INDEX Task_userId_status_idx (userId=?)
+USE TEMP B-TREE FOR ORDER BY
+```
+
+Baris pertama bagus: SQLite memakai index untuk mencari tugas milik user. Baris kedua adalah tanda bahaya. SQLite mengambil **semua** tugas milik user, mengurutkannya di memori, baru memotong 20 teratas. Dengan 5.000 tugas, pekerjaan itu terulang di setiap request.
+
+Solusinya, tambahkan index yang cocok dengan filter **dan** urutannya (**saran pengembangan**):
+
+```diff title="api/prisma/schema.prisma"
+   @@index([userId, status])
+   @@index([userId, deadline])
++  @@index([userId, createdAt])
+   @@index([courseId])
+```
+
+Lalu jalankan dua perintah ini:
+
+1. `npx prisma migrate dev --name task_user_created_idx` untuk membuat **migration** (catatan perubahan struktur database, mirip catatan renovasi rumah) dan menerapkannya.
+2. `npm run db:generate` untuk memperbarui Prisma Client. Di Prisma 7, `migrate dev` tidak lagi menjalankan generate otomatis. Karena itu script `db:migrate` di `package.json` merangkai keduanya.
+
+Jalankan `explain.ts` lagi:
+
+```txt
+SEARCH Task USING INDEX Task_userId_createdAt_idx (userId=?)
+```
+
+Baris `TEMP B-TREE` hilang. SQLite sekarang membaca index yang sudah terurut dan berhenti setelah 20 baris. Ulangi autocannon dan bandingkan dengan baseline.
+
+Dua hal yang perlu kamu ingat:
+
+- **Index tidak gratis.** Setiap `INSERT` dan `UPDATE` harus ikut memperbarui semua index di tabel itu. Index juga memakan ruang disk. Jadi tambahkan index untuk query yang benar-benar sering, bukan untuk setiap kolom.
+- **Pencarian `contains` tidak terbantu index biasa.** Filter `q` di `buildWhere` menjadi `LIKE '%kata%'`. Karena polanya diawali `%`, kata itu bisa ada di mana saja, sehingga index tidak bisa dipakai. Ini seperti mencari semua nama yang *mengandung* "di" di daftar kontak: kamu tetap harus membaca semuanya. Kalau pencarian jadi bottleneck, pertimbangkan **full-text search** (FTS5 di SQLite atau `tsvector` di PostgreSQL).
+
+## Offset vs cursor pagination
+
+<Callout type="analogi" title="Seperti menghitung halaman vs memakai pembatas buku">
+
+Kamu membaca novel tebal sedikit demi sedikit. Ada dua cara melanjutkan bacaan besok:
+
+- **Offset**: kamu ingat "sudah 240 halaman", lalu menghitung lembar dari halaman 1 sampai 240. Makin jauh, makin lama menghitungnya.
+- **Cursor**: kamu menyelipkan **pembatas buku** di halaman terakhir. Besok kamu langsung membuka di pembatas itu.
+
+Bedanya dengan buku: daftar tugas bisa bertambah di depan. Kalau ada 3 tugas baru, hitungan "halaman ke-240" bergeser, sedangkan pembatas tetap menempel di item yang sama.
+
+</Callout>
+
+API pendamping memakai **offset pagination** (pagination berdasarkan "lewati sekian data"):
+
+```ts title="api/src/lib/pagination.ts"
+export function paginate(page: number, limit: number) {
+  return { skip: (page - 1) * limit, take: limit };
+}
+```
+
+Fungsi ini mengubah nomor halaman menjadi dua angka untuk Prisma. `skip` = berapa baris yang dilewati, `take` = berapa baris yang diambil. Halaman 3 dengan limit 20 berarti lewati 40, ambil 20.
+
+Cara ini mudah dipahami dan cocok untuk tombol "halaman 1, 2, 3". Masalahnya muncul saat datanya besar dan terus bertambah:
+
+| Aspek | Offset (`skip`/`take`) | Cursor (`cursor`/`take`) |
+| --- | --- | --- |
+| Halaman ke-250 | Database tetap melewati 4.980 baris dulu | Langsung melompat lewat index |
+| Data baru masuk saat scroll | Item bisa muncul dua kali atau terlewat | Stabil, mulai tepat setelah item terakhir |
+| Lompat ke halaman tertentu | Bisa | Tidak bisa, hanya "berikutnya" |
+| Perlu `count` total | Ya, untuk `totalPages` (query tambahan) | Tidak |
+| Cocok untuk | Tabel admin bernomor halaman | Infinite scroll di aplikasi mobile |
+
+**Cursor pagination** (sering disebut *keyset pagination*) mengingat posisi item terakhir yang sudah dilihat. Request berikutnya meminta "20 item setelah item ini". Implementasinya dengan Prisma (**saran pengembangan**):
+
+```ts title="api/src/modules/tasks/tasks.service.ts"
+export async function listTasksByCursor(userId: number, cursor: number | undefined, limit: number) {
+  const rows = await prisma.task.findMany({
+    ...taskQueryArgs,
+    where: { userId },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit + 1, // ambil 1 lebih untuk tahu masih ada halaman berikutnya
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), // skip 1 = lewati item cursor itu sendiri
+  });
+  const hasMore = rows.length > limit;
+  const data = hasMore ? rows.slice(0, limit) : rows;
+  return { data, meta: { limit, nextCursor: hasMore ? (data.at(-1)?.id ?? null) : null } };
+}
+```
+
+Cara kerja fungsi ini:
+
+- `take: limit + 1` mengambil satu item lebih banyak dari yang diminta. Kalau item ke-21 ada, berarti masih ada halaman berikutnya (`hasMore`).
+- `cursor: { id: cursor }` adalah pembatas bukunya. Prisma mulai dari tugas dengan `id` itu, dan `skip: 1` melewati tugas pembatas itu sendiri supaya tidak tampil dua kali.
+- `nextCursor` diisi `id` item terakhir di halaman ini. Kalau sudah habis, nilainya `null`.
+
+Client memanggil `GET /api/tasks?limit=20`. Lalu ia memanggil `GET /api/tasks?limit=20&cursor=4987` memakai `meta.nextCursor` dari respons sebelumnya, terus begitu sampai `nextCursor` bernilai `null`. Di aplikasi, pasangannya adalah `useInfiniteQuery` dengan `getNextPageParam: (last) => last.meta.nextCursor ?? undefined` dari [TanStack Query](/belajar/fullstack/tanstack-query).
+
+Urutan `id` sebagai pengurut kedua wajib ada. Tanpa itu, dua tugas dengan `createdAt` yang sama bisa tertukar antarhalaman. Index `[userId, createdAt]` yang tadi kamu buat juga membuat query cursor ini cepat.
+
+## Kompresi respons
+
+Saat pindahan kos, baju yang dilipat rapat dan dimasukkan plastik vakum muat di satu tas, padahal tadinya butuh dua. Isinya sama, ukurannya yang mengecil. **Kompresi** melakukan hal serupa pada data.
+
+JSON berisi banyak teks yang berulang, misalnya `"status":"TODO"` dan `"priority":"MEDIUM"` di setiap tugas. Teks berulang mudah dipadatkan dengan **gzip** atau **brotli** sebelum dikirim. HP user lalu membukanya kembali seperti semula. API pendamping belum melakukannya. Pasang middleware `compression` (**saran pengembangan**) dengan `npm install compression` dan `npm install -D @types/compression`.
+
+```diff title="api/src/app.ts"
++import compression from "compression";
+ ...
+   app.use(cors({ origin: corsOrigin(env.CORS_ORIGIN) }));
++  app.use(compression());
+   app.use(express.json());
+```
+
+Diff ini menambah dua baris: import paket `compression`, lalu `app.use(compression())` sebelum `express.json()`. Posisinya di atas router, jadi semua respons ikut melewatinya.
+
+Middleware ini hanya memadatkan respons yang lebih besar dari 1 KB. Ia juga hanya bekerja kalau client mengirim header `Accept-Encoding` (tanda bahwa client sanggup membuka data terkompresi). Gambar JPEG dan PNG dilewati karena sudah terkompresi dari sananya. Di production, kompresi sering dikerjakan oleh **reverse proxy** (server perantara di depan API, misalnya Nginx, Caddy, atau platform hosting). Dengan begitu, Node tidak perlu memakai CPU untuk memadatkan data.
+
+## Caching dan invalidasi
+
+<Callout type="analogi" title="Seperti jawaban yang ditulis di papan tulis">
+
+Di kelas, banyak teman bertanya ke asisten dosen, "Deadline tugas Basis Data kapan?" Daripada menjawab satu per satu, asisten menulis jawabannya di papan tulis. Teman yang datang belakangan cukup membaca papan.
+
+- Tulisan di papan tulis = **cache**, salinan jawaban yang siap dibaca.
+- Bertanya langsung ke asisten = **query ke database**, lebih lambat.
+- Menghapus tulisan saat deadline diundur = **invalidasi**.
+
+Kalau asisten lupa menghapus papan setelah deadline diundur, semua orang membaca info yang salah. Itulah risiko terbesar cache: **data basi**.
+
+</Callout>
+
+**Cache** adalah salinan hasil yang disimpan supaya tidak perlu dihitung ulang. Menyimpannya mudah. Bagian tersulitnya adalah **invalidasi**, yaitu memutuskan kapan salinan itu harus dibuang karena datanya sudah berubah.
+
+### HTTP: ETag dan Cache-Control
+
+Express 5 otomatis menambahkan header **ETag** di `res.json()`. ETag adalah sidik jari isi respons, semacam kode unik yang berubah kalau isinya berubah. Alurnya:
+
+1. Client menyimpan respons beserta ETag-nya.
+2. Saat meminta data yang sama, client mengirim ETag itu lewat header `If-None-Match`.
+3. Kalau isinya belum berubah, Express membalas `304 Not Modified` tanpa body. Client memakai salinan lamanya.
+
+```http
+GET /api/tasks?limit=20 HTTP/1.1
+Authorization: Bearer eyJhbGciOi...
+If-None-Match: W/"2502-hN2t9KQ5vRk8m1Zq0yWlB3k7JxA"
+
+HTTP/1.1 304 Not Modified
+ETag: W/"2502-hN2t9KQ5vRk8m1Zq0yWlB3k7JxA"
+```
+
+Cara ini menghemat kuota internet user. Tapi database **tidak** ikut hemat. Query tetap berjalan, karena ETag dihitung dari body yang sudah jadi.
+
+Untuk data pribadi, tambahkan `res.set("Cache-Control", "private, no-cache")` (**saran pengembangan**). Artinya: proxy bersama (misalnya proxy kantor atau kampus) tidak boleh menyimpan respons ini, dan client wajib bertanya ulang ke server sebelum memakai salinannya.
+
+File lampiran justru kebalikannya. Namanya unik (`Date.now()` + byte acak di `upload.ts`) dan isinya tidak pernah berubah. Jadi file itu aman disimpan lama di cache dengan `express.static(uploadDir, { maxAge: "30d", immutable: true })`, yaitu boleh dipakai ulang selama 30 hari tanpa bertanya ke server.
+
+### Cache di memori dengan LRU
+
+Untuk mengurangi kerja database, simpan hasil query di memori proses Node. Pakai **LRU cache** (*Least Recently Used*). Cache ini punya kapasitas terbatas. Kalau penuh, entri yang paling lama tidak dipakai dibuang duluan, mirip kamu membuang catatan paling usang saat buku catatan sudah penuh. Contoh dengan paket `lru-cache` (**saran pengembangan**, `npm install lru-cache`):
+
+```ts title="api/src/lib/cache.ts"
+import { LRUCache } from "lru-cache";
+
+const store = new LRUCache<string, object>({ max: 500, ttl: 30_000 }); // 500 entri, 30 detik
+const versions = new Map<number, number>();
+
+export function userKey(userId: number, name: string, params: unknown) {
+  return `u${userId}:v${versions.get(userId) ?? 0}:${name}:${JSON.stringify(params)}`;
+}
+
+export async function cached<T extends object>(key: string, load: () => Promise<T>): Promise<T> {
+  const hit = store.get(key) as T | undefined;
+  if (hit) return hit;
+  const value = await load();
+  store.set(key, value);
+  return value;
+}
+
+// Naikkan versi → semua key lama milik user ini tidak akan dibaca lagi.
+export function invalidateUser(userId: number) {
+  versions.set(userId, (versions.get(userId) ?? 0) + 1);
+}
+```
+
+Isi file ini dalam bahasa sehari-hari:
+
+- `store` adalah tempat menyimpan maksimal 500 jawaban. Tiap jawaban kedaluwarsa setelah 30 detik (`ttl`).
+- `userKey` membuat "label" unik untuk setiap jawaban, misalnya `u1:v0:tasks:{"page":1}`. Label itu memuat id user, nomor versi, nama data, dan parameter query.
+- `cached` mengecek dulu apakah jawaban dengan label itu sudah ada. Kalau ada, langsung dipakai. Kalau belum, ia menjalankan `load()` (query ke database), lalu menyimpan hasilnya.
+- `invalidateUser` menaikkan nomor versi user. Label lama (`v0`) tidak akan pernah dicari lagi, jadi semua jawaban lama otomatis diabaikan. Ini seperti mengganti judul halaman catatan, alih-alih menghapus isinya satu per satu.
+
+Cara memakainya di `tasks.service.ts`:
+
+1. Bungkus isi `listTasks` dengan `cached(userKey(userId, "tasks", query), ...)`.
+2. Panggil `invalidateUser(userId)` setelah `createTask`, `updateTask`, `deleteTask`, `addAttachment`, dan `deleteAttachment` berhasil.
+3. Jangan lupa `updateCourse` dan `deleteCourse`. Setiap tugas membawa `course.name` dan `course.color`, jadi mengganti nama mata kuliah juga mengubah isi daftar tugas.
+
+Kalau satu titik invalidasi terlupa, user akan melihat data basi selama 30 detik.
+
+### Redis untuk banyak instance
+
+Cache di memori hanya milik satu proses. Bayangkan kampus punya dua ruang kelas paralel, masing-masing dengan papan tulisnya sendiri. Kalau asisten menghapus info lama di kelas A, papan di kelas B tetap menampilkan info basi.
+
+Hal yang sama terjadi kalau API dijalankan di dua server di belakang **load balancer** (pembagi request ke beberapa server). Invalidasi di server A tidak terlihat di server B. Solusinya adalah cache bersama, satu "papan pengumuman" yang dibaca semua server, seperti **Redis** (**saran pengembangan**, misalnya dengan paket `ioredis`):
+
+```ts title="api/src/lib/redis-cache.ts"
+import { Redis } from "ioredis";
+
+const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379");
+
+export async function cachedJson<T>(key: string, ttlSec: number, load: () => Promise<T>): Promise<T> {
+  const hit = await redis.get(key);
+  if (hit) return JSON.parse(hit) as T;
+  const value = await load();
+  await redis.set(key, JSON.stringify(value), "EX", ttlSec);
+  return value;
+}
+```
+
+Polanya sama dengan `cached` tadi. Bedanya, data disimpan di Redis sebagai teks JSON (`JSON.stringify`), lalu dibaca kembali dengan `JSON.parse`. Opsi `"EX", ttlSec` membuat Redis menghapus data itu otomatis setelah sekian detik.
+
+Nomor versi per user juga pindah ke Redis, misalnya dengan `await redis.incr("v:" + userId)`. Satu aturan penting: pasang cache **setelah** query dan index sudah benar. Cache yang menutupi query buruk hanya menunda masalah.
+
+## SQLite vs PostgreSQL di production
+
+API pendamping memakai SQLite lewat driver `better-sqlite3`:
+
+```ts title="api/src/lib/prisma.ts"
+// Prisma 7 memakai driver adapter: koneksi ke database dibuat oleh library
+// driver (di sini better-sqlite3), bukan oleh query engine bawaan Prisma.
+const adapter = new PrismaBetterSqlite3({ url: env.DATABASE_URL });
+```
+
+Untuk belajar dan aplikasi kecil, SQLite pilihan bagus. Seluruh database hanya satu file, tanpa server terpisah. Bayangkan SQLite seperti buku catatan bersama di meja piket: banyak orang boleh membaca bersamaan, tapi hanya satu orang yang boleh menulis dalam satu waktu. Kenali batasnya:
+
+- **Satu penulis.** SQLite mengunci database saat menulis. Kalau banyak penulisan terjadi bersamaan, bisa muncul error `SqliteError: database is locked` (kode `SQLITE_BUSY`).
+- **WAL membantu pembaca.** Mode *Write-Ahead Logging* (WAL) membuat pembaca tidak perlu menunggu penulis selesai. Aktifkan sekali saja, karena setelannya tersimpan di file database: `await prisma.$queryRawUnsafe("PRAGMA journal_mode = WAL;")`. Pakai `$queryRawUnsafe`, bukan `$executeRawUnsafe`, karena perintah PRAGMA ini mengembalikan baris hasil.
+- **Driver sinkron.** `better-sqlite3` mengerjakan query secara sinkron di thread utama Node. Selama satu query lambat berjalan, seluruh server ikut berhenti sejenak. Karena itu index yang tepat makin penting.
+- **Satu mesin.** File database tidak bisa dibagi ke beberapa server.
+
+Di production dengan banyak user, pindah ke **PostgreSQL**. Langkahnya ada di README API bagian "Pindah ke PostgreSQL" dan di pelajaran [Deploy & CI/CD](/belajar/expert/deploy-ci). PostgreSQL berjalan sebagai server sendiri dan sanggup melayani banyak penulis sekaligus.
+
+Membuka koneksi baru ke PostgreSQL itu mahal. Jadi API menyimpan beberapa koneksi yang siap pakai dan memakainya bergantian. Kumpulan ini disebut **connection pool**, mirip deretan teller bank yang bergantian melayani antrean. Di Prisma 7 dengan `@prisma/adapter-pg`, pool diatur di adapter, bukan lewat URL:
+
+```ts title="api/src/lib/prisma.ts (versi PostgreSQL, saran pengembangan)"
+import { PrismaPg } from "@prisma/adapter-pg";
+import { env } from "../config/env.ts";
+import { PrismaClient } from "../generated/prisma/client.ts";
+
+const adapter = new PrismaPg({
+  connectionString: env.DATABASE_URL,
+  max: 10, // koneksi per instance API (default pg juga 10)
+  connectionTimeoutMillis: 5_000, // gagal cepat kalau pool penuh
+});
+
+export const prisma = new PrismaClient({ adapter });
+```
+
+Arti opsinya: `max: 10` = paling banyak 10 koneksi untuk satu proses API. `connectionTimeoutMillis: 5_000` = kalau semua koneksi sibuk dan tidak ada yang bebas dalam 5 detik, request langsung gagal dengan error, bukan menunggu selamanya.
+
+Hitung totalnya: `max` × jumlah instance API harus di bawah batas koneksi server PostgreSQL. Contoh: 4 instance × 10 koneksi = 40 koneksi. Kalau instance-nya sangat banyak (misalnya di platform serverless), letakkan **pooler** seperti PgBouncer di depan database untuk membagi koneksi.
+
+## Upload dan event loop
+
+<Callout type="analogi" title="Seperti satu barista di kedai kopi">
+
+Kedai kopi dekat kampus hanya punya satu barista. Ia cepat karena tidak pernah diam menunggu. Sambil mesin kopi menyeduh, ia menerima pesanan berikutnya. Begitu kopi jadi, ia kembali menyajikannya.
+
+- Barista = **thread utama** Node.
+- Menerima pesanan sambil mesin bekerja = kode **async** (menunggu database, disk, atau jaringan tanpa diam).
+- Barista yang menggiling biji kopi dengan tangan selama 2 menit = kode **sinkron** yang berat. Selama itu, semua pembeli lain menunggu.
+
+Bedanya dengan kedai sungguhan: Node tidak otomatis memanggil barista cadangan untuk kode JavaScript-mu. Jadi tugas berat harus dihindari atau dipecah.
+
+</Callout>
+
+Node menjalankan JavaScript-mu di **satu thread** lewat [event loop](/glosarium#event-loop). Selama satu handler sibuk menghitung, request lain menunggu. Ada tiga sumber "macet" yang perlu kamu kenali di API ini.
+
+**Upload.** `upload.ts` memakai `multer.diskStorage`. File dialirkan (*streaming*) langsung ke disk sepotong demi sepotong, dan ukurannya dibatasi:
+
+```ts title="api/src/middleware/upload.ts"
+const upload = multer({
+  storage,
+  limits: { fileSize: MAX_FILE_SIZE, files: 1 },
+  // ...
+});
+```
+
+`limits` berarti: satu file per request, dengan ukuran paling besar `MAX_FILE_SIZE`. File yang lebih besar langsung ditolak.
+
+Bandingkan dengan `multer.memoryStorage()`. Di sana seluruh file ditampung di RAM, sehingga 100 upload 5 MB bersamaan butuh 500 MB memori. Prinsip yang sama berlaku untuk `express.json()`, yang secara default menolak body di atas 100 KB.
+
+**Hash password.** `password.ts` memakai `bcryptjs` dengan `SALT_ROUNDS = 10`. Angka ini disebut *cost*. Setiap kenaikan 1 cost menggandakan waktu hash, jadi cost 12 kira-kira empat kali lebih lambat dari cost 10. Versi async `bcrypt.hash` memecah kerjanya supaya event loop sempat melayani request lain. Tapi CPU tetap terpakai, jadi endpoint login memang mahal. Itu sebabnya route auth dibatasi `authRateLimiter`. Jangan pernah memakai `hashSync` atau `compareSync` di handler request.
+
+**File system sinkron.** `storage.ts` memanggil `mkdirSync` **sekali** saat modul dimuat. Itu tidak masalah karena terjadi sebelum server menerima request. Sementara itu, penghapusan file di dalam request memakai versi async `rm`. Hindari `readFileSync` dan `writeFileSync` di dalam handler.
+
+Untuk mengukur kemacetan event loop, pakai `monitorEventLoopDelay` bawaan Node (**saran pengembangan**, misalnya di `server.ts`):
+
+```ts
+import { monitorEventLoopDelay } from "node:perf_hooks";
+
+const loopDelay = monitorEventLoopDelay({ resolution: 20 });
+loopDelay.enable();
+setInterval(() => {
+  // nilai dalam nanodetik → ubah ke milidetik
+  console.log(`event loop p99: ${(loopDelay.percentile(99) / 1e6).toFixed(1)}ms`);
+  loopDelay.reset();
+}, 5_000).unref();
+```
+
+Kode ini memasang "stopwatch" yang terus mengukur seberapa telat event loop merespons. Setiap 5 detik, ia mencetak nilai p99 dalam milidetik, lalu mengosongkan catatannya. `.unref()` membuat timer ini tidak menahan Node saat server ingin berhenti.
+
+Kalau p99 di sini melonjak ke ratusan milidetik saat load test, berarti ada kode sinkron berat yang memblokir.
+
+## Profiling: menemukan fungsi yang paling berat
+
+Kadang log dan query terlihat wajar, tapi CPU tetap tinggi. Saatnya **profiling**, yaitu merekam fungsi mana yang paling banyak memakai waktu CPU. Ini seperti memasang CCTV di dapur warung untuk melihat langkah memasak mana yang paling lama.
+
+```bash
+npm run build
+node --cpu-prof --cpu-prof-dir=profiles dist/server.js
+```
+
+Perintah kedua menjalankan server sambil merekam pemakaian CPU. Hasil rekamannya disimpan di folder `profiles`. Langkah selanjutnya:
+
+1. Jalankan autocannon di terminal lain.
+2. Hentikan server dengan <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd>. Fungsi `shutdown()` di `server.ts` memanggil `process.exit(0)` dengan rapi, dan saat itu Node menulis file `profiles/CPU.<tanggal>.<pid>.cpuprofile`.
+3. Buka Chrome DevTools → tab **Performance** → **Load profile**, lalu pilih file itu.
+4. Cari blok terlebar di **flame chart** (grafik bertumpuk yang menunjukkan fungsi mana memanggil fungsi mana). Makin lebar bloknya, makin lama fungsi itu memakai CPU.
+
+Ada juga cara interaktif. Jalankan `node --inspect dist/server.js`, buka `chrome://inspect` di Chrome, klik **inspect**, lalu rekam profil langsung dari tab Performance. Pilihan lain adalah Clinic.js (`npx clinic doctor -- node dist/server.js`) yang memberi diagnosis otomatis. Anggap Clinic.js opsional dan cek dulu apakah ia cocok dengan versi Node-mu.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Jebakan yang sering muncul">
+
+- **Semua request load test gagal.** Hasil autocannon menampilkan `non 2xx responses`, dan body-nya berisi `"code":"TOKEN_EXPIRED"`. Access token hanya berlaku 15 menit. Login ulang untuk mendapat token baru.
+- **Login berulang di skrip benchmark.** Setelah 20 percobaan muncul status `429` dengan pesan "Terlalu banyak percobaan. Coba lagi dalam 15 menit." Ini rate limiter yang bekerja. Login sekali saja, lalu simpan token-nya.
+- **`Execute returned results, which is not allowed in SQLite.`** Pesan ini muncul saat menjalankan `PRAGMA journal_mode = WAL` dengan `$executeRawUnsafe`. Artinya perintah itu mengembalikan baris hasil, padahal `$executeRawUnsafe` hanya untuk perintah tanpa hasil. Ganti dengan `$queryRawUnsafe`.
+- **Mengoptimasi tanpa baseline.** Tanpa angka sebelum dan sesudah, kamu tidak tahu apakah perubahanmu membantu atau malah memperburuk.
+- **Cache tanpa rencana invalidasi.** Gejalanya: user sudah mengedit judul tugas, tapi daftar masih menampilkan judul lama.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Perbaiki N+1 di daftar mata kuliah" difficulty="sedang" hints={["Hitung query dengan `LOG_QUERIES=true`.", "Prisma bisa menghitung relasi lewat `_count`."]}>
+
+Seorang teman menulis versi `listCourses` seperti di bawah.
+
+1. Hitung berapa query yang berjalan kalau user punya 3 mata kuliah.
+2. Perbaiki kodenya supaya jumlah query tetap, berapa pun banyaknya mata kuliah.
+
+```ts
+const courses = await prisma.course.findMany({ where: { userId } });
+const data = [];
+for (const course of courses) {
+  const taskCount = await prisma.task.count({ where: { courseId: course.id } });
+  data.push({ ...course, taskCount });
+}
+```
+
+<Solution>
+
+Versi itu menjalankan 1 + 3 = 4 query. Untuk N mata kuliah, jumlahnya 1 + N. Ini N+1, seperti bolak-balik ke warung untuk tiap barang. Minta database menghitung sekaligus, persis seperti `courseQueryArgs` di `courses.service.ts`:
+
+```ts
+const courses = await prisma.course.findMany({
+  where: { userId },
+  omit: { userId: true },
+  include: { _count: { select: { tasks: true } } },
+});
+const data = courses.map(({ _count, ...course }) => ({ ...course, taskCount: _count.tasks }));
+```
+
+`include: { _count: ... }` membuat database menghitung jumlah tugas tiap mata kuliah di query yang sama. Baris `map` lalu memindahkan angka itu dari `_count.tasks` ke properti `taskCount`. Sekarang jumlah query tetap. Cek ulang dengan log query.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Index untuk filter mata kuliah" difficulty="sulit" hints={["Bentuk query-nya: `WHERE userId = ? AND courseId = ? ORDER BY createdAt DESC`.", "Gunakan `prisma/explain.ts` untuk melihat apakah muncul `USE TEMP B-TREE`."]}>
+
+Layar detail mata kuliah di aplikasi memanggil `GET /api/tasks?courseId=1` dengan urutan default `-createdAt`.
+
+1. Periksa rencana query-nya dengan `EXPLAIN QUERY PLAN` lewat `prisma/explain.ts`.
+2. Cari apakah muncul baris `USE TEMP B-TREE FOR ORDER BY`.
+3. Usulkan index yang membuat SQLite tidak perlu mengurutkan di memori.
+
+<Solution>
+
+Index `@@index([courseId])` membantu filter, tapi pengurutan `createdAt` tetap dikerjakan di memori (`USE TEMP B-TREE FOR ORDER BY`). Tambahkan index yang cocok dengan filter **dan** urutan:
+
+```diff title="api/prisma/schema.prisma"
+   @@index([courseId])
++  @@index([courseId, createdAt])
+```
+
+Lalu:
+
+1. Jalankan `npx prisma migrate dev --name task_course_created_idx` dan `npm run db:generate`.
+2. Cek ulang `explain.ts` dengan query `WHERE "userId" = 1 AND "courseId" = 1 ORDER BY "createdAt" DESC, id DESC`.
+3. Baris `TEMP B-TREE` seharusnya hilang.
+
+Index `[courseId]` yang lama kini boleh dihapus. Index `[courseId, createdAt]` sudah mencakup filter `courseId` saja, karena `courseId` ada di kolom paling kiri.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Sebuah endpoint mengambil 20 tugas. Lalu, di dalam loop, ia menjalankan `findUnique` untuk mencari mata kuliah tiap tugas. Berapa query yang berjalan dalam satu request?",
+    options: ["1", "2", "21", "40"],
+    answer: 2,
+    explain: "Ini pola N+1: 1 query untuk daftar + 20 query mata kuliah = 21. Seperti bolak-balik ke warung 20 kali. Dengan `include`, Prisma cukup menambah satu query `WHERE id IN (...)` untuk semua mata kuliah sekaligus.",
+  },
+  {
+    q: "Schema punya `@@index([userId, status])`. Query mana yang TIDAK terbantu index ini?",
+    options: ["`WHERE userId = 1`", "`WHERE userId = 1 AND status = 'TODO'`", "`WHERE status = 'TODO'`", "`WHERE userId = 1 AND status = 'DONE'`"],
+    answer: 2,
+    explain: "Composite index dibaca mulai dari kolom paling kiri (`userId`). Filter `status` saja melompati `userId`, seperti mencari semua Andi di daftar kontak yang diurutkan per kota. Tiga pilihan lain semuanya memakai `userId`, jadi terbantu.",
+  },
+  {
+    q: "Kenapa cursor pagination lebih cocok untuk infinite scroll daripada offset?",
+    options: ["Karena bisa lompat ke halaman 50 secara langsung", "Karena posisinya tetap stabil saat ada data baru dan tidak perlu melewati ribuan baris", "Karena tidak memerlukan `orderBy`", "Karena otomatis meng-cache halaman sebelumnya"],
+    answer: 1,
+    explain: "Cursor bekerja seperti pembatas buku: langsung melanjutkan setelah item terakhir lewat index. Offset harus melewati semua baris sebelumnya dan bisa menampilkan item ganda saat data bertambah. Cursor justru tidak bisa lompat halaman, tetap butuh `orderBy` yang stabil, dan tidak meng-cache apa pun.",
+  },
+  {
+    q: "Daftar tugas di-cache per user. User mengganti nama mata kuliah \"Basis Data\" menjadi \"Basis Data Lanjut\". Apa yang harus terjadi?",
+    options: ["Tidak perlu apa-apa, cache tugas tidak terkait mata kuliah", "Cache daftar tugas user itu juga harus di-invalidasi karena tiap tugas memuat `course.name`", "Restart server", "Cukup tunggu ETag berubah"],
+    answer: 1,
+    explain: "Setiap tugas di respons membawa `course.name` dan `course.color`. Jadi mengganti nama mata kuliah ikut mengubah isi daftar tugas. Kalau cache tidak di-invalidasi, user melihat nama lama sampai TTL habis, seperti papan tulis yang lupa dihapus. Restart server berlebihan, dan ETag tidak mengurus cache di server.",
+  },
+  {
+    q: "Mana yang paling mungkin membuat seluruh API tersendat saat load test?",
+    options: ["`await rm(filePath, { force: true })` di handler", "`readFileSync` file besar di setiap request", "Header `ETag` di respons", "`omit: { userId: true }` di query"],
+    answer: 1,
+    explain: "Fungsi `...Sync` memblokir event loop, seperti barista yang menggiling kopi dengan tangan sementara semua pembeli menunggu. `rm` dari `fs/promises` berjalan async. ETag dan `omit` tidak memblokir apa pun.",
+  },
+]} />
+
+## Ringkasan
+
+- Mulai dari angka, bukan tebakan. Pakai morgan atau middleware timing, log query Prisma (`$on("query")`), dan autocannon untuk baseline. Lihat p99, jangan hanya rata-rata.
+- N+1 kelihatan dari jumlah query yang ikut naik saat data bertambah. Perbaiki dengan `include`, `select`, atau `_count`, seperti di `tasks.service.ts` dan `courses.service.ts`.
+- Index harus cocok dengan filter **dan** urutan query yang paling sering. Buktikan dengan `EXPLAIN QUERY PLAN`. Index mempercepat baca, tapi sedikit memperlambat tulis.
+- Cursor pagination (pembatas buku) stabil dan cepat untuk infinite scroll. Offset cocok untuk halaman bernomor.
+- Cache (ETag, LRU, Redis) hanya aman kalau kamu tahu persis kapan harus meng-invalidasi.
+- SQLite cukup untuk belajar (aktifkan WAL). Production butuh PostgreSQL dengan connection pool yang dihitung.
+- Jaga event loop tetap lancar: upload dialirkan ke disk, bcrypt async dengan cost wajar, tanpa fs sinkron di handler. Kalau CPU tetap tinggi, rekam profil dengan `--cpu-prof`.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Kerjakan di salinan API-mu:
+
+1. Tambahkan `seed-banyak.ts`, lalu ukur baseline `GET /api/tasks` dengan autocannon.
+2. Nyalakan log query dan pastikan tidak ada N+1.
+3. Tambahkan `@@index([userId, createdAt])`, lalu ukur lagi.
+4. Catat angka p50 dan p99 sebelum dan sesudah di README proyekmu.
+
+Tabel kecil berisi angka ini bisa kamu tunjukkan saat presentasi portofolio sebagai bukti perbaikan yang terukur.
+
+</Callout>

@@ -1,0 +1,1028 @@
+## Pengantar
+
+Buka proyek `latihan-rn` yang kamu buat di [Expo Router](/belajar/react-native/expo-router) dan [Form & Keyboard](/belajar/react-native/form-keyboard). Isi modal "Tugas Baru", tekan **Simpan**, lalu kembali ke daftar. Tugas barunya tidak muncul.
+
+Kenapa? Layar daftar membaca array `TASKS` dari `src/lib/data.js`. Form hanya menyimpan isian di state miliknya sendiri. Keduanya tidak pernah bertukar data.
+
+Ada masalah kedua. Tutup aplikasinya, lalu buka lagi. Semua perubahan hilang. State React hanya hidup di memori kerja HP (RAM), dan memori itu dikosongkan begitu aplikasi ditutup.
+
+Dua masalah ini butuh dua solusi yang berbeda:
+
+1. **State global**, yaitu satu tempat data yang bisa dibaca dan diubah oleh banyak layar. Kita memakai **Context + `useReducer`** bawaan React. Setelah itu kita bandingkan dengan **Zustand**, sebuah pustaka (library, kode siap pakai buatan orang lain yang dipasang lewat npm).
+2. **Penyimpanan lokal**, yaitu menulis data ke penyimpanan HP agar tetap ada setelah aplikasi ditutup. Alatnya **AsyncStorage** untuk data biasa, **SecureStore** untuk rahasia seperti token login, dan **expo-sqlite** untuk data yang besar.
+
+Di akhir pelajaran, layar daftar, detail, dan modal di `latihan-rn` memakai satu sumber data tugas yang sama. Isinya juga tetap ada setelah aplikasi dibuka ulang.
+
+## Prop drilling: gejala state yang salah tempat
+
+<Callout type="analogi" title="Seperti titip paket berantai di kos-kosan">
+
+Kamarmu di lantai 3 kos. Kurir tidak boleh naik, jadi paketmu dititipkan ke satpam. Satpam menitipkan ke ibu kos, ibu kos ke penghuni lantai 2, lalu penghuni lantai 2 mengantar ke kamarmu. Tiga orang itu tidak butuh paketnya. Mereka hanya mengoper. Kalau satu orang lupa, paketnya tidak sampai.
+
+Di kode: paket = data `tasks`, kurir = komponen paling atas yang menyimpan state, para perantara = komponen di tengah, dan kamu = `TaskItem` yang benar-benar memakai datanya.
+
+</Callout>
+
+Di [State & Event](/belajar/react-native/state-event) kamu sudah belajar **lifting state up**: kalau dua komponen butuh data yang sama, simpan state di induk terdekat, lalu turunkan lewat props. Cara itu tepat selama induknya dekat.
+
+Di aplikasi dengan banyak layar, induk bersama dari daftar, detail, dan modal adalah layout root `src/app/_layout.js`, yaitu file paling luar yang membungkus semua layar. Masalahnya, kamu tidak merender layar-layar itu sendiri. Expo Router yang merendernya berdasarkan URL. Jadi kamu tidak bisa menulis `<TaskListScreen tasks={tasks} />`. Seandainya bisa pun, data harus melewati banyak lapisan yang tidak membutuhkannya:
+
+<Flow nodes={["RootLayout (state tasks)", "TabLayout", "TaskListScreen", "FlatList", "TaskItem"]} labels={["props", "props", "props", "props"]} caption="Prop drilling: tasks dan onToggle dioper empat kali hanya agar sampai ke TaskItem" />
+
+Pola ini disebut **prop drilling**: props "dibor" menembus komponen perantara yang hanya mengoper tanpa memakainya. Gejalanya mudah dikenali:
+
+- Ada komponen yang menerima props, tetapi tidak pernah membacanya.
+- Mengganti nama satu props memaksamu mengedit lima file.
+- Menambah layar baru berarti menyambung "kabel" props baru dari atas.
+
+Lalu kenapa tidak memakai variabel biasa, misalnya `TASKS.push(tugasBaru)`? Karena React tidak tahu variabel itu berubah. React hanya menggambar ulang layar (**render ulang**) saat state atau props berubah. Variabel biasa tidak memicu render ulang, jadi layar tetap menampilkan data lama. Kita butuh state yang tinggal **di atas semua layar**, tetapi tetap **memicu render ulang** saat berubah. [Context](/glosarium#context) menyediakan state seperti itu.
+
+## useReducer: semua perubahan di satu tempat
+
+<Callout type="analogi" title="Seperti menyetor uang lewat teller bank">
+
+Di bank, kamu tidak boleh membuka brankas dan mengubah saldo sendiri. Kamu mengisi slip, misalnya "setor Rp100.000 ke rekening Andi", lalu menyerahkannya ke teller. Teller memproses slip itu dengan aturan yang sama untuk semua nasabah, lalu mencatat saldo baru.
+
+- slip = **action** (objek yang menjelaskan apa yang terjadi)
+- menyerahkan slip ke teller = **`dispatch`**
+- teller beserta aturannya = **reducer**
+- saldo baru = **state** berikutnya
+
+Ada satu perbedaan. Teller menulis di buku yang sama. Reducer selalu membuat "buku" baru dan membiarkan buku lama utuh.
+
+</Callout>
+
+Sebelum masuk ke Context, kita rapikan dulu cara mengubah data. Ada empat operasi: tambah, centang, ubah, dan hapus. Daripada menulis `setTasks` di empat layar berbeda, kumpulkan semua aturannya di satu fungsi bernama **reducer**.
+
+Reducer menerima dua hal: state sekarang dan sebuah **action**. Action adalah objek biasa yang menjelaskan apa yang terjadi, misalnya `{ type: 'toggle', id: '1' }`. Reducer lalu mengembalikan state baru.
+
+Reducer harus berupa **fungsi murni**: hasilnya hanya bergantung pada input, tanpa pekerjaan sampingan seperti memanggil API. Reducer juga tidak boleh mengubah array lama. Ia selalu membuat salinan baru, sesuai prinsip [immutability](/glosarium#immutability) (data lama tidak disentuh, perubahan ditulis di salinan).
+
+```js title="tasks-reducer-demo.mjs"
+function tasksReducer(tasks, action) {
+  switch (action.type) {
+    case 'add':
+      return [...tasks, action.task];
+    case 'toggle':
+      return tasks.map((task) => (task.id === action.id ? { ...task, done: !task.done } : task));
+    case 'update':
+      return tasks.map((task) => (task.id === action.id ? { ...task, ...action.changes } : task));
+    case 'remove':
+      return tasks.filter((task) => task.id !== action.id);
+    default:
+      throw new Error(`Action tidak dikenal: ${action.type}`);
+  }
+}
+
+let tasks = [{ id: '1', title: 'ERD sistem perpustakaan', course: 'Basis Data', done: false }];
+tasks = tasksReducer(tasks, { type: 'add', task: { id: '2', title: 'Latihan query JOIN', course: 'Basis Data', done: false } });
+tasks = tasksReducer(tasks, { type: 'toggle', id: '1' });
+tasks = tasksReducer(tasks, { type: 'update', id: '2', changes: { title: 'Latihan LEFT JOIN' } });
+console.log(tasks.map((t) => `${t.id}:${t.title}:${t.done}`));
+tasks = tasksReducer(tasks, { type: 'remove', id: '1' });
+console.log(tasks.length);
+```
+
+```txt
+[ '1:ERD sistem perpustakaan:true', '2:Latihan LEFT JOIN:false' ]
+1
+```
+
+Cara membaca kode di atas:
+
+- `switch (action.type)` memilih aturan berdasarkan jenis action.
+- `'add'` membuat array baru berisi semua tugas lama (`...tasks` artinya "salin semua isi `tasks`") ditambah tugas baru.
+- `'toggle'` dan `'update'` memakai `map`. Tugas dengan `id` yang cocok diganti salinan yang sudah diubah. Tugas lain dibiarkan apa adanya.
+- `'remove'` memakai `filter` untuk membuang tugas dengan `id` itu.
+- Action yang tidak dikenal langsung menjadi error, supaya salah ketik seperti `'tooggle'` cepat ketahuan.
+
+Reducer hanyalah fungsi JavaScript biasa. Jadi kamu bisa mengujinya dengan `node tasks-reducer-demo.mjs` tanpa HP, tanpa Expo, dan tanpa React. Di komponen, reducer dipasang dengan hook `useReducer`:
+
+```js
+const [tasks, dispatch] = useReducer(tasksReducer, TASKS);
+dispatch({ type: 'toggle', id: '2' }); // React memanggil tasksReducer, lalu render ulang
+```
+
+`useReducer` menerima reducer dan data awal (`TASKS`). Hasilnya dua hal: `tasks` (state sekarang) dan `dispatch` (fungsi untuk mengirim action). Bedanya dengan `useState`, kamu tidak menulis nilai baru secara langsung. Kamu "melapor" lewat `dispatch(action)`, lalu reducer yang menentukan bentuk state berikutnya.
+
+## Context + useReducer: store tugas bersama
+
+<Callout type="analogi" title="Seperti pengumuman di grup WhatsApp kelas">
+
+Ketua kelas tidak menelepon 40 mahasiswa satu per satu untuk mengabarkan jadwal kuis. Ia cukup mengirim pengumuman ke grup WA kelas. Semua anggota grup bisa langsung membacanya.
+
+- grup WA = **Context**
+- ketua kelas yang mengirim pengumuman = **provider**
+- anggota yang membaca = komponen yang memanggil `useContext`
+- hanya anggota grup yang bisa membaca = hanya komponen **di dalam** provider yang bisa memakai context
+
+Ada satu sifat lain yang mirip. Setiap ada pesan baru, HP semua anggota ikut berbunyi, walaupun pesannya tidak penting bagi sebagian orang. Context juga begitu. Kita bahas di akhir bagian ini.
+
+</Callout>
+
+**Context** adalah saluran data bawaan React. Komponen di atas menaruh nilai ke saluran itu lewat **provider** (komponen pembungkus yang "menyiarkan" nilai). Komponen mana pun di bawahnya bisa membaca nilai itu dengan `useContext`, tanpa lewat props.
+
+Gabungkan Context dengan reducer tadi, dan kamu punya **store** global kecil tanpa pustaka tambahan. Store adalah tempat menyimpan state bersama beserta fungsi-fungsi untuk mengubahnya.
+
+Kode yang bukan layar disimpan di `src/features`, bukan di `src/app`. Alasannya, Expo Router menganggap setiap file di `src/app` sebagai route (halaman).
+
+<FileTree title="latihan-rn" tree={`
+src/
+  app/
+    * _layout.js # dibungkus TasksProvider
+    (tabs)/
+      index.js # membaca tasks
+      profile.js
+    tasks/
+      [id].js # toggle + hapus
+      new.js # addTask
+  features/
+    tasks/
+      * tasks-context.js # reducer, TasksProvider, useTasks
+  lib/
+    data.js # TASKS awal
+`} />
+
+```jsx title="src/features/tasks/tasks-context.js"
+import { createContext, useContext, useMemo, useReducer } from 'react';
+import { TASKS } from '../../lib/data';
+
+const TasksContext = createContext(null);
+
+export function tasksReducer(tasks, action) {
+  switch (action.type) {
+    case 'add':
+      return [...tasks, action.task];
+    case 'toggle':
+      return tasks.map((task) => (task.id === action.id ? { ...task, done: !task.done } : task));
+    case 'update':
+      return tasks.map((task) => (task.id === action.id ? { ...task, ...action.changes } : task));
+    case 'remove':
+      return tasks.filter((task) => task.id !== action.id);
+    default:
+      throw new Error(`Action tidak dikenal: ${action.type}`);
+  }
+}
+
+export function TasksProvider({ children }) {
+  const [tasks, dispatch] = useReducer(tasksReducer, TASKS);
+
+  const value = useMemo(
+    () => ({
+      tasks,
+      addTask: (input) =>
+        dispatch({ type: 'add', task: { ...input, id: String(Date.now()), done: false } }),
+      toggleTask: (id) => dispatch({ type: 'toggle', id }),
+      updateTask: (id, changes) => dispatch({ type: 'update', id, changes }),
+      removeTask: (id) => dispatch({ type: 'remove', id }),
+    }),
+    [tasks],
+  );
+
+  return <TasksContext value={value}>{children}</TasksContext>;
+}
+
+export function useTasks() {
+  const context = useContext(TasksContext);
+  if (!context) {
+    throw new Error('useTasks harus dipakai di dalam <TasksProvider>');
+  }
+  return context;
+}
+```
+
+Isi file ini, bagian per bagian:
+
+- `createContext(null)` membuat "grup WA"-nya. Nilai awalnya `null`, artinya belum ada provider yang mengisi.
+- `TasksProvider` menyimpan state dengan `useReducer`, lalu membagikan `value` ke semua komponen di dalamnya (`children`).
+- **Layar tidak memanggil `dispatch` langsung.** Mereka memakai fungsi bernama seperti `addTask` dan `toggleTask`. Bentuk action jadi urusan internal file ini, sehingga mudah diganti nanti.
+- **`useTasks` adalah [custom hook](/glosarium#custom-hook)**, yaitu fungsi buatanmu sendiri yang memakai hook React. Ia membungkus `useContext`. Kalau ada yang lupa memasang provider, ia langsung mendapat pesan error yang jelas, bukan error samar.
+- **`useMemo`** membuat objek `value` tetap objek yang sama selama `tasks` tidak berubah. Tanpa itu, setiap render provider membuat objek baru, dan semua pemakai context ikut render ulang tanpa perlu.
+- **Id berupa string** (`String(Date.now())`), sama seperti data di `src/lib/data.js`. Param route dari URL juga selalu string, jadi perbandingan `item.id === id` tetap cocok.
+- **`<TasksContext value={value}>`** adalah sintaks React 19. Kode lama menulis `<TasksContext.Provider value={value}>`, dan bentuk itu masih berjalan.
+
+### Memasang provider di layout root
+
+Provider harus membungkus **semua** layar yang membutuhkan data. Jadi tempatnya di `src/app/_layout.js`, di luar `Stack`:
+
+```jsx title="src/app/_layout.js" {2,8,24}
+import { Stack } from 'expo-router';
+import { TasksProvider } from '../features/tasks/tasks-context';
+
+export const unstable_settings = { anchor: '(tabs)' };
+
+export default function RootLayout() {
+  return (
+    <TasksProvider>
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: '#4f46e5' },
+          headerTintColor: '#fff',
+          headerTitleStyle: { fontWeight: 'bold' },
+          contentStyle: { backgroundColor: '#f8fafc' },
+        }}
+      >
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="tasks/[id]" options={{ title: 'Detail Tugas' }} />
+        <Stack.Screen
+          name="tasks/new"
+          options={{ title: 'Tugas Baru', presentation: 'modal' }}
+        />
+      </Stack>
+    </TasksProvider>
+  );
+}
+```
+
+Baris yang disorot hanya dua perubahan: impor `TasksProvider`, lalu bungkus seluruh `Stack` dengannya. `Stack` berisi semua layar, jadi semua layar kini "masuk grup" dan boleh memanggil `useTasks()`.
+
+### Memakai store di layar
+
+Sekarang setiap layar mengambil apa yang ia butuhkan langsung dari `useTasks()`. Daftar tugas cukup mengganti sumber datanya: hapus impor `TASKS`, panggil `useTasks()`, lalu berikan `tasks` ke `FlatList`.
+
+```diff title="src/app/(tabs)/index.js"
+ import { Link } from 'expo-router';
+ import { FlatList, Pressable, StyleSheet, Text } from 'react-native';
+ import TaskItem from '../../components/task-item';
+-import { TASKS } from '../../lib/data';
++import { useTasks } from '../../features/tasks/tasks-context';
+
+ export default function TaskListScreen() {
++  const { tasks } = useTasks();
++
+   return (
+     <FlatList
+-      data={TASKS}
++      data={tasks}
+       keyExtractor={(item) => item.id}
+```
+
+Layar detail mencari tugas dari store, lalu menambah tombol centang dan hapus:
+
+```jsx title="src/app/tasks/[id].js" {3,7-8,25-36}
+import { Stack, router, useLocalSearchParams } from 'expo-router';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTasks } from '../../features/tasks/tasks-context';
+
+export default function TaskDetailScreen() {
+  const { id } = useLocalSearchParams();
+  const { tasks, toggleTask, removeTask } = useTasks();
+  const task = tasks.find((item) => item.id === id);
+
+  if (!task) {
+    return (
+      <View style={styles.container}>
+        <Stack.Screen options={{ title: 'Tidak ditemukan' }} />
+        <Text>Tugas dengan id {id} tidak ada.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <Stack.Screen options={{ title: task.title }} />
+      <Text style={styles.course}>{task.course}</Text>
+      <Text>Dikerjakan oleh {task.owner}</Text>
+      <Text style={styles.status}>{task.done ? 'Selesai' : 'Belum selesai'}</Text>
+      <Pressable onPress={() => toggleTask(task.id)} style={styles.button}>
+        <Text style={styles.buttonText}>{task.done ? 'Tandai belum selesai' : 'Tandai selesai'}</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => {
+          router.back();
+          removeTask(task.id);
+        }}
+        style={[styles.button, styles.danger]}
+      >
+        <Text style={styles.dangerText}>Hapus tugas</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 16, gap: 8 },
+  course: { fontSize: 14, color: '#4f46e5', fontWeight: '700' },
+  status: { fontSize: 16 },
+  button: { marginTop: 8, padding: 12, borderRadius: 10, backgroundColor: '#e0e7ff', alignItems: 'center' },
+  buttonText: { color: '#3730a3', fontWeight: '600' },
+  danger: { backgroundColor: '#fee2e2' },
+  dangerText: { color: '#b91c1c', fontWeight: '600' },
+});
+```
+
+Cara kerja layar ini:
+
+- Baris 7 mengambil daftar tugas beserta fungsi `toggleTask` dan `removeTask` dari store.
+- Baris 8 mencari tugas yang `id`-nya sama dengan `id` di URL.
+- Tombol pertama mencentang atau membatalkan centang. Tombol kedua kembali ke layar sebelumnya, lalu menghapus tugas.
+
+Urutan di tombol hapus disengaja: kembali dulu, baru hapus. Selama animasi kembali, layar detail masih sempat dirender walaupun tugasnya sudah tidak ada. Cabang `if (!task)` mencegahnya crash.
+
+Terakhir, modal "Tugas Baru" memanggil `addTask`, bukan lagi mencetak ke terminal. Kalau form dari pelajaran Form & Keyboard sudah punya field mata kuliah dan validasi, kirim nilai-nilai itu ke `addTask`. Polanya sama: tombol simpan memanggil fungsi dari store.
+
+```diff title="src/app/tasks/new.js"
+ import { router } from 'expo-router';
+ import { useState } from 'react';
+ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
++import { useTasks } from '../../features/tasks/tasks-context';
+
+ export default function NewTaskScreen() {
+   const [title, setTitle] = useState('');
++  const { addTask } = useTasks();
+
+   function simpan() {
+-    console.log('Tugas baru:', title);
++    if (!title.trim()) return;
++    addTask({ title: title.trim(), course: 'Pemrograman Mobile', owner: 'Andi' });
+     router.dismiss();
+   }
+```
+
+Yang ditambahkan: ambil `addTask` dari store, tolak judul kosong (`trim()` membuang spasi di awal dan akhir teks), lalu kirim tugas baru ke store sebelum modal ditutup.
+
+Jalankan `npx expo start`. Tambah tugas, lalu centang dan hapus dari layar detail. Daftar langsung ikut berubah, karena ketiga layar membaca store yang sama.
+
+`TaskItem` yang dibungkus `memo` (pembungkus yang melewati render ulang kalau props-nya sama) juga tetap hemat. Reducer hanya membuat objek baru untuk tugas yang berubah. Tugas lain tetap objek yang sama, jadi barisnya tidak render ulang.
+
+<Callout type="info" title="Kapan Context sudah cukup?">
+
+Ingat grup WA tadi. Setiap kali `value` berubah, **semua** komponen yang memanggil `useTasks()` ikut render ulang, walaupun komponen itu hanya butuh `addTask`. Untuk aplikasi kecil atau data yang jarang berubah, ini tidak terasa. Kalau store-mu besar dan berubah di setiap ketikan, pertimbangkan Zustand.
+
+</Callout>
+
+## Alternatif: Zustand dengan selector
+
+[Zustand](/glosarium#zustand) adalah pustaka state global yang sangat kecil. Store dibuat dengan `create`, dan tidak perlu provider sama sekali. Kelebihan utamanya adalah **selector**: komponen memilih potongan state yang ia butuhkan, dan hanya render ulang kalau potongan itu berubah.
+
+```bash
+npx expo install zustand
+```
+
+```js title="src/features/tasks/tasks-store.js"
+import { create } from 'zustand';
+import { TASKS } from '../../lib/data';
+
+export const useTasksStore = create((set) => ({
+  tasks: TASKS,
+  addTask: (input) =>
+    set((state) => ({ tasks: [...state.tasks, { ...input, id: String(Date.now()), done: false }] })),
+  toggleTask: (id) =>
+    set((state) => ({
+      tasks: state.tasks.map((task) => (task.id === id ? { ...task, done: !task.done } : task)),
+    })),
+  updateTask: (id, changes) =>
+    set((state) => ({
+      tasks: state.tasks.map((task) => (task.id === id ? { ...task, ...changes } : task)),
+    })),
+  removeTask: (id) => set((state) => ({ tasks: state.tasks.filter((task) => task.id !== id) })),
+}));
+```
+
+`set` menggabungkan objek yang kamu kembalikan ke state lama, jadi fungsi `addTask` dan kawan-kawan tidak hilang. Perbandingan cara pakainya:
+
+<Compare>
+<CompareItem title="Context + useReducer" tone="neutral">
+
+```jsx
+// _layout.js wajib membungkus dengan <TasksProvider>
+const { tasks, toggleTask } = useTasks();
+// Render ulang setiap kali value context berubah
+```
+
+Tanpa dependensi, bawaan React, cocok untuk state kecil yang jarang berubah: user yang login, tema, bahasa.
+
+</CompareItem>
+<CompareItem title="Zustand" tone="good">
+
+```jsx
+// Tanpa provider
+const tasks = useTasksStore((state) => state.tasks);
+const toggleTask = useTasksStore((state) => state.toggleTask);
+const doneCount = useTasksStore((state) => state.tasks.filter((t) => t.done).length);
+// Render ulang hanya jika nilai yang dipilih berubah
+```
+
+Satu dependensi kecil, render lebih hemat, dan store bisa dipakai di luar komponen (`useTasksStore.getState()`).
+
+</CompareItem>
+</Compare>
+
+Selector harus mengembalikan nilai yang stabil. Angka, string, atau referensi yang sudah ada di state (`state.tasks`) aman. Kalau selector membuat array atau objek **baru** setiap dipanggil, bungkus dengan `useShallow`:
+
+```jsx
+import { useShallow } from 'zustand/react/shallow';
+
+const { addTask, removeTask } = useTasksStore(
+  useShallow((state) => ({ addTask: state.addTask, removeTask: state.removeTask })),
+);
+```
+
+Pilih **satu** pendekatan untuk satu jenis data. Di sisa pelajaran ini `latihan-rn` tetap memakai Context, tetapi bagian penyimpanan juga menunjukkan versi Zustand-nya.
+
+## Menyimpan data dengan AsyncStorage
+
+State global menyelesaikan masalah pertama. Masalah kedua, data hilang saat aplikasi ditutup, butuh **penyimpanan lokal**. [AsyncStorage](/glosarium#async-storage) adalah penyimpanan *key-value* sederhana: kamu menyimpan teks di bawah sebuah nama kunci, lalu membacanya lagi nanti. Semua method-nya asinkron (mengembalikan Promise), datanya **tidak dienkripsi**, dan bertahan sampai aplikasi dihapus atau datanya dibersihkan. Paket ini sudah ada di Expo Go, jadi cukup dipasang:
+
+```bash
+npx expo install @react-native-async-storage/async-storage
+```
+
+API intinya hanya tiga:
+
+| Method | Hasil |
+| --- | --- |
+| `AsyncStorage.setItem(key, string)` | Menyimpan teks di bawah `key` |
+| `AsyncStorage.getItem(key)` | Teks yang tersimpan, atau `null` kalau belum ada |
+| `AsyncStorage.removeItem(key)` | Menghapus satu kunci |
+
+AsyncStorage **hanya menyimpan string**. Array tugas harus diubah ke [JSON](/glosarium#json) dengan `JSON.stringify` saat menyimpan, dan dikembalikan dengan `JSON.parse` saat membaca. Pola ini sama dengan `useLocalStorage` di [Effect, List & Custom Hook](/belajar/react-native/effect-list-custom-hook). Bedanya, `localStorage` di browser bersifat sinkron, sedangkan AsyncStorage harus ditunggu dengan `await`.
+
+### Kunci berversi
+
+Beri nama kunci yang jelas dan sertakan versi, misalnya `latihan-rn:tasks:v1`. Suatu hari bentuk data pasti berubah, misalnya tugas mendapat field `priority`. Data lama di HP pengguna masih berbentuk v1. Dengan kunci berversi, kode baru bisa membaca `v2`, dan kalau belum ada, membaca `v1` lalu mengubahnya. Tanpa versi, kode baru membaca data lama seolah-olah sudah bentuk baru, dan aplikasi bisa crash karena field yang dicari tidak ada.
+
+### Hydration: muat dulu, baru simpan
+
+Alurnya terlihat sederhana: baca saat aplikasi mulai, simpan setiap kali data berubah. Tetapi ada jebakan. Saat render pertama, `tasks` masih berisi `TASKS` bawaan, karena AsyncStorage belum selesai dibaca. Kalau effect penyimpan langsung berjalan, data bawaan itu **menimpa** data tersimpan milik pengguna sebelum sempat dimuat.
+
+Karena itu kita butuh status **hydration**, yaitu proses mengisi state dari penyimpanan. Selama `hydrated` masih `false`, jangan menyimpan apa pun dan tampilkan indikator loading.
+
+<Flow nodes={["Aplikasi dibuka", "getItem(key)", "dispatch hydrate", "hydrated = true", "Setiap perubahan → setItem"]} labels={["state awal = TASKS", "JSON.parse", "boleh render data", "JSON.stringify"]} caption="Muat dulu dari AsyncStorage, baru izinkan penyimpanan" />
+
+Tambahkan action `hydrate` dan dua effect ke `tasks-context.js`:
+
+```diff title="src/features/tasks/tasks-context.js"
+-import { createContext, useContext, useMemo, useReducer } from 'react';
++import AsyncStorage from '@react-native-async-storage/async-storage';
++import { createContext, useContext, useEffect, useMemo, useReducer, useState } from 'react';
+ import { TASKS } from '../../lib/data';
+
++const STORAGE_KEY = 'latihan-rn:tasks:v1';
+ const TasksContext = createContext(null);
+
+ export function tasksReducer(tasks, action) {
+   switch (action.type) {
++    case 'hydrate':
++      return action.tasks;
+     case 'add':
+       return [...tasks, action.task];
+@@
+ export function TasksProvider({ children }) {
+   const [tasks, dispatch] = useReducer(tasksReducer, TASKS);
++  const [hydrated, setHydrated] = useState(false);
++
++  useEffect(() => {
++    let active = true;
++    async function load() {
++      try {
++        const json = await AsyncStorage.getItem(STORAGE_KEY);
++        if (json !== null && active) {
++          dispatch({ type: 'hydrate', tasks: JSON.parse(json) });
++        }
++      } catch (error) {
++        console.warn('Gagal memuat tugas tersimpan:', error);
++      } finally {
++        if (active) setHydrated(true);
++      }
++    }
++    load();
++    return () => {
++      active = false;
++    };
++  }, []);
++
++  useEffect(() => {
++    if (!hydrated) return;
++    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)).catch((error) => {
++      console.warn('Gagal menyimpan tugas:', error);
++    });
++  }, [tasks, hydrated]);
+
+   const value = useMemo(
+     () => ({
+       tasks,
++      hydrated,
+       addTask: (input) =>
+@@
+-    [tasks],
++    [tasks, hydrated],
+   );
+```
+
+Perhatikan detailnya:
+
+- `getItem` mengembalikan `null` pada pembukaan pertama. Dalam kasus itu kita tetap memakai `TASKS` bawaan.
+- `try/catch` menangkap data rusak. `JSON.parse` pada teks yang bukan JSON melempar `SyntaxError: JSON Parse error: ...`. Aplikasi tidak boleh macet hanya karena itu.
+- `finally` memastikan `hydrated` menjadi `true` apa pun hasilnya, sehingga layar tidak loading selamanya.
+- Variabel `active` mencegah update state setelah provider dilepas, pola cleanup yang sama dengan pelajaran effect.
+- Tepat setelah hydration, effect penyimpan menulis ulang data yang baru dimuat. Itu tidak berbahaya.
+
+Daftar tugas menampilkan loading selama hydration:
+
+```diff title="src/app/(tabs)/index.js"
+-import { FlatList, Pressable, StyleSheet, Text } from 'react-native';
++import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text } from 'react-native';
+@@
+ export default function TaskListScreen() {
+-  const { tasks } = useTasks();
++  const { tasks, hydrated } = useTasks();
++
++  if (!hydrated) {
++    return <ActivityIndicator size="large" style={{ flex: 1 }} />;
++  }
+```
+
+Uji hasilnya: tambah tugas "Rangkum bab normalisasi", tutup aplikasi sepenuhnya dari *recent apps*, lalu buka lagi. Tugasnya masih ada. Untuk mulai dari nol, hapus data aplikasi:
+
+<Tabs items={["Android", "iOS"]}>
+<Tab>
+
+Tekan lama ikon **Expo Go** (atau development build-mu) → **App info** → **Storage** → **Clear data**. Untuk Expo Go, ini menghapus data semua proyek yang pernah dibuka di Expo Go.
+
+</Tab>
+<Tab>
+
+Hapus aplikasinya lalu pasang lagi. Di simulator, kamu juga bisa memakai menu **Device → Erase All Content and Settings**.
+
+</Tab>
+</Tabs>
+
+## Coba di Snack
+
+Demo berikut memadatkan semuanya ke satu file: reducer, `TasksProvider`, `useTasks`, dan tiga komponen (ringkasan, form, daftar) yang tidak saling mengoper props. Tambah atau centang beberapa tugas, lalu muat ulang preview. Di versi web, AsyncStorage memakai `localStorage` browser, jadi datamu tetap ada.
+
+<SnackEmbed
+  name="Context + AsyncStorage"
+  dependencies="@react-native-async-storage/async-storage"
+  code={`import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createContext, useContext, useEffect, useMemo, useReducer, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+
+const STORAGE_KEY = 'snack-tugas:v1';
+const AWAL = [
+  { id: '1', title: 'ERD sistem perpustakaan', course: 'Basis Data', done: true },
+  { id: '2', title: 'Latihan query JOIN', course: 'Basis Data', done: false },
+  { id: '3', title: 'Layout halaman profil', course: 'Pemrograman Mobile', done: false },
+];
+
+function tasksReducer(tasks, action) {
+  switch (action.type) {
+    case 'hydrate':
+      return action.tasks;
+    case 'add':
+      return [...tasks, action.task];
+    case 'toggle':
+      return tasks.map((t) => (t.id === action.id ? { ...t, done: !t.done } : t));
+    case 'remove':
+      return tasks.filter((t) => t.id !== action.id);
+    default:
+      throw new Error('Action tidak dikenal: ' + action.type);
+  }
+}
+
+const TasksContext = createContext(null);
+
+function TasksProvider({ children }) {
+  const [tasks, dispatch] = useReducer(tasksReducer, AWAL);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem(STORAGE_KEY)
+      .then((json) => {
+        if (json !== null) dispatch({ type: 'hydrate', tasks: JSON.parse(json) });
+      })
+      .catch((error) => console.warn('Gagal memuat:', error))
+      .finally(() => setHydrated(true));
+  }, []);
+
+  useEffect(() => {
+    if (hydrated) AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+  }, [tasks, hydrated]);
+
+  const value = useMemo(
+    () => ({
+      tasks,
+      hydrated,
+      addTask: (input) => dispatch({ type: 'add', task: { ...input, id: String(Date.now()), done: false } }),
+      toggleTask: (id) => dispatch({ type: 'toggle', id }),
+      removeTask: (id) => dispatch({ type: 'remove', id }),
+      reset: () => dispatch({ type: 'hydrate', tasks: AWAL }),
+    }),
+    [tasks, hydrated]
+  );
+
+  return <TasksContext value={value}>{children}</TasksContext>;
+}
+
+function useTasks() {
+  const context = useContext(TasksContext);
+  if (!context) throw new Error('useTasks harus dipakai di dalam <TasksProvider>');
+  return context;
+}
+
+function Ringkasan() {
+  const { tasks, reset } = useTasks();
+  const selesai = tasks.filter((t) => t.done).length;
+  return (
+    <View style={styles.row}>
+      <Text style={styles.summary}>{selesai} dari {tasks.length} tugas selesai</Text>
+      <Pressable onPress={reset}>
+        <Text style={styles.link}>Reset</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function FormTugas() {
+  const { addTask } = useTasks();
+  const [title, setTitle] = useState('');
+
+  function simpan() {
+    if (!title.trim()) return;
+    addTask({ title: title.trim(), course: 'Pemrograman Mobile' });
+    setTitle('');
+  }
+
+  return (
+    <View style={styles.row}>
+      <TextInput value={title} onChangeText={setTitle} onSubmitEditing={simpan} placeholder="Judul tugas baru" style={styles.input} />
+      <Pressable onPress={simpan} style={styles.button}>
+        <Text style={styles.buttonText}>Tambah</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function DaftarTugas() {
+  const { tasks, toggleTask, removeTask } = useTasks();
+  return (
+    <FlatList
+      data={tasks}
+      keyExtractor={(item) => item.id}
+      renderItem={({ item }) => (
+        <View style={styles.item}>
+          <Pressable style={{ flex: 1 }} onPress={() => toggleTask(item.id)}>
+            <Text style={[styles.title, item.done && styles.done]}>{item.title}</Text>
+            <Text style={styles.course}>{item.course}</Text>
+          </Pressable>
+          <Pressable onPress={() => removeTask(item.id)} hitSlop={8}>
+            <Text style={styles.hapus}>Hapus</Text>
+          </Pressable>
+        </View>
+      )}
+    />
+  );
+}
+
+function Isi() {
+  const { hydrated } = useTasks();
+  if (!hydrated) return <ActivityIndicator size="large" style={{ flex: 1 }} />;
+  return (
+    <>
+      <Ringkasan />
+      <FormTugas />
+      <DaftarTugas />
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <TasksProvider>
+      <View style={styles.container}>
+        <Isi />
+      </View>
+    </TasksProvider>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, paddingTop: 48, paddingHorizontal: 16, backgroundColor: '#f8fafc', gap: 12 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  summary: { flex: 1, fontSize: 16, fontWeight: '700' },
+  link: { color: '#4f46e5', fontWeight: '600' },
+  input: { flex: 1, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 10, backgroundColor: 'white' },
+  button: { backgroundColor: '#4f46e5', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
+  buttonText: { color: 'white', fontWeight: '700' },
+  item: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'white', padding: 14, borderRadius: 12, marginBottom: 8 },
+  title: { fontSize: 16, fontWeight: '600' },
+  done: { textDecorationLine: 'line-through', color: '#94a3b8' },
+  course: { color: '#64748b', marginTop: 2 },
+  hapus: { color: '#dc2626', fontWeight: '600' },
+});
+`}
+/>
+
+## Zustand + persist
+
+Kalau kamu memilih Zustand, persistensi tidak perlu ditulis manual. Middleware `persist` membungkus store, membaca data saat store dibuat, dan menyimpan setiap kali `set` dipanggil. `createJSONStorage(() => AsyncStorage)` menyambungkan AsyncStorage dan mengurus `JSON.stringify`/`JSON.parse` untukmu.
+
+```js title="src/features/tasks/tasks-store.js" {1,3,7,22-28}
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { create } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import { TASKS } from '../../lib/data';
+
+export const useTasksStore = create(
+  persist(
+    (set) => ({
+      tasks: TASKS,
+      addTask: (input) =>
+        set((state) => ({ tasks: [...state.tasks, { ...input, id: String(Date.now()), done: false }] })),
+      toggleTask: (id) =>
+        set((state) => ({
+          tasks: state.tasks.map((task) => (task.id === id ? { ...task, done: !task.done } : task)),
+        })),
+      updateTask: (id, changes) =>
+        set((state) => ({
+          tasks: state.tasks.map((task) => (task.id === id ? { ...task, ...changes } : task)),
+        })),
+      removeTask: (id) => set((state) => ({ tasks: state.tasks.filter((task) => task.id !== id) })),
+    }),
+    {
+      name: 'latihan-rn:tasks',
+      storage: createJSONStorage(() => AsyncStorage),
+      version: 1,
+      partialize: (state) => ({ tasks: state.tasks }),
+    },
+  ),
+);
+```
+
+- `name` adalah kunci di AsyncStorage.
+- `version` disimpan bersama datanya. Kalau versinya berbeda, Zustand memanggil opsi `migrate(persistedState, version)` agar kamu bisa mengubah bentuk data lama.
+- `partialize` memilih bagian state yang disimpan. Fungsi seperti `addTask` tidak perlu dan tidak bisa diubah ke JSON.
+
+Hydration juga terjadi di sini dan berlangsung asinkron. Untuk menampilkan loading, tanyakan statusnya ke API `persist`:
+
+```js title="src/features/tasks/use-tasks-hydrated.js"
+import { useEffect, useState } from 'react';
+import { useTasksStore } from './tasks-store';
+
+export function useTasksHydrated() {
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = useTasksStore.persist.onFinishHydration(() => setHydrated(true));
+    setHydrated(useTasksStore.persist.hasHydrated());
+    return unsubscribe;
+  }, []);
+
+  return hydrated;
+}
+```
+
+## SecureStore untuk rahasia
+
+AsyncStorage menyimpan teks apa adanya di penyimpanan aplikasi. Di HP yang di-*root*, lewat backup, atau saat debugging, isinya bisa dibaca. Itu tidak masalah untuk daftar tugas, tetapi berbahaya untuk **token login**: siapa pun yang memegang token bisa berpura-pura menjadi kamu.
+
+Untuk rahasia kecil, pakai [SecureStore](/glosarium#secure-store) (`expo-secure-store`). Nilainya dienkripsi oleh sistem operasi: **Keychain** di iOS dan **Keystore** di Android. Paket ini juga sudah ada di Expo Go.
+
+```bash
+npx expo install expo-secure-store
+```
+
+Bungkus aksesnya dalam satu file agar nama kunci tidak tersebar ke mana-mana:
+
+```js title="src/lib/token-storage.js"
+import * as SecureStore from 'expo-secure-store';
+
+const TOKEN_KEY = 'auth.accessToken';
+
+export function saveToken(token) {
+  return SecureStore.setItemAsync(TOKEN_KEY, token);
+}
+
+export function getToken() {
+  return SecureStore.getItemAsync(TOKEN_KEY); // → string, atau null kalau belum ada
+}
+
+export function clearToken() {
+  return SecureStore.deleteItemAsync(TOKEN_KEY);
+}
+```
+
+Coba dari tab Profil dengan komponen kecil ini, lalu tampilkan `<TokenDemo />` di `src/app/(tabs)/profile.js`:
+
+```jsx title="src/components/token-demo.js"
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { clearToken, getToken, saveToken } from '../lib/token-storage';
+
+export default function TokenDemo() {
+  const [status, setStatus] = useState('Belum dicek.');
+
+  async function simpan() {
+    await saveToken('token-demo-andi-123');
+    setStatus('Token disimpan terenkripsi.');
+  }
+
+  async function baca() {
+    const token = await getToken();
+    setStatus(token ? `Token ada: ${token.slice(0, 10)}…` : 'Tidak ada token.');
+  }
+
+  async function hapus() {
+    await clearToken();
+    setStatus('Token dihapus.');
+  }
+
+  return (
+    <View style={styles.box}>
+      <Text>{status}</Text>
+      <View style={styles.row}>
+        <Pressable onPress={simpan} style={styles.button}><Text>Simpan</Text></Pressable>
+        <Pressable onPress={baca} style={styles.button}><Text>Baca</Text></Pressable>
+        <Pressable onPress={hapus} style={styles.button}><Text>Hapus</Text></Pressable>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  box: { marginTop: 24, gap: 8 },
+  row: { flexDirection: 'row', gap: 8 },
+  button: { padding: 10, borderRadius: 8, backgroundColor: '#e0e7ff' },
+});
+```
+
+Tekan **Simpan**, tutup aplikasi, buka lagi, lalu tekan **Baca**. Tokennya masih ada. Aturan pakai SecureStore:
+
+- **Hanya untuk nilai kecil.** Nilai di atas sekitar 2 KB bisa gagal disimpan di sebagian perangkat. Token cocok, daftar tugas tidak.
+- **Nilai harus string.** Objek perlu `JSON.stringify` dulu, sama seperti AsyncStorage.
+- **Kunci hanya boleh berisi huruf, angka, `.`, `-`, dan `_`.** Kunci seperti `auth:token` ditolak.
+- **Tidak tersedia di web.** Uji di Expo Go Android atau iOS. Kalau targetmu juga web, siapkan cabang khusus web.
+- **Data di iOS bisa bertahan setelah aplikasi dihapus**, karena Keychain dikelola sistem. Di Android, datanya ikut terhapus. Jadi selalu sediakan logout yang memanggil `clearToken()`.
+- **Jangan menyimpan password.** Simpan token dari server saja. Password cukup dikirim sekali saat login.
+
+## Data besar: expo-sqlite
+
+AsyncStorage menyimpan seluruh array sebagai satu teks. Untuk 50 tugas itu cepat. Untuk 5.000 catatan kuliah yang ingin dicari, difilter per mata kuliah, dan diurutkan berdasarkan deadline, menulis ulang seluruh array di setiap perubahan menjadi berat. Saat itulah kamu butuh database sungguhan di HP: **expo-sqlite**. SQL-nya sama dengan yang kamu pelajari di [Dasar SQL](/belajar/crud-backend/dasar-sql).
+
+```js
+import * as SQLite from 'expo-sqlite';
+
+const db = await SQLite.openDatabaseAsync('latihan.db');
+await db.execAsync('CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)');
+await db.runAsync('INSERT INTO tasks (id, title) VALUES (?, ?)', '10', 'Rangkum bab normalisasi');
+const belum = await db.getAllAsync('SELECT * FROM tasks WHERE done = 0 ORDER BY title');
+```
+
+Pola offline lengkap dengan SQLite dibahas di Track 4, pelajaran [Offline-first](/belajar/expert/offline-first).
+
+## Memilih alat yang tepat
+
+| Kebutuhan | Alat | Contoh |
+| --- | --- | --- |
+| State milik satu komponen | `useState` | Teks yang sedang diketik |
+| Dibagi komponen yang berdekatan | Lifting state + props | Form dan list dalam satu layar |
+| Dibagi banyak layar, jarang berubah | Context (+ `useReducer`) | User login, tema, daftar tugas latihan |
+| Store besar yang sering berubah | Zustand + selector | Filter, draft, keranjang belanja |
+| Bertahan setelah aplikasi ditutup, tidak rahasia | AsyncStorage / `persist` | Preferensi, daftar tugas lokal |
+| Rahasia kecil | SecureStore | Access token, refresh token |
+| Data lokal banyak dan perlu query | expo-sqlite | Ribuan catatan offline |
+| Data milik server | TanStack Query (Track 3) | Daftar tugas dari API |
+
+Baris terakhir penting. Di Track 3, daftar tugas tidak lagi milik HP, melainkan milik database API. Data seperti itu disebut [server state](/glosarium#server-state): bisa basi kapan saja dan butuh loading, error, cache, serta refetch. Menyalinnya ke Context atau AsyncStorage secara manual membuat dua sumber kebenaran yang mudah tidak sinkron. Untuk itu kamu akan memakai [TanStack Query](/belajar/fullstack/tanstack-query). Context tetap terpakai untuk hal yang benar-benar milik aplikasi, misalnya status login.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Lima jebakan yang paling sering muncul">
+
+**1. Lupa memasang provider.** Layar yang memanggil `useTasks()` di luar `TasksProvider` menampilkan `Error: useTasks harus dipakai di dalam <TasksProvider>`. Tanpa pengecekan di hook, yang muncul hanya `TypeError` samar tentang membaca `tasks` dari `null`. Pastikan provider membungkus `Stack` di `src/app/_layout.js`.
+
+**2. Data tersimpan tertimpa saat aplikasi dibuka.** Gejalanya, tugas yang kamu tambahkan selalu kembali ke data awal setelah restart. Penyebabnya, effect penyimpan berjalan sebelum hydration selesai. Jaga dengan `if (!hydrated) return;`.
+
+**3. Menyimpan objek tanpa JSON.** AsyncStorage dan SecureStore hanya menerima string. Selalu `JSON.stringify` saat menulis dan `JSON.parse` di dalam `try/catch` saat membaca.
+
+**4. Selector Zustand membuat objek baru.** `useTasksStore((s) => s.tasks.filter((t) => !t.done))` menghasilkan array baru setiap dipanggil. React mengira state terus berubah dan berhenti dengan `Maximum update depth exceeded`. Pilih `s.tasks` lalu filter di komponen, atau bungkus selector dengan `useShallow`.
+
+**5. Kunci SecureStore tidak valid.** `saveToken` dengan kunci `auth:token` melempar `Invalid key provided to SecureStore. Keys must not be empty and contain only alphanumeric characters, ".", "-", and "_".` Ganti titik dua dengan titik, misalnya `auth.token`.
+
+</Callout>
+
+Satu lagi yang bukan error tetapi lubang keamanan: menyimpan token di AsyncStorage. Aplikasinya berjalan normal, tetapi tokennya tersimpan sebagai teks biasa. Token selalu masuk SecureStore.
+
+## Latihan
+
+<Exercise title="Tombol hapus semua tugas selesai" difficulty="mudah" hints={["Tambahkan `case 'clearDone'` di `tasksReducer` yang memakai `filter`.", "Tambahkan fungsi `clearDone` ke objek `value` di `TasksProvider`.", "Pasang tombolnya di `ListFooterComponent` daftar tugas."]}>
+
+Tambahkan action `clearDone` ke store Context dan tombol "Hapus yang selesai" di bawah daftar tugas. Setelah aplikasi ditutup dan dibuka lagi, tugas yang sudah dihapus tidak boleh muncul kembali.
+
+<Solution>
+
+```diff title="src/features/tasks/tasks-context.js"
+     case 'remove':
+       return tasks.filter((task) => task.id !== action.id);
++    case 'clearDone':
++      return tasks.filter((task) => !task.done);
+@@
+       removeTask: (id) => dispatch({ type: 'remove', id }),
++      clearDone: () => dispatch({ type: 'clearDone' }),
+```
+
+```jsx title="src/app/(tabs)/index.js"
+// tambahkan View ke import react-native
+const { tasks, hydrated, clearDone } = useTasks();
+
+// ListFooterComponent kini berisi dua tombol
+ListFooterComponent={
+  <View>
+    <Link href="/tasks/new" asChild>
+      <Pressable style={styles.addButton}>
+        <Text style={styles.addText}>+ Tambah tugas</Text>
+      </Pressable>
+    </Link>
+    <Pressable onPress={clearDone} style={styles.addButton}>
+      <Text style={styles.addText}>Hapus yang selesai</Text>
+    </Pressable>
+  </View>
+}
+```
+
+Penyimpanan tidak perlu diubah sama sekali. Effect penyimpan memantau `tasks`, jadi setiap action yang mengubah array otomatis ikut tersimpan. Itulah keuntungan memusatkan perubahan di reducer.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Migrasi data v1 ke v2" difficulty="sedang" hints={["Data v2 menambah field `priority` dengan nilai bawaan `'sedang'`.", "Saat memuat, baca kunci v2 dulu. Kalau `null`, baca kunci v1.", "Setelah migrasi berhasil, hapus kunci lama dengan `removeItem`."]}>
+
+Tugas di `latihan-rn` sekarang butuh field `priority` (`'rendah' | 'sedang' | 'tinggi'`). Ubah kunci penyimpanan menjadi `latihan-rn:tasks:v2`. Pengguna yang masih punya data v1 tidak boleh kehilangan tugasnya: setiap tugas lama mendapat `priority: 'sedang'`.
+
+<Solution>
+
+```js title="src/features/tasks/tasks-context.js"
+const STORAGE_KEY = 'latihan-rn:tasks:v2';
+const LEGACY_KEY_V1 = 'latihan-rn:tasks:v1';
+
+async function loadStoredTasks() {
+  const json = await AsyncStorage.getItem(STORAGE_KEY);
+  if (json !== null) return JSON.parse(json);
+
+  const legacy = await AsyncStorage.getItem(LEGACY_KEY_V1);
+  if (legacy === null) return null;
+
+  const migrated = JSON.parse(legacy).map((task) => ({ priority: 'sedang', ...task }));
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+  await AsyncStorage.removeItem(LEGACY_KEY_V1);
+  return migrated;
+}
+```
+
+Di dalam `load()`, ganti `AsyncStorage.getItem` dengan pemanggilan `loadStoredTasks()`, lalu `dispatch` hasilnya kalau tidak `null` (hasilnya sudah berupa array, jadi tidak perlu `JSON.parse` lagi). Urutan `{ priority: 'sedang', ...task }` membuat tugas yang kebetulan sudah punya `priority` tidak tertimpa. Jangan lupa menambahkan `priority` ke `TASKS` di `src/lib/data.js` dan ke `addTask`. Di Zustand, logika yang sama ditulis di opsi `migrate` dengan `version: 2`.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Komponen `TabLayout` menerima props `tasks` dan `onToggle` hanya untuk diteruskan ke layar di bawahnya, tanpa memakainya sendiri. Pola ini disebut…",
+    options: ["Lifting state up", "Derived state", "Prop drilling", "Hydration"],
+    answer: 2,
+    explain: "Prop drilling adalah mengoper props menembus komponen perantara yang tidak membutuhkannya. Lifting state adalah memindahkan state ke induk, derived state adalah nilai yang dihitung dari state, dan hydration adalah mengisi state dari penyimpanan.",
+  },
+  {
+    q: "Kenapa effect penyimpan di `TasksProvider` diawali `if (!hydrated) return;`?",
+    code: "useEffect(() => {\n  if (!hydrated) return;\n  AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));\n}, [tasks, hydrated]);",
+    options: ["Agar data awal `TASKS` tidak menimpa data tersimpan sebelum sempat dimuat", "Karena AsyncStorage belum boleh dipakai sebelum render pertama", "Agar `JSON.stringify` tidak melempar error", "Supaya effect hanya berjalan satu kali"],
+    answer: 0,
+    explain: "Saat render pertama `tasks` masih berisi data bawaan. Tanpa penjaga, effect langsung menulisnya ke AsyncStorage dan menimpa data milik pengguna. AsyncStorage sendiri bisa dipakai kapan saja, dan effect tetap berjalan setiap `tasks` berubah.",
+  },
+  {
+    q: "Aplikasi menerima access token setelah login. Di mana token itu sebaiknya disimpan?",
+    options: ["AsyncStorage, karena bertahan setelah aplikasi ditutup", "Context saja, karena paling cepat", "expo-sqlite, karena berupa database", "expo-secure-store, karena dienkripsi oleh Keychain/Keystore"],
+    answer: 3,
+    explain: "Token adalah rahasia kecil, jadi tempatnya SecureStore yang terenkripsi. AsyncStorage dan SQLite menyimpan data tanpa enkripsi, sedangkan Context hilang begitu aplikasi ditutup.",
+  },
+  {
+    q: "Komponen memakai selector Zustand berikut dan langsung crash dengan `Maximum update depth exceeded`. Kenapa?",
+    code: "const belum = useTasksStore((s) => s.tasks.filter((t) => !t.done));",
+    options: ["`filter` tidak boleh dipakai di React Native", "Selector membuat array baru setiap dipanggil, sehingga dianggap selalu berubah", "Store Zustand harus dibungkus provider", "`s.tasks` belum ter-hydrate"],
+    answer: 1,
+    explain: "Zustand membandingkan hasil selector dengan hasil sebelumnya. `filter` selalu menghasilkan array baru, jadi React terus merender ulang. Pilih `s.tasks` lalu filter di komponen, atau bungkus dengan `useShallow`. Zustand tidak butuh provider.",
+  },
+  {
+    q: "`await AsyncStorage.getItem('latihan-rn:tasks:v1')` dipanggil saat aplikasi pertama kali dipasang. Hasilnya…",
+    options: ["Array kosong `[]`", "String kosong `''`", "`null`", "Error `NOT_FOUND`"],
+    answer: 2,
+    explain: "AsyncStorage mengembalikan `null` untuk kunci yang belum pernah disimpan. Karena itu kode memeriksa `json !== null` sebelum `JSON.parse`, lalu memakai data bawaan kalau belum ada apa-apa.",
+  },
+]} />
+
+## Ringkasan
+
+- **Prop drilling** muncul saat state disimpan jauh dari pemakainya. Di Expo Router, layar dirender oleh router, jadi data bersama butuh state global.
+- **`useReducer`** memusatkan aturan perubahan (`add`, `toggle`, `update`, `remove`) dalam fungsi murni yang mudah diuji dengan `node`.
+- **Context + `useReducer`** di `src/features/tasks/tasks-context.js` menghasilkan `TasksProvider` dan hook `useTasks`. Provider dipasang di `src/app/_layout.js`.
+- **Zustand** tidak butuh provider, dan selector membuat komponen hanya render ulang saat potongan datanya berubah. Hindari selector yang membuat objek baru, atau pakai `useShallow`.
+- **AsyncStorage** menyimpan string tanpa enkripsi. Pakai JSON, kunci berversi, dan status hydration: muat dulu, baru simpan. Di Zustand, gunakan `persist` dengan `createJSONStorage(() => AsyncStorage)`.
+- **SecureStore** hanya untuk rahasia kecil seperti token. **expo-sqlite** untuk data lokal yang besar. Data milik server diurus TanStack Query di Track 3.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Di `kuliah-app` (Track 3), daftar tugas berasal dari API, jadi tidak disimpan di Context atau AsyncStorage. Tugas itu diambil alih TanStack Query di `src/features/tasks/queries.js`. Yang kamu pakai lagi adalah dua pola dari sini: `src/lib/token-storage.js` dengan SecureStore untuk access token dan refresh token, serta Context di `src/features/auth/auth-context.js` untuk status login. Keduanya dibangun di pelajaran [Autentikasi](/belajar/fullstack/autentikasi). Berikutnya, di [UI yang Terasa Native](/belajar/react-native/ui-native), kamu memoles tampilan `latihan-rn` dengan safe area, dark mode, ikon, dan haptic.
+
+</Callout>

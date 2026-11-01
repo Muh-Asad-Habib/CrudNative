@@ -1,0 +1,914 @@
+## Pengantar
+
+Sari membuka aplikasi tugas di HP dan di tablet sekaligus. Di HP, ia menandai tugas "Rancang ERD sistem perpustakaan" sebagai selesai. Di tablet, tugas itu masih tertulis "Belum dikerjakan". Tulisan itu baru berubah setelah Sari menarik layar ke bawah untuk refresh.
+
+Tablet tidak rusak. Tablet menyimpan salinan data di cache [TanStack Query](/glosarium#tanstack-query), yaitu catatan sementara di memori aplikasi supaya tidak perlu bertanya ke server terus-menerus. Masalahnya, tablet tidak tahu bahwa data di server sudah berubah.
+
+Masalah kedua muncul saat aplikasi ditutup. Deadline praktikum Basis Data jam 23.59, dan Sari baru ingat jam 00.10. Aplikasi yang sedang tertutup tidak bisa menjalankan kode apa pun untuk mengingatkannya.
+
+Pelajaran ini memakai dua alat untuk dua masalah itu:
+
+- **Saat aplikasi terbuka**, server yang memberi kabar duluan lewat Socket.IO. Kabar ini disebut **event**, misalnya `task:created` (tugas dibuat), `task:updated` (tugas diubah), dan `task:deleted` (tugas dihapus). Aplikasi lalu memperbarui cache-nya sendiri tanpa kamu menarik layar.
+- **Saat aplikasi tertutup**, sistem operasi HP (Android atau iOS) yang bekerja. Caranya lewat [notifikasi lokal](/glosarium#local-notification) yang sudah dijadwalkan aplikasi, atau lewat push notification yang dikirim server.
+
+Kode di sini melanjutkan pelajaran [TanStack Query](/belajar/fullstack/tanstack-query) dan [autentikasi JWT](/belajar/fullstack/autentikasi), tapi dalam versi TypeScript. Sisi server memakai API pendamping di folder `api/`. Sisi aplikasi memakai `kuliah-app/` milikmu yang sudah pindah ke TypeScript dan dirapikan ke folder per fitur `src/features/...`. Kode aplikasi di sini adalah contoh, jadi sesuaikan nama file dengan proyekmu. Semua perubahan ditulis sebagai tambahan pada file yang sudah ada.
+
+## Empat cara mendapatkan data terbaru
+
+<Callout type="analogi" title="Menunggu paket: SMS terus-terusan atau telepon yang tetap tersambung">
+
+Kamu menunggu paket dari JNE. Cara pertama: tiap 15 menit kamu SMS kurir, "Sudah sampai belum?" Hampir semua jawabannya "belum". Ini **polling**. Cara kedua: kamu SMS sekali, lalu kurir baru membalas setelah ada kabar. Setelah dibalas, kamu SMS lagi. Ini **long polling**. Cara ketiga: kamu berlangganan SMS otomatis dari JNE. Kabar datang sendiri, tapi kamu tidak bisa membalas lewat jalur itu. Ini **SSE**. Cara keempat: kamu dan kurir saling telepon dan sambungannya dibiarkan terbuka. Siapa pun bisa bicara kapan saja. Ini **WebSocket**.
+
+Bedanya dengan dunia nyata: telepon yang terbuka berjam-jam itu mahal. Koneksi WebSocket yang sedang diam hanya mengirim sinyal kecil sesekali untuk memastikan sambungan masih hidup.
+
+</Callout>
+
+Sebelum memasang WebSocket, cek dulu apakah kamu memang butuh. Ada empat pola umum supaya aplikasi (klien) tahu bahwa data di server berubah. Kolom "kecepatan kabar" di tabel ini disebut juga **latensi**: jeda antara data berubah di server dan kabarnya sampai di HP.
+
+| Cara | Cara kerja | Arah | Kecepatan kabar | Beban server | Cocok untuk |
+| --- | --- | --- | --- | --- | --- |
+| Polling | Klien mengirim GET biasa tiap N detik | Klien → server | Bisa telat sampai N detik | Banyak request yang jawabannya "tidak ada perubahan" | Dashboard yang boleh telat beberapa detik |
+| Long polling | Klien mengirim GET, server *menahan* jawaban sampai ada data baru atau waktunya habis | Klien → server, diulang terus | Cepat | Satu koneksi tertahan per klien | Cadangan saat WebSocket diblokir jaringan (misalnya proxy kantor) |
+| SSE (Server-Sent Events) | Satu respons HTTP yang tidak pernah selesai. Server menulis event baris demi baris | Server → klien saja | Cepat | Satu koneksi terbuka per klien | Feed notifikasi, progres proses, teks yang muncul bertahap |
+| [WebSocket](/glosarium#websocket) | Koneksi dua arah yang dibuka lewat request HTTP, lalu "di-upgrade" | Dua arah | Paling cepat | Satu koneksi terbuka per klien | Chat, kerja bareng, sinkron antarperangkat |
+
+Polling paling mudah dicoba karena TanStack Query sudah punya fiturnya. Kamu cukup menambah satu opsi di query yang sudah ada:
+
+```ts title="kuliah-app/src/features/tasks/hooks.ts (contoh polling)" {6-7}
+export function useTasks(filters: TaskFilters) {
+  return useInfiniteQuery({
+    queryKey: taskKeys.list(filters),
+    queryFn: ({ pageParam, signal }) => tasksApi.list(filters, pageParam, signal),
+    // ...opsi lain tetap sama
+    refetchInterval: 15_000, // GET ulang tiap 15 detik selama query dipakai layar
+    refetchIntervalInBackground: false,
+  });
+}
+```
+
+Arti dua baris yang disorot:
+
+- `refetchInterval: 15_000` menyuruh TanStack Query mengirim GET ulang tiap 15.000 milidetik (15 detik), selama ada layar yang memakai query ini. Garis bawah di `15_000` hanya pemisah ribuan supaya mudah dibaca.
+- `refetchIntervalInBackground: false` menghentikan polling saat aplikasi tidak sedang dilihat.
+
+Di React Native, TanStack Query baru tahu aplikasi sedang di background kalau `AppState` (status aplikasi: aktif atau di belakang) sudah dihubungkan ke `focusManager`. Pola ini ada di `kuliah-app/src/lib/query-client.ts` dari pelajaran TanStack Query. Untuk aplikasi tugas kuliah, polling tiap 15–30 detik sebenarnya sudah cukup. Masalahnya muncul saat pengguna makin banyak. Makin banyak juga request yang jawabannya "tidak ada yang berubah".
+
+Di pelajaran ini kita memakai **Socket.IO**, library yang dibangun di atas WebSocket. Socket.IO punya aturan komunikasinya sendiri. Akibatnya, `socket.io-client` tidak bisa bicara dengan server WebSocket biasa, dan sebaliknya. Imbalannya, kamu mendapat beberapa fitur siap pakai:
+
+- **Reconnect otomatis**: kalau sambungan putus, Socket.IO mencoba lagi sendiri dengan jeda yang makin panjang (backoff).
+- **Cadangan long polling** kalau WebSocket diblokir jaringan.
+- **Room**: kelompok koneksi, mirip grup WA. Server bisa mengirim pesan ke satu kelompok saja.
+- **Middleware saat handshake**: pemeriksaan (misalnya cek token login) saat koneksi pertama kali dibuka. **Handshake** adalah "salam perkenalan" di awal koneksi.
+
+<Flow
+  nodes={["HP Sari", "PATCH /api/tasks/1", "tasks.service", "Prisma + SQLite", "room user:1", "Tablet Sari"]}
+  labels={["REST seperti biasa", "updateTask()", "await tulis DB", "emit task:updated", "WebSocket"]}
+  caption="Mutasi tetap lewat REST; Socket.IO hanya mengabarkan hasilnya ke semua perangkat milik user yang sama"
+/>
+
+Lihat arah panahnya. Membuat, mengubah, dan menghapus tugas (disebut **mutasi**) tetap lewat REST seperti sebelumnya. Jalur REST sudah divalidasi Zod, sudah diuji Supertest, dan sudah dijaga `requireAuth`. Socket hanya dipakai satu arah, dari server ke klien, untuk mengabarkan "ada yang berubah". Desain ini jauh lebih sederhana daripada memindahkan seluruh CRUD ke event socket.
+
+## Kontrak event
+
+<Callout type="analogi" title="Format pengumuman di grup WA kelas">
+
+Ketua kelas selalu memakai format yang sama: "[TUGAS BARU] Basis Data, deadline Jumat 23.59". Karena formatnya tetap, semua anggota grup langsung paham tanpa bertanya. Nama event (`task:created`) mirip label "[TUGAS BARU]". **Payload**, yaitu data yang ikut dikirim bersama event, mirip isi pengumumannya. **Kontrak** adalah kesepakatan format itu. Kita menulisnya sebagai tipe TypeScript, supaya server dan aplikasi tidak bisa salah format tanpa ketahuan.
+
+</Callout>
+
+Seperti di [TypeScript end-to-end](/belajar/expert/typescript-end-to-end), kontrak ditulis sekali sebagai tipe. Ada tiga event:
+
+| Event | Payload | Dikirim setelah |
+| --- | --- | --- |
+| `task:created` | Task lengkap (bentuk sama dengan `GET /api/tasks/:id`) | `prisma.task.create` berhasil |
+| `task:updated` | Task lengkap | `prisma.task.update` berhasil |
+| `task:deleted` | `{ id }` | `prisma.task.delete` berhasil |
+
+```ts title="api/src/realtime/events.ts"
+import type { getTask } from "../modules/tasks/tasks.service.ts";
+
+// Bentuk Task yang sama persis dengan respons REST (tanpa userId, plus course & attachments).
+export type TaskPayload = Awaited<ReturnType<typeof getTask>>;
+
+export interface ServerToClientEvents {
+  "task:created": (task: TaskPayload) => void;
+  "task:updated": (task: TaskPayload) => void;
+  "task:deleted": (payload: { id: number }) => void;
+}
+
+// Klien tidak mengirim event apa pun; semua mutasi tetap lewat REST.
+export interface ClientToServerEvents {}
+
+export interface InterServerEvents {}
+
+export interface SocketData {
+  userId: number;
+}
+```
+
+Isi file ini, dalam kata-kata biasa:
+
+- `TaskPayload` adalah bentuk Task yang sama persis dengan respons `GET /api/tasks/:id`. Tipe ini diambil otomatis dari hasil fungsi `getTask`, jadi tidak perlu ditulis ulang.
+- `ServerToClientEvents` adalah daftar event yang boleh dikirim server, beserta isi masing-masing.
+- `ClientToServerEvents` sengaja kosong karena klien tidak mengirim event apa pun.
+- `SocketData` adalah data yang ditempel ke setiap koneksi. Di sini cukup `userId`.
+
+`import type` hanya mengambil tipe, dan baris itu dihapus seluruhnya saat kode dikompilasi. Jadi tidak terjadi import melingkar (dua file saling meng-import) dengan `tasks.service.ts`, walaupun nanti service meng-import modul realtime.
+
+Payload dikirim dalam bentuk JSON. Akibatnya, `deadline` yang bertipe `Date` di server tiba sebagai teks tanggal ISO di aplikasi, misalnya `"2025-06-20T16:59:00.000Z"`. Jadi tipe `Task` di `kuliah-app/src/features/tasks/types.ts` harus menulis `deadline` sebagai `string`, bukan `Date`.
+
+## Server: Socket.IO di http server Express
+
+<Callout type="analogi" title="Kos-kosan dengan satu pintu, satu satpam, dan satu kamar per penghuni">
+
+Bayangkan kos-kosan dengan satu pintu depan. Pintu itu adalah **http server**. Tamu biasa (request REST) dan tamu yang mau tinggal lama (koneksi WebSocket) masuk lewat pintu yang sama. Di pintu ada satpam yang memeriksa kartu penghuni saat tamu masuk. Satpam itu adalah **middleware handshake** yang memeriksa token JWT. Setelah lolos, tamu diantar ke kamar pemiliknya. Kamar itu adalah **room** `user:1`. HP, tablet, dan laptop Sari masuk kamar yang sama. Jadi kabar untuk Sari cukup diumumkan sekali ke kamar itu.
+
+Bedanya: satpam sungguhan bisa memeriksa ulang kapan saja. Middleware handshake hanya jalan sekali, saat koneksi dibuka.
+
+</Callout>
+
+Socket.IO harus menempel pada **objek `http.Server` yang sama** dengan Express. `http.Server` adalah objek bawaan Node yang benar-benar mendengarkan port 3000. Kalau kamu membuat server HTTP terpisah lalu tetap memanggil `app.listen()`, Express membuat server kedua. Socket.IO jadi menempel di server yang tidak pernah dipakai, dan tidak ada koneksi yang masuk.
+
+File yang ditambah dan diubah:
+
+<FileTree title="Tambahan di api/" tree={`api/
+  scripts/
+    listen-tasks.ts      (baru, klien uji)
+  src/
+    realtime/
+      events.ts          (baru)
+      socket.ts          (baru)
+    modules/tasks/
+      tasks.service.ts   (diubah: emit setelah tulis DB)
+    server.ts            (diubah: createServer + attachRealtime)`} />
+
+<Steps>
+<Step title="Pasang paket">
+
+```bash
+cd api
+npm install socket.io
+npm install -D socket.io-client
+```
+
+`socket.io` adalah paket untuk server. `socket.io-client` di sisi API hanya dipakai skrip uji di langkah terakhir. Karena itu ia cukup dipasang sebagai devDependency (paket yang hanya dibutuhkan saat development).
+
+</Step>
+<Step title="Buat modul realtime dengan autentikasi handshake">
+
+File ini melakukan tiga hal: membuat server Socket.IO, memeriksa token di setiap koneksi baru, lalu memasukkan koneksi ke room milik user-nya.
+```ts title="api/src/realtime/socket.ts" showLineNumbers {23-37,39-42}
+import type { Server as HttpServer } from "node:http";
+import jwt from "jsonwebtoken";
+import { Server } from "socket.io";
+import { env } from "../config/env.ts";
+import { verifyAccessToken } from "../lib/tokens.ts";
+import type {
+  ClientToServerEvents,
+  InterServerEvents,
+  ServerToClientEvents,
+  SocketData,
+} from "./events.ts";
+
+type RealtimeServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
+
+let io: RealtimeServer | null = null;
+
+const userRoom = (userId: number) => `user:${userId}`;
+
+// `data` ikut terkirim ke klien di event connect_error, jadi klien bisa membedakan penyebabnya.
+function socketError(message: string, code: "UNAUTHORIZED" | "TOKEN_EXPIRED") {
+  return Object.assign(new Error(message), { data: { code } });
+}
+
+export function attachRealtime(httpServer: HttpServer): RealtimeServer {
+  const server: RealtimeServer = new Server(httpServer, {
+    cors: { origin: env.CORS_ORIGIN === "*" ? "*" : env.CORS_ORIGIN.split(",").map((o) => o.trim()) },
+  });
+
+  // Middleware handshake: jalan SEKALI per koneksi, sebelum event "connection".
+  server.use((socket, next) => {
+    const token: unknown = socket.handshake.auth.token;
+    if (typeof token !== "string" || token === "") {
+      return next(socketError("Token akses tidak ditemukan", "UNAUTHORIZED"));
+    }
+    try {
+      socket.data.userId = verifyAccessToken(token).userId;
+      next();
+    } catch (error) {
+      if (error instanceof jwt.TokenExpiredError) {
+        return next(socketError("Token akses sudah kedaluwarsa", "TOKEN_EXPIRED"));
+      }
+      next(socketError("Token akses tidak valid", "UNAUTHORIZED"));
+    }
+  });
+
+  server.on("connection", (socket) => {
+    const room = userRoom(socket.data.userId);
+    // Satu room per user: HP, tablet, dan web milik Sari masuk room yang sama.
+    void socket.join(room);
+    if (env.NODE_ENV === "development") {
+      console.log(`[socket] ${socket.id} masuk ${room}`);
+      socket.on("disconnect", (reason) => console.log(`[socket] ${socket.id} putus: ${reason}`));
+    }
+  });
+
+  io = server;
+  return server;
+}
+
+/** Kirim event ke semua perangkat milik satu user. No-op kalau Socket.IO belum dipasang (mis. di tes Supertest). */
+export function emitToUser<E extends keyof ServerToClientEvents>(
+  userId: number,
+  event: E,
+  ...args: Parameters<ServerToClientEvents[E]>
+) {
+  io?.to(userRoom(userId)).emit(event, ...args);
+}
+```
+
+Beberapa hal penting:
+
+- Token dibaca dari `socket.handshake.auth`, **bukan** dari query string. URL sering tercatat di log proxy, sedangkan payload `auth` tidak.
+- Pesan dan kode error sengaja disamakan dengan `requireAuth` di `api/src/middleware/auth.ts`. Klien cukup mengenal satu kosakata: `TOKEN_EXPIRED` berarti refresh dulu, kode lain berarti sesi tidak sah.
+- `verifyAccessToken` dari `api/src/lib/tokens.ts` dipakai ulang, jadi algoritma, secret, dan masa berlaku 15 menit identik dengan REST.
+- Klien tidak pernah memilih room sendiri. Room ditentukan server dari `userId` di token, sehingga Andi tidak bisa ikut "mendengar" tugas Sari.
+
+</Step>
+<Step title="Ganti app.listen dengan createServer">
+
+```diff title="api/src/server.ts"
++import { createServer } from "node:http";
+ import { networkInterfaces } from "node:os";
+ import { createApp } from "./app.ts";
+ import { env } from "./config/env.ts";
+ import { prisma } from "./lib/prisma.ts";
++import { attachRealtime } from "./realtime/socket.ts";
+
+ // ...lanAddresses() tetap sama
+
+ const app = createApp();
++const server = createServer(app);
++const io = attachRealtime(server);
+
+-// 0.0.0.0 = menerima koneksi dari semua network interface, bukan hanya localhost.
+-const server = app.listen(env.PORT, "0.0.0.0", (error) => {
+-  if (error) {
+-    console.error(`Gagal menjalankan server di port ${env.PORT}:`, error.message);
+-    process.exit(1);
+-  }
+-
++// Callback listen() milik http.Server tidak menerima error, jadi error ditangkap lewat event.
++server.on("error", (error) => {
++  console.error(`Gagal menjalankan server di port ${env.PORT}:`, error.message);
++  process.exit(1);
++});
++
++// 0.0.0.0 = menerima koneksi dari semua network interface, bukan hanya localhost.
++server.listen(env.PORT, "0.0.0.0", () => {
+   console.log(`API berjalan di http://localhost:${env.PORT}/api`);
+   for (const address of lanAddresses()) {
+     console.log(`  Dari HP di Wi-Fi yang sama: http://${address}:${env.PORT}/api`);
+   }
+   console.log(`  Dari emulator Android:      http://10.0.2.2:${env.PORT}/api`);
++  console.log(`  Socket.IO aktif di path /socket.io/`);
+ });
+
+ // Tutup server & koneksi database dengan rapi saat proses dihentikan (Ctrl+C).
+ function shutdown() {
+-  server.close(async () => {
++  // io.close() memutus semua socket, lalu ikut menutup http server.
++  // server.close() saja akan menunggu selamanya karena koneksi WebSocket tidak pernah idle.
++  io.close(async () => {
+     await prisma.$disconnect();
+     process.exit(0);
+   });
+ }
+```
+
+`createApp()` di `api/src/app.ts` tidak berubah sama sekali. Tes Supertest di [testing backend](/belajar/expert/testing-backend) tetap memanggil `createApp()` tanpa `attachRealtime`, sehingga `io` bernilai `null` dan `emitToUser` diam-diam tidak melakukan apa-apa.
+
+</Step>
+<Step title="Emit dari service, setelah database berhasil ditulis">
+
+```diff title="api/src/modules/tasks/tasks.service.ts"
+ import { removeUploadedFile, toPublicUrl } from "../../lib/storage.ts";
++import { emitToUser } from "../../realtime/socket.ts";
+ import type { CreateTaskInput, ListTasksQuery, UpdateTaskInput } from "./tasks.schemas.ts";
+
+ export async function createTask(userId: number, input: CreateTaskInput) {
+   await assertCourseOwned(userId, input.courseId);
+-  return prisma.task.create({ ...taskQueryArgs, data: { ...input, userId } });
++  const task = await prisma.task.create({ ...taskQueryArgs, data: { ...input, userId } });
++  emitToUser(userId, "task:created", task);
++  return task;
+ }
+
+ export async function updateTask(userId: number, id: number, input: UpdateTaskInput) {
+   await assertTaskOwned(userId, id);
+   await assertCourseOwned(userId, input.courseId);
+-  return prisma.task.update({ ...taskQueryArgs, where: { id }, data: input });
++  const task = await prisma.task.update({ ...taskQueryArgs, where: { id }, data: input });
++  emitToUser(userId, "task:updated", task);
++  return task;
+ }
+
+ export async function deleteTask(userId: number, id: number) {
+   const task = await getTask(userId, id);
+   // Baris Attachment ikut terhapus (onDelete: Cascade), file fisiknya dihapus manual.
+   await prisma.task.delete({ where: { id } });
++  emitToUser(userId, "task:deleted", { id });
+   await Promise.all(task.attachments.map((attachment) => removeUploadedFile(attachment.url)));
+ }
+```
+
+Kenapa di **service** dan bukan di route? Karena service adalah satu-satunya tempat yang tahu kapan data benar-benar tersimpan (lihat [service layer](/glosarium#service-layer)). Kalau `assertCourseOwned` melempar `HttpError`, baris `emitToUser` tidak pernah tercapai, jadi tidak ada event palsu untuk perubahan yang gagal. Aturannya sederhana: **emit hanya setelah `await` tulis database selesai**.
+
+</Step>
+<Step title="Uji dari terminal sebelum menyentuh aplikasi">
+
+```ts title="api/scripts/listen-tasks.ts"
+import { io } from "socket.io-client";
+
+const BASE_URL = process.env.API_URL ?? "http://localhost:3000";
+
+const response = await fetch(`${BASE_URL}/api/auth/login`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: "demo@kampus.ac.id", password: "password123" }),
+});
+const { data } = (await response.json()) as { data: { accessToken: string } };
+
+const socket = io(BASE_URL, { auth: { token: data.accessToken }, transports: ["websocket"] });
+socket.on("connect", () => console.log("Terhubung:", socket.id));
+socket.on("connect_error", (error) => console.log("Ditolak:", error.message));
+socket.onAny((event, payload) => console.log(event, JSON.stringify(payload).slice(0, 100)));
+```
+
+Jalankan API (`npm run dev`) di terminal pertama, lalu `npx tsx scripts/listen-tasks.ts` di terminal kedua. Di terminal ketiga, ubah sebuah tugas lewat REST:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux (bash)"]}>
+<Tab>
+
+```powershell
+$login = Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/auth/login `
+  -ContentType "application/json" -Body '{"email":"demo@kampus.ac.id","password":"password123"}'
+$headers = @{ Authorization = "Bearer $($login.data.accessToken)" }
+Invoke-RestMethod -Method Patch -Uri http://localhost:3000/api/tasks/1 -Headers $headers `
+  -ContentType "application/json" -Body '{"status":"DONE"}'
+```
+
+</Tab>
+<Tab>
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"demo@kampus.ac.id","password":"password123"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.accessToken')
+curl -X PATCH http://localhost:3000/api/tasks/1 \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"DONE"}'
+```
+
+</Tab>
+</Tabs>
+
+Terminal kedua seharusnya langsung mencetak kira-kira seperti ini (id socket dan isi tugas bisa berbeda):
+
+```txt
+Terhubung: kV3b0Xq9rA1l2cT_AAAB
+task:updated {"id":1,"title":"Rancang ERD sistem perpustakaan","description":"...","deadline":"2025-0
+```
+
+Coba juga ganti token di skrip dengan string asal. Kamu akan melihat `Ditolak: Token akses tidak valid`, bukti bahwa middleware handshake bekerja.
+
+</Step>
+</Steps>
+
+## Klien: hook useTaskSocket
+
+Sekarang sisi Expo. Pasang klien dengan `npx expo install socket.io-client`. Paket ini JavaScript murni, jadi bisa dipakai di Expo Go maupun [development build](/glosarium#development-build).
+
+Hook ini butuh fungsi refresh token dari `kuliah-app/src/lib/api.ts`. Kalau kamu mengikuti pola refresh dari [autentikasi JWT](/belajar/fullstack/autentikasi), fungsinya biasanya sudah ada dan tinggal diekspor. Contoh di bawah memakai satu promise bersama, jadi socket dan request REST yang kebetulan refresh bersamaan tetap hanya memicu satu refresh. Kalau refresh token ditolak, ia memanggil `expireSession()`:
+
+```diff title="kuliah-app/src/lib/api.ts"
+-function refreshAccessToken(): Promise<string | null> {
++export function refreshAccessToken(): Promise<string | null> {
+   refreshPromise ??= doRefresh().finally(() => {
+```
+
+Lalu hook-nya:
+
+```ts title="kuliah-app/src/features/tasks/use-task-socket.ts" showLineNumbers
+import { useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { AppState } from 'react-native';
+import { io, type Socket } from 'socket.io-client';
+
+import { useAuth } from '@/features/auth/auth-context';
+import { courseKeys } from '@/features/courses/query-keys';
+import { API_URL, refreshAccessToken } from '@/lib/api';
+import { tokenStorage } from '@/lib/token-storage';
+
+import { cancelDeadlineReminder, scheduleDeadlineReminder } from './deadline-reminders';
+import { taskKeys } from './query-keys';
+import type { Task, TaskPage } from './types';
+
+type ServerToClientEvents = {
+  'task:created': (task: Task) => void;
+  'task:updated': (task: Task) => void;
+  'task:deleted': (payload: { id: number }) => void;
+};
+type TaskListData = InfiniteData<TaskPage, number>;
+
+function errorCode(error: Error): string | undefined {
+  const data = (error as Error & { data?: { code?: string } }).data;
+  return data?.code;
+}
+
+/** Ubah setiap halaman di semua cache daftar tugas (semua kombinasi filter). */
+function patchLists(queryClient: QueryClient, update: (tasks: Task[]) => Task[]) {
+  queryClient.setQueriesData<TaskListData>({ queryKey: taskKeys.lists() }, (data) =>
+    data ? { ...data, pages: data.pages.map((page) => ({ ...page, data: update(page.data) })) } : data,
+  );
+}
+
+function refreshLists(queryClient: QueryClient) {
+  // Mutation milik perangkat ini yang masih berjalan akan meng-invalidate di onSettled-nya.
+  // Refetch sekarang malah bisa menimpa optimistic update dengan data lama.
+  if (queryClient.isMutating() > 0) return;
+  void queryClient.invalidateQueries({ queryKey: taskKeys.lists() });
+  void queryClient.invalidateQueries({ queryKey: courseKeys.lists() });
+}
+
+export function useTaskSocket() {
+  const queryClient = useQueryClient();
+  const { status } = useAuth();
+
+  useEffect(() => {
+    if (status !== 'signedIn') return;
+
+    const socket: Socket<ServerToClientEvents> = io(API_URL, {
+      transports: ['websocket'],
+      autoConnect: false,
+      // Fungsi, bukan objek: dipanggil ulang di SETIAP percobaan koneksi,
+      // jadi reconnect selalu memakai access token terbaru.
+      auth: (cb) => {
+        void tokenStorage.getAccessToken().then((token) => cb({ token }));
+      },
+    });
+
+    socket.on('task:created', (task) => {
+      queryClient.setQueryData(taskKeys.detail(task.id), task);
+      refreshLists(queryClient);
+      void scheduleDeadlineReminder(task);
+    });
+
+    socket.on('task:updated', (task) => {
+      queryClient.setQueryData(taskKeys.detail(task.id), task);
+      patchLists(queryClient, (tasks) => tasks.map((item) => (item.id === task.id ? task : item)));
+      refreshLists(queryClient);
+      void scheduleDeadlineReminder(task);
+    });
+
+    socket.on('task:deleted', ({ id }) => {
+      queryClient.removeQueries({ queryKey: taskKeys.detail(id) });
+      patchLists(queryClient, (tasks) => tasks.filter((item) => item.id !== id));
+      refreshLists(queryClient);
+      void cancelDeadlineReminder(id);
+    });
+
+    let connectedBefore = false;
+    let refreshAttempts = 0;
+
+    socket.on('connect', () => {
+      refreshAttempts = 0;
+      // Event yang terjadi selama koneksi putus TIDAK diputar ulang. Sinkronkan ulang.
+      if (connectedBefore) void queryClient.invalidateQueries({ queryKey: taskKeys.all });
+      connectedBefore = true;
+    });
+
+    socket.on('connect_error', async (error) => {
+      // active = true: gangguan jaringan biasa, Socket.IO mencoba lagi sendiri dengan backoff.
+      if (socket.active) return;
+      // active = false: ditolak middleware server. Reconnect harus dipicu manual.
+      if (errorCode(error) === 'TOKEN_EXPIRED' && refreshAttempts < 1) {
+        refreshAttempts += 1;
+        // catch: error 429/500 saat refresh tidak boleh jadi unhandled rejection.
+        const token = await refreshAccessToken().catch(() => null);
+        if (token) socket.connect();
+      }
+      // Kode lain: sesi tidak sah. Refresh yang gagal sudah memicu signOut lewat expireSession().
+    });
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') socket.connect();
+      else if (state === 'background') socket.disconnect();
+    });
+
+    socket.connect();
+
+    return () => {
+      subscription.remove();
+      socket.removeAllListeners();
+      socket.disconnect();
+    };
+  }, [status, queryClient]);
+}
+```
+
+Mari bedah bagian yang paling sering salah.
+
+**Kapan socket dibuat.** Effect bergantung pada `status` dari `useAuth()`. Begitu user login, socket dibuat. Begitu logout atau sesi kedaluwarsa, cleanup memutus socket. Socket tidak pernah hidup tanpa token.
+
+**`autoConnect: false` lalu `socket.connect()`.** Semua listener dipasang dulu, baru koneksi dibuka. Dengan begitu tidak ada event yang lolos di antara keduanya.
+
+**`transports: ['websocket']`.** Di React Native, fallback long polling jarang dibutuhkan dan justru sering bikin bingung saat debugging. Dengan WebSocket langsung, satu-satunya pesan error koneksi yang muncul adalah `websocket error`.
+
+**Reconnect dan resync.** Socket.IO menyambung ulang sendiri setelah Wi-Fi putus, tetapi **tidak** mengirim ulang event yang terlewat. Karena itu handler `connect` kedua dan seterusnya meng-invalidate `taskKeys.all`. Koneksi pertama dilewati karena datanya baru saja di-fetch.
+
+**AppState.** Saat aplikasi masuk `background`, socket diputus. Sistem operasi toh akan membekukan atau membunuh koneksinya, dan baterai lebih awet. Saat kembali `active`, socket menyambung dan handler `connect` melakukan resync. State `inactive` (iOS saat Control Center dibuka) sengaja diabaikan karena terlalu singkat.
+
+### setQueryData atau invalidate?
+
+<Compare>
+<CompareItem title="setQueryData / setQueriesData" tone="good">
+
+Langsung menulis payload event ke cache, **tanpa request**. Tepat untuk detail (`taskKeys.detail(id)`) karena bentuk datanya sama persis. Dipakai juga untuk mengganti atau membuang item di daftar supaya UI berubah seketika.
+
+</CompareItem>
+<CompareItem title="invalidateQueries" tone="neutral">
+
+Menandai cache basi lalu me-refetch query yang sedang tampil. Wajib untuk daftar: tugas baru harus masuk di halaman dan urutan yang benar, dan tugas yang statusnya berubah mungkin keluar dari filter "Belum dikerjakan". Hanya server yang tahu jawabannya.
+
+</CompareItem>
+</Compare>
+
+Hook kita memakai keduanya: tulis langsung agar terasa instan, lalu [invalidate](/glosarium#cache-invalidation) agar daftar akhirnya benar. Detail tidak perlu di-invalidate karena payload sudah merupakan versi terbaru dari server.
+
+### Memasang hook tepat satu kali
+
+Hook ini harus dipanggil **sekali** untuk seluruh aplikasi, di komponen yang berada di dalam `QueryClientProvider` dan `AuthProvider`. Jangan memanggilnya di setiap layar. Satu cara rapi adalah komponen jembatan yang tidak merender apa-apa:
+
+```diff title="kuliah-app/src/app/_layout.tsx (sketsa, sesuaikan dengan layout-mu)"
++import { useTaskSocket } from '@/features/tasks/use-task-socket';
++import { useReminderNavigation } from '@/features/tasks/use-reminder-navigation';
++
++function RealtimeBridge() {
++  useTaskSocket();
++  useReminderNavigation();
++  return null;
++}
+
+ export default function RootLayout() {
+   return (
+     <QueryClientProvider client={queryClient}>
+       <AuthProvider>
++        <RealtimeBridge />
+         <Stack screenOptions={{ headerShown: false }} />
+       </AuthProvider>
+     </QueryClientProvider>
+   );
+ }
+```
+
+`useReminderNavigation` akan kita buat di bagian berikutnya.
+
+<Callout type="tip" title="API_URL tanpa /api">
+
+`io(API_URL)` memakai `EXPO_PUBLIC_API_URL` yang sama dengan `fetch`, misalnya `http://192.168.1.10:3000`, **tanpa** akhiran `/api`. Socket.IO membaca path di URL sebagai *namespace*. Kalau kamu menulis `io("http://192.168.1.10:3000/api")`, klien mencoba namespace `/api` dan server menjawab `Invalid namespace`. Seperti di [env variable](/glosarium#expo-public-env), `localhost` di HP fisik menunjuk ke HP itu sendiri, bukan laptopmu.
+
+</Callout>
+
+## Notifikasi lokal untuk deadline
+
+Socket hanya hidup selama aplikasi terbuka. Untuk pengingat deadline, kita tidak butuh server sama sekali. Aplikasi cukup *menjadwalkan* notifikasi lokal ke sistem operasi, dan OS akan menampilkannya tepat waktu walaupun aplikasi sudah ditutup.
+
+Pasang paketnya:
+
+```bash
+cd kuliah-app
+npx expo install expo-notifications
+```
+
+Notifikasi **lokal** berjalan di Expo Go. Yang butuh development build adalah push notification (dibahas sesudah ini). Satu hal untuk rilis nanti: `expo-notifications` membawa kode native, jadi fitur ini tidak bisa dikirim lewat update OTA saja. Pengguna butuh build baru (lihat [deploy & CI](/belajar/expert/deploy-ci)).
+
+```ts title="kuliah-app/src/features/tasks/deadline-reminders.ts" showLineNumbers
+import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
+
+import type { Task } from './types';
+
+const CHANNEL_ID = 'deadline';
+const REMIND_BEFORE_MS = 60 * 60 * 1000; // 1 jam sebelum deadline
+
+// Cara menampilkan notifikasi yang tiba saat aplikasi sedang terbuka.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+const reminderId = (taskId: number) => `deadline-${taskId}`;
+
+export async function ensureReminderPermission() {
+  if (Platform.OS === 'android') {
+    // Android 13+: dialog izin baru bisa muncul setelah ada minimal satu channel.
+    await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
+      name: 'Pengingat deadline',
+      importance: Notifications.AndroidImportance.HIGH,
+    });
+  }
+  const current = await Notifications.getPermissionsAsync();
+  if (current.granted) return true;
+  const requested = await Notifications.requestPermissionsAsync();
+  return requested.granted;
+}
+
+export async function cancelDeadlineReminder(taskId: number) {
+  if (Platform.OS === 'web') return;
+  await Notifications.cancelScheduledNotificationAsync(reminderId(taskId));
+}
+
+export async function scheduleDeadlineReminder(task: Task) {
+  if (Platform.OS === 'web') return; // web tidak mendukung notifikasi terjadwal
+  // Selalu buang jadwal lama dulu: deadline bisa berubah, atau tugas sudah selesai.
+  await cancelDeadlineReminder(task.id);
+  if (!task.deadline || task.status === 'DONE') return;
+
+  const remindAt = new Date(new Date(task.deadline).getTime() - REMIND_BEFORE_MS);
+  if (remindAt.getTime() <= Date.now()) return;
+  if (!(await ensureReminderPermission())) return;
+
+  await Notifications.scheduleNotificationAsync({
+    identifier: reminderId(task.id),
+    content: {
+      title: 'Deadline 1 jam lagi',
+      body: task.course ? `${task.title} · ${task.course.name}` : task.title,
+      data: { url: `/tasks/${task.id}` },
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: remindAt,
+      channelId: CHANNEL_ID,
+    },
+  });
+}
+```
+
+Kuncinya ada di `identifier: deadline-<id>`. Karena id-nya tetap per tugas, `scheduleDeadlineReminder` bersifat [idempotent](/glosarium#idempotent): dipanggil sekali atau sepuluh kali untuk tugas yang sama, hasilnya tetap satu jadwal. Itu sebabnya fungsi ini aman dipanggil dari handler socket. Handler itu juga menerima event dari perubahan yang dibuat perangkat ini sendiri, jadi deadline yang diubah di HP maupun di tablet sama-sama menjadwal ulang pengingat di semua perangkat yang sedang terhubung.
+
+Agar tidak bergantung penuh pada socket, panggil juga di `onSuccess` mutation milik perangkat sendiri:
+
+```diff title="kuliah-app/src/features/tasks/hooks.ts"
++import { cancelDeadlineReminder, scheduleDeadlineReminder } from './deadline-reminders';
+
+ // useCreateTask
+-    onSuccess: () => haptics.success(),
++    onSuccess: (task) => {
++      haptics.success();
++      void scheduleDeadlineReminder(task);
++    },
+
+ // useUpdateTask
+-    onSuccess: (task) => queryClient.setQueryData(taskKeys.detail(task.id), task),
++    onSuccess: (task) => {
++      queryClient.setQueryData(taskKeys.detail(task.id), task);
++      void scheduleDeadlineReminder(task);
++    },
+
+ // useDeleteTask
+     onSuccess: (_data, id) => {
+       haptics.success();
+       queryClient.removeQueries({ queryKey: taskKeys.detail(id) });
++      void cancelDeadlineReminder(id);
+     },
+```
+
+Saat notifikasi diketuk, buka layar detail tugasnya. Ada dua kasus: aplikasi masih hidup di background, atau aplikasi dibuka dari keadaan mati *oleh* tap tersebut.
+
+```ts title="kuliah-app/src/features/tasks/use-reminder-navigation.ts"
+import * as Notifications from 'expo-notifications';
+import { router, type Href } from 'expo-router';
+import { useEffect } from 'react';
+
+function openFromNotification(notification: Notifications.Notification) {
+  const url = notification.request.content.data?.url;
+  if (typeof url === 'string') router.push(url as Href);
+}
+
+export function useReminderNavigation() {
+  useEffect(() => {
+    // Aplikasi baru dibuka karena tap notifikasi (cold start).
+    const last = Notifications.getLastNotificationResponse();
+    if (last) {
+      openFromNotification(last.notification);
+      Notifications.clearLastNotificationResponse();
+    }
+
+    // Tap saat aplikasi masih hidup.
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) =>
+      openFromNotification(response.notification),
+    );
+    return () => subscription.remove();
+  }, []);
+}
+```
+
+Cast `url as Href` dibutuhkan karena `typedRoutes` aktif dan TypeScript tidak bisa tahu bahwa string dari payload notifikasi adalah rute yang valid.
+
+<Callout type="warning" title="Ketepatan waktu di Android">
+
+Secara default, trigger DATE di Android dikirim dengan mode *best effort*. Saat HP dalam mode Doze, notifikasi bisa telat beberapa menit. Waktu yang presisi butuh izin `SCHEDULE_EXACT_ALARM`, yang di Android 14 ke atas ditolak secara default dan harus diaktifkan user di pengaturan. Untuk pengingat "1 jam lagi", telat beberapa menit masih wajar, jadi jangan minta izin itu kalau tidak benar-benar perlu. Satu lagi: jadwal tersimpan di OS, bukan di server. Login di HP baru berarti belum ada jadwal sampai tugasnya di-sync.
+
+</Callout>
+
+## Push notification saat aplikasi tertutup
+
+Notifikasi lokal hanya tahu apa yang sudah ada di HP. Kalau dosen menambahkan tugas lewat web saat HP Sari ada di saku, yang dibutuhkan adalah **push notification**, yaitu pesan yang dikirim server lewat layanan milik Apple dan Google. Gambaran besarnya:
+
+<Flow
+  nodes={["Aplikasi", "Express API", "Expo Push Service", "APNs / FCM", "HP Sari"]}
+  labels={["kirim Expo push token", "POST ke exp.host saat ada event", "teruskan", "tampilkan walau aplikasi mati"]}
+  caption="Alur push notification dengan layanan Expo (gambaran saja, tidak diimplementasikan di sini)"
+/>
+
+1. Aplikasi meminta izin, lalu memanggil `Notifications.getExpoPushTokenAsync({ projectId })` untuk mendapat token seperti `ExponentPushToken[...]`.
+2. Token dikirim ke API dan disimpan per perangkat, misalnya di tabel `PushToken` yang berelasi dengan `User`.
+3. Di tempat yang sama dengan `emitToUser`, service juga mengirim push ke token-token milik user tersebut lewat Expo Push Service.
+4. Expo meneruskan pesan ke APNs (iOS) atau FCM (Android), lalu OS yang menampilkannya.
+
+Syaratnya lebih berat daripada notifikasi lokal: sejak SDK 53, push di Android **tidak** berjalan di [Expo Go](/glosarium#expo-go), jadi kamu butuh development build, `projectId` EAS, dan kredensial FCM/APNs. Kita membahas build dan kredensial di [deploy & CI](/belajar/expert/deploy-ci). Untuk sekarang, cukup pahami pembagian tugasnya: socket untuk aplikasi yang **terbuka**, notifikasi lokal untuk pengingat yang **bisa dihitung di HP**, push untuk kejadian di server saat aplikasi **tertutup**.
+
+## Skala ke banyak server
+
+Room Socket.IO disimpan di **memori proses**. Selama API berjalan sebagai satu proses, `io.to("user:1")` menjangkau semua perangkat Sari. Begitu API dijalankan dua instance di belakang load balancer, HP Sari bisa tersambung ke instance A sementara PATCH dari tablet diproses instance B. Instance B meng-emit ke room `user:1` miliknya sendiri, yang kosong, dan HP Sari tidak menerima apa-apa.
+
+Solusi standarnya adalah **Redis adapter**: setiap `emit` dipublikasikan lewat Redis pub/sub ke semua instance.
+
+```ts title="Sketsa: api/src/realtime/socket.ts dengan Redis adapter"
+import { createAdapter } from "@socket.io/redis-adapter";
+import { createClient } from "redis";
+
+const pubClient = createClient({ url: process.env.REDIS_URL });
+const subClient = pubClient.duplicate();
+await Promise.all([pubClient.connect(), subClient.connect()]);
+
+server.adapter(createAdapter(pubClient, subClient));
+```
+
+Dua catatan lagi. Kalau klien masih boleh memakai long polling, load balancer harus memakai *sticky session* agar request-request satu klien tidak tersebar ke instance berbeda. Klien mobile kita memakai `transports: ['websocket']`, jadi masalah ini praktis hilang. Selain itu, platform hosting harus mendukung koneksi WebSocket yang lama hidup. Sebagian platform serverless tidak mendukungnya.
+
+## Kesalahan umum
+
+<Callout type="danger" title="Tiga bug yang paling sering muncul">
+
+**Listener ganda**, **kebocoran memori**, dan **token basi**. Ketiganya tidak menghasilkan error merah. Gejalanya hanya aplikasi yang makin lambat, refetch berlipat, atau socket yang diam-diam berhenti menerima event setelah 15 menit.
+
+</Callout>
+
+| Gejala | Penyebab | Perbaikan |
+| --- | --- | --- |
+| Satu PATCH memicu 3–4 refetch | `useTaskSocket` dipanggil di beberapa layar, jadi ada beberapa socket dan beberapa listener | Panggil sekali di `RealtimeBridge`. Untuk tiap `socket.on` harus ada `removeAllListeners`/`off` di cleanup |
+| Memori terus naik setelah login-logout berulang | Cleanup tidak memanggil `subscription.remove()` atau `socket.disconnect()` | Kembalikan fungsi cleanup yang membongkar semua yang dibuat effect |
+| Setelah 15 menit di background, socket tidak pernah tersambung lagi | `auth: { token }` berbentuk objek, sehingga token ditangkap sekali dan reconnect memakai token kedaluwarsa | Pakai `auth` berbentuk fungsi, dan tangani `TOKEN_EXPIRED` di `connect_error` |
+| `connect_error: websocket error` di HP fisik | URL masih `localhost` atau firewall memblokir port 3000 | Pakai IP LAN dari log server dan izinkan port di firewall |
+| `Invalid namespace` | `io()` diberi URL dengan akhiran `/api` | Pakai base URL tanpa path |
+| Ctrl+C tidak menghentikan server | `server.close()` menunggu koneksi WebSocket yang tidak pernah idle | Gunakan `io.close()` |
+| Data di tablet tertinggal setelah Wi-Fi putus | Event selama koneksi putus hilang dan tidak diputar ulang | Invalidate `taskKeys.all` di setiap reconnect |
+
+Di mode development, React bisa menjalankan effect dua kali untuk memeriksa cleanup. Kalau cleanup-mu benar, kamu akan melihat satu socket tersambung, terputus, lalu tersambung lagi di log server, dan akhirnya tetap hanya **satu** socket aktif. Kalau di log terlihat dua socket aktif, cleanup-mu bocor.
+
+## Latihan
+
+<Exercise title="Kabarkan perubahan lampiran" difficulty="sedang" hints={["Lampiran adalah bagian dari payload Task (`attachments`).", "Setelah tulis DB berhasil, ambil ulang task lengkap dengan `getTask`, lalu emit `task:updated`.", "Di klien tidak ada yang perlu diubah: handler `task:updated` sudah menimpa detail."]}>
+
+Saat Sari mengunggah foto lampiran dari HP, tablet belum ikut berubah karena `addAttachment` dan `deleteAttachment` di `tasks.service.ts` belum meng-emit apa pun. Tambahkan emit **tanpa** membuat event baru dan tanpa mengubah kode mobile.
+
+<Solution>
+
+```diff title="api/src/modules/tasks/tasks.service.ts"
+ export async function addAttachment(userId: number, taskId: number, file: Express.Multer.File) {
+   try {
+     await assertTaskOwned(userId, taskId);
+-    return await prisma.attachment.create({
++    const attachment = await prisma.attachment.create({
+       data: {
+         taskId,
+         url: toPublicUrl(file.filename),
+         filename: file.originalname,
+         mimeType: file.mimetype,
+         size: file.size,
+       },
+     });
++    emitToUser(userId, "task:updated", await getTask(userId, taskId));
++    return attachment;
+   } catch (error) {
+
+ export async function deleteAttachment(userId: number, taskId: number, attachmentId: number) {
+   // ...
+   await prisma.attachment.delete({ where: { id: attachment.id } });
++  emitToUser(userId, "task:updated", await getTask(userId, taskId));
+   await removeUploadedFile(attachment.url);
+ }
+```
+
+Satu query tambahan (`getTask`) memastikan payload tetap berbentuk Task lengkap sesuai kontrak. Klien tidak perlu tahu apa yang berubah, cukup tahu versi terbarunya. Di `addAttachment`, emit diletakkan di dalam `try` setelah `create` berhasil, sehingga kegagalan tetap masuk ke `catch` yang membersihkan file.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Bersihkan pengingat saat logout" difficulty="mudah" hints={["Lihat `signOut` di `auth-context.tsx`.", "`expo-notifications` punya fungsi untuk membatalkan semua jadwal sekaligus."]}>
+
+Andi logout dari HP pinjaman, lalu Sari login di HP yang sama. Pengingat deadline milik Andi masih akan muncul. Perbaiki dengan menambah satu fungsi di `deadline-reminders.ts` dan memanggilnya saat logout.
+
+<Solution>
+
+```ts title="kuliah-app/src/features/tasks/deadline-reminders.ts"
+export async function cancelAllDeadlineReminders() {
+  if (Platform.OS === 'web') return;
+  await Notifications.cancelAllScheduledNotificationsAsync();
+}
+```
+
+```diff title="kuliah-app/src/features/auth/auth-context.tsx"
++import { cancelAllDeadlineReminders } from '@/features/tasks/deadline-reminders';
+
+   // di dalam signOut, setelah refresh token dicabut
+   await tokenStorage.clear();
++  await cancelAllDeadlineReminders();
+   resetSession();
+```
+
+Panggil juga di handler sesi kedaluwarsa kalau kamu ingin perilakunya sama. Socket-nya sendiri tidak perlu diurus di sini: begitu `status` berubah menjadi `signedOut`, cleanup di `useTaskSocket` sudah memutusnya.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Di mana sebaiknya `emitToUser(userId, \"task:updated\", task)` dipanggil?",
+    options: [
+      "Di route handler, sebelum memanggil service",
+      "Di middleware `requireAuth`",
+      "Di service, setelah `await prisma.task.update(...)` berhasil",
+      "Di klien, setelah mutation sukses",
+    ],
+    answer: 2,
+    explain: "Service adalah satu-satunya tempat yang tahu data benar-benar tersimpan. Emit sebelum tulis DB bisa mengabarkan perubahan yang ternyata gagal divalidasi, dan klien tidak boleh menyiarkan ke perangkat lain sendiri.",
+  },
+  {
+    q: "Setelah aplikasi lama di background, socket tidak pernah tersambung lagi dan `connect_error` berisi kode `TOKEN_EXPIRED`. Penyebab paling mungkin?",
+    options: [
+      "`auth` ditulis sebagai objek `{ token }`, sehingga token lama dipakai ulang di setiap reconnect",
+      "Room `user:${id}` terhapus saat aplikasi di background",
+      "Socket.IO tidak mendukung reconnect di React Native",
+      "Server lupa memanggil `socket.join`",
+    ],
+    answer: 0,
+    explain: "Objek `auth` dibaca sekali saat socket dibuat. Bentuk fungsi dipanggil di setiap percobaan koneksi, jadi selalu membaca token terbaru. Room dibuat ulang tiap koneksi, dan reconnect otomatis memang didukung.",
+  },
+  {
+    q: "Event `task:created` diterima. Kenapa daftar tugas di-invalidate, bukan langsung disisipkan dengan `setQueryData`?",
+    options: [
+      "`setQueryData` tidak bisa dipakai pada infinite query",
+      "Hanya server yang tahu di halaman, urutan, dan filter mana tugas baru itu seharusnya muncul",
+      "Invalidate lebih hemat jaringan daripada `setQueryData`",
+      "Payload event tidak memuat `id`",
+    ],
+    answer: 1,
+    explain: "Daftar punya filter, urutan, dan pagination di server. Menyisipkan sendiri berisiko menaruh tugas di tempat yang salah. `setQueryData` tetap dipakai untuk detail karena bentuknya sama persis. Invalidate justru memicu request, jadi tidak lebih hemat.",
+  },
+  {
+    q: "Pengingat deadline harus tetap muncul walaupun aplikasi sudah ditutup sejak siang. Pendekatan yang paling tepat untuk proyek ini?",
+    options: [
+      "Biarkan socket tetap tersambung di background",
+      "Polling dengan `refetchIntervalInBackground: true`",
+      "Kirim event `task:reminder` dari server lewat Socket.IO",
+      "Jadwalkan notifikasi lokal dengan trigger DATE saat tugas dibuat atau diubah",
+    ],
+    answer: 3,
+    explain: "Notifikasi lokal dijadwalkan ke OS dan tetap muncul walaupun JavaScript aplikasi tidak berjalan. Socket dan polling mati bersama aplikasi, sehingga event socket tidak akan sampai.",
+  },
+]} />
+
+## Ringkasan
+
+- Polling (`refetchInterval`) murah dan cukup untuk banyak kasus. WebSocket lewat Socket.IO dipakai saat perubahan harus terlihat seketika di perangkat lain.
+- Socket.IO menempel di `http.Server` yang sama dengan Express (`createServer(app)`), memverifikasi JWT di `io.use` saat handshake, dan menempatkan setiap koneksi di room `user:${id}`.
+- Mutasi tetap lewat REST. Service meng-emit `task:created`, `task:updated`, dan `task:deleted` hanya setelah tulis database berhasil.
+- `useTaskSocket` dipasang sekali, memakai `auth` berbentuk fungsi, menangani `TOKEN_EXPIRED`, putus di background, sambung lagi di foreground, resync setelah reconnect, dan membongkar semuanya di cleanup.
+- Di klien, `setQueryData` dipakai untuk detail dan `invalidateQueries` untuk daftar yang bergantung pada filter dan urutan server.
+- Pengingat deadline memakai notifikasi lokal terjadwal dengan identifier tetap per tugas. Push notification lewat Expo Push Service untuk kejadian di server saat aplikasi tertutup, dan butuh development build.
+
+<Callout type="capstone" title="Capstone: aplikasi yang terasa hidup">
+
+Tambahkan Socket.IO ke API pendamping, pasang `useTaskSocket` dan pengingat deadline di aplikasi, lalu buktikan dengan dua perangkat: ubah tugas di HP dan pastikan tablet berubah tanpa refresh, matikan Wi-Fi tablet sejenak lalu nyalakan lagi dan pastikan datanya menyusul, ubah deadline sebuah tugas menjadi 61 menit dari sekarang lalu tutup aplikasi dan tunggu notifikasinya. Setelah itu, lanjut ke [deploy & CI](/belajar/expert/deploy-ci) untuk menjalankan semuanya di server sungguhan.
+
+</Callout>

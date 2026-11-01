@@ -1,0 +1,1650 @@
+## Pengantar
+
+Sampai pelajaran [TanStack Query](/belajar/fullstack/tanstack-query), `kuliah-app` memakai login pura-pura. File `src/lib/dev-auth.js` diam-diam masuk dengan akun `demo@kampus.ac.id` setiap kali aplikasi butuh token. Untuk belajar CRUD, cara itu cukup. Masalahnya, semua orang yang memakai aplikasimu melihat tugas milik satu akun yang sama.
+
+<Callout type="analogi" title="Satu kunci untuk semua kamar kos">
+
+Bayangkan kos-kosan yang semua penghuninya memegang kunci yang sama. Andi bisa membuka kamar Sari, Sari bisa membuka kamar Budi. Itulah keadaan `kuliah-app` sekarang: semua orang "masuk" sebagai akun demo. Di pelajaran ini setiap penghuni (pengguna) mendapat kuncinya sendiri, dan pemilik kos (server) mengecek kunci itu setiap kali ada yang mau masuk kamar (membaca data).
+
+</Callout>
+
+Di pelajaran ini kita memasang [autentikasi](/glosarium#autentikasi) sungguhan. Autentikasi artinya membuktikan "kamu itu siapa", biasanya dengan email dan password. Hasil akhirnya: pengguna bisa mendaftar, masuk, tetap login walaupun aplikasi ditutup, lalu keluar dengan bersih.
+
+Pelajaran ini terbagi dua babak:
+
+- **Babak 1, sisi server.** Kamu membaca kode autentikasi di API pendamping (TypeScript) supaya paham apa yang terjadi di server. Isinya: password di-[hash](/glosarium#hashing) dengan [bcrypt](/glosarium#bcrypt), [JWT](/glosarium#jwt) sebagai [access token](/glosarium#access-token) berumur 15 menit, [refresh token](/glosarium#refresh-token) yang diganti setiap kali dipakai, [middleware](/glosarium#middleware) `requireAuth`, dan rate limit. Ada juga sketsa JavaScript singkat kalau kamu ingin memasang hal yang sama di `belajar-api` milikmu.
+- **Babak 2, sisi aplikasi.** Kamu menulis kode Expo dalam JavaScript. Token disimpan di [SecureStore](/glosarium#secure-store). Lalu kamu membuat `AuthProvider` berbasis [context](/glosarium#context), layar Masuk dan Daftar, [protected route](/glosarium#protected-route) dengan `Stack.Protected`, dan refresh token otomatis di `apiFetch`.
+
+Tenang, setiap istilah di atas dijelaskan dengan bahasa sehari-hari saat kita sampai di bagiannya. Siapkan API pendamping yang berjalan di port 3000 dan `kuliah-app` hasil pelajaran sebelumnya.
+
+## Dua token, dua umur
+
+Token adalah string panjang yang membuktikan kamu sudah login. Dengan token, aplikasi tidak perlu mengirim password di setiap request. Setelah login berhasil, server mengirim dua token sekaligus, dan tugas keduanya berbeda.
+
+<Callout type="analogi" title="Gelang konser dan kartu perpanjangan">
+
+Di festival musik tiga hari, kamu menukar tiket di loket dan mendapat dua benda:
+
+- **Gelang harian = access token.** Gelang ini kamu tunjukkan ke satpam setiap kali masuk area panggung. Satpam cukup melihat cap resminya, tanpa membuka daftar penonton. Gelangnya hanya berlaku hari itu, jadi kalau hilang lalu dipakai orang lain, kerugiannya kecil.
+- **Kartu perpanjangan = refresh token.** Kartu ini disimpan di dompet dan hanya dibawa ke loket untuk menukar gelang baru. Panitia mencatat setiap kartu di buku, jadi kartu yang dilaporkan hilang bisa langsung diblokir.
+
+Bedanya dengan festival: "gelang" kita habis dalam 15 menit, bukan sehari, dan penukarannya terjadi otomatis tanpa kamu antre.
+
+</Callout>
+
+Tabel ini membandingkan keduanya:
+
+| | Access token | Refresh token |
+| --- | --- | --- |
+| Bentuk | JWT bertanda tangan server (algoritma HS256) | 96 karakter acak (angka 0–9 dan huruf a–f), bukan JWT |
+| Umur | 15 menit | 30 hari |
+| Dikirim ke | Setiap request, di header `Authorization: Bearer ...` | Hanya `POST /api/auth/refresh` dan `POST /api/auth/logout` |
+| Disimpan server? | Tidak. Server cukup memeriksa tanda tangannya | Ya, dalam bentuk hash SHA-256 di tabel `RefreshToken` |
+| Bisa dicabut sebelum habis? | Tidak, tunggu sampai kedaluwarsa | Bisa, lewat kolom `revokedAt` |
+
+Kenapa repot memakai dua token? Access token dikirim di setiap request, jadi peluangnya bocor lebih besar. Misalnya token tercatat di log server, terbaca proxy, atau terlihat di HP yang dipinjam. Karena umurnya cuma 15 menit, token yang bocor cepat tidak berguna. Refresh token jarang dikirim dan bisa dicabut server kapan saja. Hasilnya, pengguna tetap login berhari-hari tanpa mengetik password setiap 15 menit.
+
+<Flow nodes={["Login", "Akses API dengan access token", "401 TOKEN_EXPIRED", "POST /api/auth/refresh", "Ulangi request"]} labels={["access + refresh token", "15 menit berlalu", "kirim refresh token", "pasangan token baru"]} caption="Siklus hidup sesi: access token pendek, refresh token panjang" />
+
+Baca diagramnya dari kiri. Setelah login, aplikasi memakai access token untuk setiap request. Lewat 15 menit, server membalas `401` (status "kamu belum terbukti siapa", mirip satpam yang menolak gelang kemarin). Aplikasi lalu menukar refresh token dengan pasangan token baru dan mengulang request tadi.
+
+## Babak 1: autentikasi di API pendamping
+
+Semua kode di babak ini sudah ada di folder `api/`. Kamu tidak perlu mengubahnya, cukup membaca dan memahami alurnya. Kodenya ditulis dalam TypeScript, yaitu JavaScript yang diberi label tipe data. Tanda seperti `: string` atau `: number` boleh kamu abaikan dulu; logikanya sama dengan JavaScript biasa.
+
+### Password di-hash dengan bcrypt
+
+<Callout type="analogi" title="Blender: buah jadi jus, jus tidak bisa jadi buah">
+
+Masukkan mangga ke blender, hasilnya jus mangga. Dari jus itu kamu tidak bisa menyusun kembali mangga utuh. Hashing bekerja seperti blender: password masuk, keluar teks acak yang disebut hash. Saat login, server memblender lagi password yang kamu ketik lalu membandingkan "jus"-nya. Kalau sama, password-mu benar.
+
+Satu hal yang berbeda: bcrypt menaburkan bumbu acak yang lain untuk setiap akun. Jadi dua orang dengan password sama tetap mendapat "jus" yang berbeda. Penjelasannya ada di bawah kode.
+
+</Callout>
+
+Server tidak pernah menyimpan password apa adanya. Yang disimpan adalah hash-nya. Hashing adalah fungsi satu arah: dari password mudah menghitung hash, tapi dari hash hampir mustahil kembali ke password. Jadi kalau database sampai bocor, penyerang hanya mendapat "jus", bukan password asli.
+
+```ts title="api/src/lib/password.ts"
+import bcrypt from "bcryptjs";
+
+const SALT_ROUNDS = 10;
+
+export function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, SALT_ROUNDS);
+}
+
+export function verifyPassword(password: string, passwordHash: string): Promise<boolean> {
+  return bcrypt.compare(password, passwordHash);
+}
+```
+
+File ini hanya berisi dua fungsi:
+
+- `hashPassword` mengubah password menjadi hash. Dipakai saat register.
+- `verifyPassword` mengecek apakah password yang diketik cocok dengan hash yang tersimpan. Hasilnya `true` atau `false`. Dipakai saat login.
+
+bcrypt sengaja dibuat lambat. `SALT_ROUNDS = 10` berarti prosesnya diulang 2^10 (1.024) putaran, sehingga satu tebakan butuh puluhan milidetik. Untuk satu kali login, jeda itu tidak terasa. Untuk penyerang yang ingin mencoba jutaan password, waktunya jadi sangat mahal.
+
+bcrypt juga menambahkan *salt* (garam), yaitu string acak yang ikut disimpan di dalam hash. Akibatnya, Andi dan Sari yang kebetulan memakai password sama tetap punya hash berbeda. Saat login, `bcrypt.compare` membaca salt dari hash lama, menghitung ulang hash dari password yang diketik, lalu membandingkan hasilnya.
+
+### Register dan login
+
+**Register** artinya mendaftar akun baru. **Login** artinya masuk dengan akun yang sudah ada. Sebelum menyentuh database, server memeriksa isi formulir dengan Zod, sama seperti petugas yang mengecek formulir di pelajaran [Validasi & Error Handling](/belajar/crud-backend/validasi-error-handling).
+
+```ts title="api/src/modules/auth/auth.schemas.ts (sebagian)"
+const email = z
+  .string({ error: "Email wajib diisi" })
+  .trim()
+  .toLowerCase()
+  .pipe(z.email("Format email tidak valid"));
+
+export const registerSchema = z.object({
+  name: z
+    .string({ error: "Nama wajib diisi" })
+    .trim()
+    .min(1, "Nama wajib diisi")
+    .max(100, "Nama maksimal 100 karakter"),
+  email,
+  password: z
+    .string({ error: "Password wajib diisi" })
+    .min(8, "Password minimal 8 karakter")
+    .max(72, "Password maksimal 72 karakter"), // batas input bcrypt
+});
+```
+
+Skema ini mengatur tiga kolom:
+
+- **Email** dirapikan dulu. `trim` membuang spasi di awal dan akhir, `toLowerCase` mengubah semua huruf jadi kecil. Jadi `"  Andi@Kampus.ac.id "` dan `andi@kampus.ac.id` dianggap akun yang sama.
+- **Nama** wajib diisi, maksimal 100 karakter.
+- **Password** minimal 8 karakter dan maksimal 72. Batas atas ini ada karena bcrypt hanya membaca 72 byte pertama. Sisanya diabaikan diam-diam.
+
+Kalau ada kolom yang salah, server langsung membalas `400` beserta pesan per kolom. Berikut inti register dan login:
+
+```ts title="api/src/modules/auth/auth.service.ts (register dan login)"
+// Hash bcrypt dari string acak. Dipakai saat email tidak terdaftar agar waktu
+// respons login tetap sama (tidak bisa dipakai menebak email yang terdaftar).
+const DUMMY_PASSWORD_HASH = "$2b$10$IVXN74WDTBP.dQBjLahWjOBSZNFwozrrhxsSUpaFru2//PgkkCB7q";
+
+export async function register(input: RegisterInput) {
+  const existing = await prisma.user.findUnique({ where: { email: input.email } });
+  if (existing) {
+    throw HttpError.conflict("Email sudah terdaftar");
+  }
+
+  const user = await prisma.user.create({
+    data: {
+      name: input.name,
+      email: input.email,
+      passwordHash: await hashPassword(input.password),
+    },
+  });
+  return { user: toPublicUser(user), ...(await issueTokens(user.id)) };
+}
+
+export async function login(input: LoginInput) {
+  const user = await prisma.user.findUnique({ where: { email: input.email } });
+  const passwordValid = await verifyPassword(input.password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+
+  // Pesan sengaja dibuat sama agar tidak membocorkan email mana yang terdaftar.
+  if (!user || !passwordValid) {
+    throw HttpError.unauthorized("Email atau password salah");
+  }
+  return { user: toPublicUser(user), ...(await issueTokens(user.id)) };
+}
+```
+
+`register` mengecek apakah email sudah dipakai (kalau ya, balas `409 Conflict`), menyimpan user baru dengan `passwordHash` (bukan password asli), lalu langsung memberi dua token lewat `issueTokens`. Jadi pengguna tidak perlu login lagi setelah mendaftar.
+
+`login` mencari user berdasarkan email, lalu mencocokkan password dengan `verifyPassword`. Ada dua trik keamanan di sini.
+
+Pertama, pesan error untuk "email tidak terdaftar" dan "password salah" sama persis. Kalau pesannya berbeda, penyerang bisa mengetes email mana yang punya akun di aplikasimu.
+
+Kedua, kalau email tidak ditemukan, server tetap menjalankan `bcrypt.compare` terhadap `DUMMY_PASSWORD_HASH` (hash palsu). Ingat, bcrypt sengaja lambat. Tanpa hash palsu, jawaban untuk email yang tidak terdaftar datang jauh lebih cepat. Bayangkan ibu kos yang langsung bilang "tidak ada" untuk nama asing, tapi lama membuka buku untuk nama penghuni. Dari lamanya menunggu, orang luar bisa menebak siapa yang tinggal di sana.
+
+Terakhir, `toPublicUser` hanya memilih kolom yang aman (id, nama, email, tanggal dibuat), jadi `passwordHash` tidak pernah terkirim ke client (aplikasi di HP).
+
+### Access token 15 menit dan refresh token yang dirotasi
+
+File `tokens.ts` adalah "mesin pembuat gelang dan kartu" dari analogi festival tadi.
+
+```ts title="api/src/lib/tokens.ts"
+export const ACCESS_TOKEN_TTL = "15m";
+export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 hari
+
+export function signAccessToken(userId: number): string {
+  // Payload hanya berisi `sub` (subject) = id user dalam bentuk string.
+  return jwt.sign({}, env.JWT_ACCESS_SECRET, {
+    algorithm: "HS256",
+    subject: String(userId),
+    expiresIn: ACCESS_TOKEN_TTL,
+  });
+}
+
+// Melempar error dari jsonwebtoken (mis. TokenExpiredError) kalau token tidak valid.
+export function verifyAccessToken(token: string): { userId: number } {
+  const payload = jwt.verify(token, env.JWT_ACCESS_SECRET, { algorithms: ["HS256"] });
+  const userId = typeof payload === "object" ? Number(payload.sub) : Number.NaN;
+
+  if (!Number.isInteger(userId) || userId <= 0) {
+    throw new jwt.JsonWebTokenError("Payload token tidak valid");
+  }
+  return { userId };
+}
+
+// Refresh token = string acak biasa (bukan JWT). Yang dikirim ke client adalah
+// token aslinya, yang disimpan di database hanya hash-nya.
+export function generateRefreshToken(): string {
+  return randomBytes(48).toString("hex");
+}
+
+export function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+```
+
+`signAccessToken` membuat JWT berisi id user yang berlaku 15 menit. `verifyAccessToken` memeriksanya: kalau palsu atau kedaluwarsa, ia melempar error. `generateRefreshToken` membuat 48 byte acak (96 huruf heksadesimal), dan `hashToken` mengubahnya jadi hash SHA-256 untuk disimpan di database.
+
+**JWT** (JSON Web Token) terdiri dari tiga bagian yang dipisah titik:
+
+```txt
+header.payload.tandatangan
+```
+
+- **Header** mencatat algoritma tanda tangan, di sini HS256.
+- **Payload** berisi data: `sub` (id user), `iat` (kapan dibuat), dan `exp` (kapan kedaluwarsa).
+- **Tanda tangan** dihitung dari header, payload, dan [secret](/glosarium#secret) `JWT_ACCESS_SECRET`, kunci rahasia yang hanya diketahui server (disimpan di `.env`).
+
+Payload hanya di-encode base64, yaitu ditulis ulang dalam huruf lain, **bukan dikunci**. Siapa pun yang memegang token bisa membacanya. Yang tidak bisa mereka lakukan adalah membuat tanda tangan yang cocok tanpa secret. Ubah `sub` dari `1` jadi `2`, maka tanda tangannya tidak cocok dan token ditolak. Di analogi festival, tulisan di gelang bisa dibaca semua orang, tapi cap resmi panitia tidak bisa dipalsukan. Karena itu jangan pernah menaruh data rahasia di payload.
+
+`verifyAccessToken` juga mengunci `algorithms: ["HS256"]`, sehingga token palsu yang mengaku memakai algoritma `none` (tanpa tanda tangan) langsung ditolak.
+
+Setiap login, register, atau refresh memanggil `issueTokens`. Fungsi ini membuat refresh token baru, menyimpan hash-nya beserta tanggal kedaluwarsa, lalu mengirim kedua token ke aplikasi:
+
+```ts title="api/src/modules/auth/auth.service.ts (issueTokens dan refresh)"
+async function issueTokens(userId: number) {
+  const refreshToken = generateRefreshToken();
+  await prisma.refreshToken.create({
+    data: {
+      userId,
+      tokenHash: hashToken(refreshToken),
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
+    },
+  });
+  return { accessToken: signAccessToken(userId), refreshToken };
+}
+
+export async function refresh(refreshToken: string) {
+  const stored = await prisma.refreshToken.findUnique({
+    where: { tokenHash: hashToken(refreshToken) },
+  });
+  if (!stored) {
+    throw HttpError.unauthorized("Refresh token tidak valid");
+  }
+
+  // Token yang sudah dicabut dipakai lagi = kemungkinan dicuri.
+  // Cabut semua sesi user tersebut supaya pencuri (dan user) harus login ulang.
+  if (stored.revokedAt) {
+    await revokeAllForUser(stored.userId);
+    throw HttpError.unauthorized("Refresh token sudah pernah dipakai. Silakan login ulang.");
+  }
+
+  if (stored.expiresAt <= new Date()) {
+    throw HttpError.unauthorized("Refresh token sudah kedaluwarsa. Silakan login ulang.");
+  }
+
+  // Rotasi: cabut token lama. Filter `revokedAt: null` mencegah dua request
+  // bersamaan memakai token yang sama dan sama-sama berhasil.
+  const { count } = await prisma.refreshToken.updateMany({
+    where: { id: stored.id, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  if (count === 0) {
+    await revokeAllForUser(stored.userId);
+    throw HttpError.unauthorized("Refresh token sudah pernah dipakai. Silakan login ulang.");
+  }
+
+  return issueTokens(stored.userId);
+}
+```
+
+Fungsi `refresh` memeriksa refresh token dari aplikasi secara berurutan:
+
+1. **Cari hash-nya di database.** Tidak ketemu? Token palsu, balas `401`.
+2. **Sudah pernah dicabut?** Berarti sudah pernah dipakai. Server menganggapnya dicuri dan mencabut semua sesi user itu.
+3. **Sudah lewat 30 hari?** Balas `401`, pengguna harus login ulang.
+4. **Cabut token lama, lalu terbitkan pasangan baru** lewat `issueTokens`.
+
+Cara ini disebut *refresh token rotation* (rotasi refresh token): setiap refresh token hanya boleh dipakai **sekali**. Di festival, panitia melubangi kartu perpanjangan yang sudah ditukar, lalu memberimu kartu baru. Kalau kartu berlubang muncul lagi di loket, berarti ada yang menyalinnya. Panitia memblokir semua kartu atas namamu, termasuk yang baru, dan kamu harus menukar tiket dari awal (login ulang).
+
+Langkah 4 memakai `updateMany` dengan syarat `revokedAt: null`. Kalau dua request datang hampir bersamaan dengan token yang sama, hanya satu yang berhasil mencabutnya (`count` bernilai 1). Yang lain mendapat `count` 0 dan diperlakukan sebagai pencurian. Aturan ini akan penting di Babak 2: dua refresh bersamaan dengan token yang sama membuat pengguna terlempar ke layar login.
+
+Database juga hanya menyimpan hash SHA-256 dari refresh token. Kalau database bocor, penyerang tidak bisa langsung memakai isinya untuk refresh.
+
+### Logout mencabut refresh token
+
+Logout di server artinya mencabut refresh token. Di festival, ini seperti melapor ke panitia supaya kartu perpanjanganmu dicoret dari buku. Kartu itu tidak bisa ditukar lagi, walaupun nanti ditemukan orang lain.
+
+```ts title="api/src/modules/auth/auth.service.ts (logout)"
+export async function logout(refreshToken: string) {
+  // Selalu sukses (idempotent), walaupun token tidak dikenal.
+  await prisma.refreshToken.updateMany({
+    where: { tokenHash: hashToken(refreshToken), revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+}
+```
+
+Kode ini mengisi `revokedAt` pada refresh token yang cocok, lalu route-nya membalas `204 No Content` (berhasil, tanpa isi). Logout bersifat [idempotent](/glosarium#idempotent): dipanggil dua kali, atau dengan token yang tidak dikenal, hasilnya tetap sukses.
+
+Access token yang sudah terbit tetap berlaku sampai 15 menitnya habis, karena server tidak mencatat access token sama sekali. Gelang yang sudah dipakai tidak bisa ditarik dari tangan orang. Itulah alasan umurnya dibuat pendek.
+
+### Middleware requireAuth
+
+<Callout type="analogi" title="Satpam di pintu area panggung">
+
+Kembali ke festival. Di pintu area panggung berdiri satpam. Ia mengecek cap resmi dan tanggal di gelangmu, lalu membaca nomor penonton yang tertulis di sana. Gelang tidak ada, palsu, atau kedaluwarsa? Kamu ditolak di pintu dan tidak pernah sampai ke panggung.
+
+- Satpam = [middleware](/glosarium#middleware) `requireAuth`.
+- Gelang = access token di header `Authorization`.
+- Area panggung = handler route tugas (kode yang membaca dan mengubah data).
+- Nomor penonton = `req.userId`, yang dipakai handler di belakangnya.
+
+Bedanya, satpam sungguhan bisa curiga melihat wajahmu. Middleware hanya percaya pada token, jadi siapa pun yang memegang token sah dianggap pemiliknya.
+
+</Callout>
+
+Middleware adalah fungsi yang berjalan sebelum handler route. Ia bisa menghentikan request, atau meneruskannya dengan `next()`.
+
+```ts title="api/src/middleware/auth.ts"
+export function requireAuth(req: Request, _res: Response, next: NextFunction) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) {
+    throw HttpError.unauthorized("Token akses tidak ditemukan");
+  }
+
+  try {
+    req.userId = verifyAccessToken(header.slice("Bearer ".length)).userId;
+  } catch (error) {
+    // Code khusus agar client tahu harus memanggil /auth/refresh.
+    if (error instanceof jwt.TokenExpiredError) {
+      throw HttpError.unauthorized("Token akses sudah kedaluwarsa", "TOKEN_EXPIRED");
+    }
+    throw HttpError.unauthorized("Token akses tidak valid");
+  }
+  next();
+}
+
+// Ambil id user dari request yang sudah melewati requireAuth.
+export function getUserId(req: Pick<Request, "userId">): number {
+  if (req.userId === undefined) {
+    throw HttpError.unauthorized();
+  }
+  return req.userId;
+}
+```
+
+`requireAuth` mengambil header `Authorization` dan membuang kata `Bearer` di depannya. Sisanya diperiksa dengan `verifyAccessToken`. Token kosong, rusak, atau palsu ditolak dengan `401`. Token kedaluwarsa ditolak dengan code khusus `TOKEN_EXPIRED`, tanda bagi aplikasi untuk meminta token baru ke `/auth/refresh`. Kalau sah, id user disimpan di `req.userId` dan `next()` meneruskan request ke handler. `getUserId` adalah fungsi kecil yang dipakai handler untuk mengambil `req.userId` itu.
+
+Middleware ini dipasang sekali untuk seluruh router tugas dengan `tasksRouter.use(requireAuth)` di `api/src/modules/tasks/tasks.routes.ts`. Setiap handler meneruskan `getUserId(req)` ke service, jadi setiap query Prisma selalu difilter dengan `userId`.
+
+Filter ini menutup celah bernama [IDOR](/glosarium#idor). Tanpa filter, Andi yang sudah login bisa membuka `GET /api/tasks/7` dan melihat tugas Sari hanya dengan menebak angka id. Dengan filter `userId`, server menjawab `404` karena tugas nomor 7 bukan milik Andi.
+
+Di sini terlihat beda dua istilah yang sering tertukar. **Autentikasi** menjawab "kamu siapa?" dan dikerjakan `requireAuth`. **[Otorisasi](/glosarium#otorisasi)** menjawab "kamu boleh mengakses data ini?" dan dikerjakan filter `userId`. Gelang membuktikan kamu penonton nomor 12, tapi di tempat penitipan barang kamu tetap hanya boleh membuka loker nomor 12.
+
+### Rate limit
+
+Penyerang bisa saja menulis program yang mencoba ribuan password per menit untuk satu email. Cara ini disebut *brute force* (menebak dengan paksa). **Rate limit** menahan serangan itu dengan membatasi jumlah request dari satu alamat dalam jangka waktu tertentu. Mirip bank yang hanya membagikan sekian nomor antrean per jam. Kalau nomornya habis, kamu harus menunggu jam berikutnya.
+
+```ts title="api/src/middleware/rate-limit.ts"
+export const AUTH_RATE_LIMIT = 20;
+export const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000;
+
+// Membatasi request ke register/login/refresh/logout untuk mencegah brute force:
+// maksimal 20 request per 15 menit per IP. Default-nya dimatikan saat test
+// (test khusus rate limit menyalakannya dengan { enabled: true }).
+export function authRateLimiter({ enabled = !isTest }: { enabled?: boolean } = {}) {
+  return rateLimit({
+    windowMs: AUTH_RATE_WINDOW_MS,
+    limit: AUTH_RATE_LIMIT,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    skip: () => !enabled,
+    handler: (_req, _res, next) => {
+      next(new HttpError(429, "RATE_LIMITED", "Terlalu banyak percobaan. Coba lagi dalam 15 menit."));
+    },
+  });
+}
+```
+
+Kode ini memakai paket `express-rate-limit`. Aturannya: maksimal 20 request per 15 menit untuk setiap IP (alamat jaringan pengirim). Request ke-21 dibalas `429 RATE_LIMITED`. Opsi `skip` mematikan limiter saat test otomatis berjalan.
+
+Di `auth.routes.ts`, **satu** limiter dipakai bersama oleh register, login, refresh, dan logout. Jadi jatah 20 itu dihitung gabungan untuk keempat route. [Rate limiting](/glosarium#rate-limiting) ini juga alasan kedua aplikasi kita tidak boleh mengirim refresh berulang-ulang, karena setiap refresh memakan jatah. Hitungannya disimpan di memori proses API, jadi me-restart API saat development akan me-reset hitungan.
+
+### Coba dari terminal
+
+Sebelum menulis kode Expo, rasakan dulu alurnya langsung dari terminal. Pastikan API pendamping berjalan, lalu login dengan akun demo, panggil `/api/auth/me`, lakukan refresh, dan terakhir coba pakai lagi refresh token yang **lama**.
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+$base = "http://localhost:3000/api/auth"
+$login = Invoke-RestMethod -Method Post -Uri "$base/login" -ContentType "application/json" -Body '{"email":"demo@kampus.ac.id","password":"password123"}'
+$access = $login.data.accessToken
+$refresh = $login.data.refreshToken
+
+Invoke-RestMethod -Uri "$base/me" -Headers @{ Authorization = "Bearer $access" }
+
+$baru = Invoke-RestMethod -Method Post -Uri "$base/refresh" -ContentType "application/json" -Body (@{ refreshToken = $refresh } | ConvertTo-Json)
+$baru.data
+
+# Pakai lagi refresh token LAMA, seolah-olah dicuri:
+Invoke-RestMethod -Method Post -Uri "$base/refresh" -ContentType "application/json" -Body (@{ refreshToken = $refresh } | ConvertTo-Json)
+```
+
+</Tab>
+<Tab>
+
+```bash
+BASE=http://localhost:3000/api/auth
+LOGIN=$(curl -s -X POST "$BASE/login" -H "Content-Type: application/json" -d '{"email":"demo@kampus.ac.id","password":"password123"}')
+ACCESS=$(echo "$LOGIN" | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.accessToken')
+REFRESH=$(echo "$LOGIN" | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.refreshToken')
+
+curl -s "$BASE/me" -H "Authorization: Bearer $ACCESS"
+
+curl -s -X POST "$BASE/refresh" -H "Content-Type: application/json" -d "{\"refreshToken\":\"$REFRESH\"}"
+
+# Pakai lagi refresh token LAMA, seolah-olah dicuri:
+curl -s -i -X POST "$BASE/refresh" -H "Content-Type: application/json" -d "{\"refreshToken\":\"$REFRESH\"}"
+```
+
+</Tab>
+</Tabs>
+
+`/me` membalas data "Mahasiswa Demo" tanpa `passwordHash`, dan refresh pertama memberi pasangan token baru. Request terakhir ditolak, karena refresh token lama sudah "dilubangi". Di PowerShell, balasan ini muncul sebagai pesan error merah:
+
+```http
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json; charset=utf-8
+
+{"error":{"message":"Refresh token sudah pernah dipakai. Silakan login ulang.","code":"UNAUTHORIZED"}}
+```
+
+Refresh token **baru** yang tadi kamu terima juga ikut dicabut, karena server mencabut semua sesi milik akun demo. Itu perilaku yang benar: server tidak tahu mana pemilik asli dan mana pencuri, jadi semuanya harus login ulang. Setiap perintah di atas juga memakan jatah rate limit. Kalau muncul `429 RATE_LIMITED`, restart API pendamping.
+
+### Sketsa untuk belajar-api milikmu
+
+API pendamping memakai TypeScript, tapi idenya sama persis di `belajar-api` yang kamu bangun di track [CRUD Backend](/belajar/crud-backend/struktur-proyek-backend). Berikut versi minimal dalam JavaScript. Versi ini hanya punya access token, tanpa refresh token.
+
+Mulai dengan memasang `bcryptjs` (untuk hash password) dan `jsonwebtoken` (untuk membuat dan memeriksa JWT). Perintah kedua mencetak 32 byte acak sebagai secret:
+
+```bash
+npm install bcryptjs jsonwebtoken
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Tempel hasil perintah kedua ke `.env`. Lalu daftarkan di skema environment, supaya server menolak menyala kalau secret-nya lupa diisi atau terlalu pendek:
+
+```dotenv title=".env"
+JWT_ACCESS_SECRET=tempel-64-karakter-hex-hasil-perintah-di-atas
+```
+
+```diff title="src/config/env.js"
+   CORS_ORIGIN: z
+     .string()
+     .default("*")
+     .transform((value) => (value === "*" ? "*" : value.split(",").map((origin) => origin.trim()))),
++  JWT_ACCESS_SECRET: z.string().min(32, "minimal 32 karakter, buat dengan crypto.randomBytes"),
+ });
+```
+
+Tambahkan model `User`, lalu beri setiap `Task` pemilik lewat kolom `userId`. Ini sama seperti NIM yang tertulis di lembar KRS: dari situ kamu tahu KRS itu milik siapa. `onDelete: Cascade` berarti tugas ikut terhapus kalau user-nya dihapus.
+
+```diff title="prisma/schema.prisma"
++model User {
++  id           Int      @id @default(autoincrement())
++  name         String
++  email        String   @unique
++  passwordHash String
++  createdAt    DateTime @default(now())
++  tasks        Task[]
++}
++
+ model Task {
+   id        Int      @id @default(autoincrement())
+   ...
++  userId    Int
++  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+ }
+```
+
+Jalankan `npx prisma migrate dev --name auth`. Kalau Prisma menolak karena tabel `Task` sudah berisi data tanpa pemilik, jalankan `npx prisma migrate reset`. Hati-hati, perintah ini menghapus semua data development. Lalu buat middleware dan route-nya:
+
+```js title="src/middleware/auth.js"
+import jwt from "jsonwebtoken";
+import { env } from "../config/env.js";
+import { HttpError } from "../lib/http-error.js";
+
+export function signAccessToken(userId) {
+  return jwt.sign({}, env.JWT_ACCESS_SECRET, {
+    algorithm: "HS256",
+    subject: String(userId),
+    expiresIn: "15m",
+  });
+}
+
+export function requireAuth(req, _res, next) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) {
+    throw new HttpError(401, "UNAUTHORIZED", "Token akses tidak ditemukan");
+  }
+  try {
+    const payload = jwt.verify(header.slice("Bearer ".length), env.JWT_ACCESS_SECRET, {
+      algorithms: ["HS256"],
+    });
+    req.userId = Number(payload.sub);
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      throw new HttpError(401, "TOKEN_EXPIRED", "Token akses sudah kedaluwarsa");
+    }
+    throw new HttpError(401, "UNAUTHORIZED", "Token akses tidak valid");
+  }
+  next();
+}
+```
+
+`src/middleware/auth.js` berisi dua fungsi. `signAccessToken` membuat JWT 15 menit, dan `requireAuth` adalah satpam yang sama dengan versi TypeScript tadi. File route di bawah memakai keduanya: register menyimpan user baru dengan password yang sudah di-hash, login mencocokkan password lalu memberi token.
+
+```js title="src/modules/auth/auth.routes.js"
+import bcrypt from "bcryptjs";
+import express from "express";
+import { z } from "zod";
+import { HttpError } from "../../lib/http-error.js";
+import { prisma } from "../../lib/prisma.js";
+import { signAccessToken } from "../../middleware/auth.js";
+import { validate } from "../../middleware/validate.js";
+
+const email = z.string().trim().toLowerCase().pipe(z.email());
+const registerSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  email,
+  password: z.string().min(8).max(72),
+});
+const loginSchema = z.object({ email, password: z.string().min(1) });
+
+const toPublicUser = ({ id, name, email, createdAt }) => ({ id, name, email, createdAt });
+
+export const authRouter = express.Router();
+
+authRouter.post("/register", validate({ body: registerSchema }), async (req, res) => {
+  const { name, email, password } = req.body;
+  if (await prisma.user.findUnique({ where: { email } })) {
+    throw new HttpError(409, "CONFLICT", "Email sudah terdaftar");
+  }
+  const user = await prisma.user.create({
+    data: { name, email, passwordHash: await bcrypt.hash(password, 10) },
+  });
+  res.status(201).json({ data: { user: toPublicUser(user), accessToken: signAccessToken(user.id) } });
+});
+
+authRouter.post("/login", validate({ body: loginSchema }), async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { email: req.body.email } });
+  const valid = user ? await bcrypt.compare(req.body.password, user.passwordHash) : false;
+  if (!valid) {
+    throw new HttpError(401, "UNAUTHORIZED", "Email atau password salah");
+  }
+  res.json({ data: { user: toPublicUser(user), accessToken: signAccessToken(user.id) } });
+});
+```
+
+Cara memasangnya:
+
+1. Di `src/app.js`, tambahkan `app.use("/api/auth", authRouter)`.
+2. Di router tugas, tambahkan `tasksRouter.use(requireAuth)`.
+3. Teruskan `req.userId` ke service. Setiap `findMany`, `update`, dan `delete` harus memakai `where: { id, userId }`, supaya user hanya menyentuh tugasnya sendiri.
+
+Sketsa ini sengaja belum lengkap. Ada tiga hal yang belum ada:
+
+- **Dummy hash.** Waktu respons login masih membocorkan email mana yang terdaftar.
+- **Rate limit.** Penyerang masih bisa menebak password tanpa batas.
+- **Refresh token.** Pengguna harus login ulang setiap 15 menit.
+
+Untuk melengkapinya, salin pola `issueTokens`, `refresh`, dan `logout` dari `api/src/modules/auth/auth.service.ts`, beserta model `RefreshToken` di `api/prisma/schema.prisma`.
+
+## Babak 2: login sungguhan di kuliah-app
+
+Sekarang giliran aplikasi. Targetnya: pengguna yang belum login hanya bisa melihat layar Masuk dan Daftar. Setelah login, token tersimpan aman di HP sehingga aplikasi yang ditutup lalu dibuka lagi tetap login. Saat access token kedaluwarsa, `apiFetch` diam-diam me-refresh lalu mengulang request tanpa pengguna sadar. Ini struktur `kuliah-app` di akhir pelajaran, dengan file baru atau berubah yang ditandai:
+
+<FileTree title="kuliah-app" tree={`
+src/
+  app/
+    * _layout.js # AuthProvider, Stack.Protected, splash screen
+    * (auth)/
+      * _layout.js # Stack khusus layar tamu
+      * login.js
+      * register.js
+    index.js
+    tasks/
+      new.js
+      [id]/
+        index.js
+        edit.js
+  features/
+    * auth/
+      * auth-context.js # AuthProvider dan useAuth()
+      * logout-button.js
+    tasks/
+      queries.js
+  lib/
+    * api.js # refresh otomatis saat 401
+    query-client.js
+    * token-storage.js # SecureStore + cache di memori
+`} />
+
+Folder `(auth)` adalah **grup**: nama dalam tanda kurung tidak ikut menjadi URL, jadi `src/app/(auth)/login.js` dibuka dengan `/login`. File `src/lib/dev-auth.js` dihapus di langkah terakhir.
+
+<Steps>
+<Step title="Pasang expo-secure-store">
+
+Hentikan Metro, lalu pasang paketnya dengan `npx expo install` supaya versinya cocok dengan SDK:
+
+```bash
+npx expo install expo-secure-store
+```
+
+`expo-secure-store` sudah tersedia di Expo Go. Kalau kamu memakai [development build](/glosarium#development-build), paket native baru berarti build ulang aplikasinya. Jalankan lagi `npx expo start` setelah instalasi selesai.
+
+</Step>
+<Step title="Buat src/lib/token-storage.js">
+
+Kamu sudah pernah membungkus SecureStore di pelajaran [State Global & Storage](/belajar/react-native/state-global-storage). Di sana kamu kenal bedanya: AsyncStorage seperti laci biasa yang bisa dibuka siapa pun, SecureStore seperti brankas yang isinya dienkripsi (diacak dengan kunci) oleh sistem operasi HP. Token adalah "kunci akun", jadi tempatnya di brankas.
+
+Versi kali ini punya tiga tambahan:
+
+- Menyimpan **dua** token sekaligus.
+- Punya cadangan `localStorage` untuk Expo Web, karena SecureStore tidak ada di browser.
+- Menyimpan salinan di memori, seperti mencatat nomor penting di kertas saku setelah sekali membuka brankas. `apiFetch` membaca token di setiap request, sedangkan membuka SecureStore adalah panggilan native (ke sistem operasi HP) yang relatif lambat.
+
+```js title="src/lib/token-storage.js"
+import { Platform } from "react-native";
+import * as SecureStore from "expo-secure-store";
+
+// Kunci SecureStore hanya boleh berisi huruf, angka, ".", "-", dan "_"
+const ACCESS_KEY = "kuliah.accessToken";
+const REFRESH_KEY = "kuliah.refreshToken";
+const isWeb = Platform.OS === "web";
+
+// SecureStore tidak tersedia di web. localStorage hanya cadangan untuk development.
+async function readItem(key) {
+  if (isWeb) return globalThis.localStorage?.getItem(key) ?? null;
+  return SecureStore.getItemAsync(key);
+}
+
+async function writeItem(key, value) {
+  if (isWeb) {
+    globalThis.localStorage?.setItem(key, value);
+    return;
+  }
+  await SecureStore.setItemAsync(key, value);
+}
+
+async function deleteItem(key) {
+  if (isWeb) {
+    globalThis.localStorage?.removeItem(key);
+    return;
+  }
+  await SecureStore.deleteItemAsync(key);
+}
+
+let cache; // undefined = belum dibaca, null = tidak ada sesi
+let loading = null;
+
+export function loadTokens() {
+  if (cache !== undefined) return Promise.resolve(cache);
+  if (!loading) {
+    loading = Promise.all([readItem(ACCESS_KEY), readItem(REFRESH_KEY)])
+      .catch(() => [null, null]) // penyimpanan rusak = anggap belum login
+      .then(([accessToken, refreshToken]) => {
+        // Jangan menimpa token yang disimpan saveTokens() selagi kita membaca
+        if (cache === undefined) {
+          cache = accessToken && refreshToken ? { accessToken, refreshToken } : null;
+        }
+        return cache;
+      })
+      .finally(() => {
+        loading = null;
+      });
+  }
+  return loading;
+}
+
+export async function getAccessToken() {
+  return (await loadTokens())?.accessToken ?? null;
+}
+
+export async function getRefreshToken() {
+  return (await loadTokens())?.refreshToken ?? null;
+}
+
+export async function saveTokens({ accessToken, refreshToken }) {
+  cache = { accessToken, refreshToken };
+  await Promise.all([writeItem(ACCESS_KEY, accessToken), writeItem(REFRESH_KEY, refreshToken)]);
+}
+
+export async function clearTokens() {
+  cache = null; // langsung berlaku untuk request berikutnya
+  await Promise.all([deleteItem(ACCESS_KEY), deleteItem(REFRESH_KEY)]);
+}
+```
+
+Cara membaca file ini:
+
+- `readItem`, `writeItem`, dan `deleteItem` adalah pembungkus kecil. Di HP mereka memakai SecureStore, di web memakai `localStorage`.
+- Variabel `cache` punya tiga keadaan. `undefined` berarti brankas belum dibuka. `null` berarti sudah dibuka dan kosong (belum login). Objek berisi dua token berarti ada sesi.
+- `loadTokens` membuka brankas hanya sekali. Kalau beberapa bagian aplikasi memanggilnya bersamaan, semuanya menunggu promise `loading` yang sama, jadi SecureStore tidak dibaca berkali-kali.
+- `saveTokens` dan `clearTokens` mengubah `cache` lebih dulu, baru menulis ke SecureStore. Request berikutnya langsung memakai token terbaru tanpa menunggu brankas selesai dikunci.
+
+Ukuran token juga aman. Beberapa versi iOS dulu menolak nilai di atas kira-kira 2048 byte. Access token kita hanya sekitar 150 karakter dan refresh token 96 karakter, jadi jauh di bawah batas itu.
+
+</Step>
+<Step title="Buat AuthProvider di src/features/auth/auth-context.js">
+
+`AuthProvider` adalah satu-satunya tempat yang tahu siapa yang sedang login. Ia memakai [context](/glosarium#context), fitur React untuk membagikan data ke banyak layar tanpa mengopernya lewat props satu per satu. Mirip pengumuman di grup WhatsApp kelas: ketua kelas mengirim sekali, semua anggota langsung tahu. Di sini "ketua kelas" adalah `AuthProvider`, dan layar mana pun bisa "membaca grup" lewat `useAuth()`.
+
+Tugas `AuthProvider` ada dua. Pertama, memulihkan sesi saat aplikasi dibuka. Kedua, menyediakan fungsi `signIn` (masuk), `signUp` (daftar), dan `signOut` (keluar) untuk layar mana pun.
+
+```jsx title="src/features/auth/auth-context.js"
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { apiFetch, setSessionExpiredHandler } from "../../lib/api";
+import { queryClient } from "../../lib/query-client";
+import { clearTokens, getRefreshToken, loadTokens, saveTokens } from "../../lib/token-storage";
+
+const AuthContext = createContext(null);
+
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const endSession = useCallback(async () => {
+    await clearTokens();
+    setUser(null);
+    // Cache TanStack Query masih berisi data akun lama. Buang semuanya.
+    queryClient.clear();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    // api.js memanggil ini kalau refresh token juga ditolak server
+    setSessionExpiredHandler(endSession);
+
+    async function restore() {
+      try {
+        const tokens = await loadTokens();
+        if (!tokens) return;
+        // Access token kedaluwarsa? apiFetch akan me-refresh otomatis.
+        const json = await apiFetch("/api/auth/me");
+        if (active) setUser(json.data);
+      } catch {
+        // Offline atau server mati: token dibiarkan, dicoba lagi saat aplikasi dibuka berikutnya.
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    }
+
+    restore();
+    return () => {
+      active = false;
+      setSessionExpiredHandler(null);
+    };
+  }, [endSession]);
+
+  const startSession = useCallback(async (data) => {
+    await saveTokens(data);
+    setUser(data.user);
+  }, []);
+
+  const signIn = useCallback(
+    async (email, password) => {
+      const json = await apiFetch("/api/auth/login", {
+        method: "POST",
+        body: { email, password },
+        auth: false,
+      });
+      await startSession(json.data);
+    },
+    [startSession],
+  );
+
+  const signUp = useCallback(
+    async (name, email, password) => {
+      const json = await apiFetch("/api/auth/register", {
+        method: "POST",
+        body: { name, email, password },
+        auth: false,
+      });
+      await startSession(json.data);
+    },
+    [startSession],
+  );
+
+  const signOut = useCallback(async () => {
+    const refreshToken = await getRefreshToken();
+    if (refreshToken) {
+      try {
+        await apiFetch("/api/auth/logout", {
+          method: "POST",
+          body: { refreshToken },
+          auth: false,
+          timeoutMs: 5000,
+        });
+      } catch {
+        // Offline atau kena rate limit: sesi di HP ini tetap diakhiri.
+      }
+    }
+    await endSession();
+  }, [endSession]);
+
+  const value = useMemo(
+    () => ({ user, isLoggedIn: user !== null, isLoading, signIn, signUp, signOut }),
+    [user, isLoading, signIn, signUp, signOut],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuth harus dipakai di dalam <AuthProvider>.");
+  }
+  return context;
+}
+```
+
+Saat aplikasi dibuka, `restore` membuka brankas lewat `loadTokens`. Kalau ada token, aplikasi bertanya ke server lewat `/api/auth/me` ("token ini milik siapa?") dan menyimpan jawabannya di `user`. Apa pun hasilnya, `isLoading` lalu menjadi `false`.
+
+Beberapa keputusan yang perlu kamu pahami:
+
+- **`isLoading` dimulai dari `true`.** Selama token belum selesai dibaca dari SecureStore, aplikasi belum tahu harus menampilkan layar Masuk atau daftar tugas. Root layout memakai nilai ini untuk menahan splash screen.
+- **Pemulihan sesi memanggil `/api/auth/me`.** Adanya token di HP belum berarti token itu masih sah. Server yang memutuskannya, sekaligus mengirim nama dan email terbaru.
+- **`signOut` tetap mengakhiri sesi walaupun request logout gagal.** Kalau HP sedang offline lalu error-nya dibiarkan lolos, pengguna akan terjebak dalam keadaan login.
+- **`queryClient.clear()` dipanggil setelah token dihapus.** Kalau Andi keluar lalu Sari login di HP yang sama, tanpa langkah ini layar Sari sempat menampilkan tugas Andi dari cache. Token dihapus lebih dulu supaya query yang masih aktif tidak sempat mengambil data lagi dengan token lama.
+- **`signIn` dan `signUp` tidak menangkap error.** Error dari server (misalnya `409` atau `401`) diteruskan ke layar, karena layarlah yang tahu cara menampilkannya.
+
+`setSessionExpiredHandler` belum ada di `api.js`. Kita menambahkannya di langkah 5, jadi wajar kalau Metro sempat mengeluh.
+
+</Step>
+<Step title="Buat layar Masuk dan Daftar di grup (auth)">
+
+Grup `(auth)` punya Stack sendiri. Layar `login` dideklarasikan pertama sehingga menjadi layar awal grup:
+
+```jsx title="src/app/(auth)/_layout.js"
+import { Stack } from "expo-router";
+
+export default function AuthLayout() {
+  return (
+    <Stack screenOptions={{ headerTintColor: "#4F46E5" }}>
+      <Stack.Screen name="login" options={{ title: "Masuk" }} />
+      <Stack.Screen name="register" options={{ title: "Daftar Akun" }} />
+    </Stack>
+  );
+}
+```
+
+Layar Masuk menampilkan pesan error dari server apa adanya. API sudah mengirim pesan berbahasa Indonesia yang aman, misalnya "Email atau password salah", jadi tidak perlu diterjemahkan lagi.
+
+```jsx title="src/app/(auth)/login.js"
+import { useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Link } from "expo-router";
+import { useAuth } from "../../features/auth/auth-context";
+
+export default function LoginScreen() {
+  const { signIn } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit() {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await signIn(email, password);
+      // Tidak perlu router.replace: Stack.Protected memindahkan layar sendiri.
+    } catch (err) {
+      // Error validasi (400) membawa detail per field; ambil yang pertama.
+      setError(err.details?.[0]?.message ?? err.message);
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Selamat datang kembali</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="Email"
+        value={email}
+        onChangeText={setEmail}
+        autoCapitalize="none"
+        autoComplete="email"
+        keyboardType="email-address"
+      />
+      <TextInput
+        style={styles.input}
+        placeholder="Password"
+        value={password}
+        onChangeText={setPassword}
+        autoComplete="current-password"
+        secureTextEntry
+        onSubmitEditing={handleSubmit}
+      />
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      <Pressable
+        style={[styles.button, submitting && styles.disabled]}
+        onPress={handleSubmit}
+        disabled={submitting}
+      >
+        {submitting ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>Masuk</Text>}
+      </Pressable>
+      <Link href="/register" style={styles.link}>
+        Belum punya akun? Daftar
+      </Link>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, justifyContent: "center", gap: 12, padding: 24, backgroundColor: "#FFFFFF" },
+  title: { fontSize: 24, fontWeight: "700", marginBottom: 8 },
+  input: { borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 },
+  error: { color: "#DC2626" },
+  button: { minHeight: 48, borderRadius: 10, backgroundColor: "#4F46E5", alignItems: "center", justifyContent: "center" },
+  buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
+  disabled: { opacity: 0.6 },
+  link: { marginTop: 8, color: "#4F46E5", textAlign: "center" },
+});
+```
+
+Layar ini menyimpan empat state: isi email, isi password, pesan error, dan `submitting` (sedang mengirim atau tidak). Saat tombol Masuk ditekan, `handleSubmit` mengosongkan error lama, mematikan tombol supaya tidak tertekan dua kali, lalu memanggil `signIn`. Kalau gagal, pesan error tampil dengan warna merah dan tombol hidup lagi.
+
+Layar Daftar sedikit lebih kaya. Error `400 VALIDATION_ERROR` membawa `details` berisi `field` dan `message`, jadi pesannya bisa ditaruh tepat di bawah kolom yang salah. Error `409` (email sudah terdaftar) ditempel ke kolom email, dan error lain tampil di atas tombol.
+
+```jsx title="src/app/(auth)/register.js"
+import { useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { useRouter } from "expo-router";
+import { useAuth } from "../../features/auth/auth-context";
+
+function Field({ error, ...inputProps }) {
+  return (
+    <View style={styles.field}>
+      <TextInput style={[styles.input, error && styles.inputError]} {...inputProps} />
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+    </View>
+  );
+}
+
+export default function RegisterScreen() {
+  const { signUp } = useAuth();
+  const router = useRouter();
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [formError, setFormError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const update = (key) => (value) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  async function handleSubmit() {
+    setFieldErrors({});
+    setFormError(null);
+    setSubmitting(true);
+    try {
+      await signUp(form.name, form.email, form.password);
+    } catch (err) {
+      if (err.code === "VALIDATION_ERROR" && err.details.length > 0) {
+        setFieldErrors(Object.fromEntries(err.details.map((d) => [d.field, d.message])));
+      } else if (err.status === 409) {
+        setFieldErrors({ email: err.message });
+      } else {
+        setFormError(err.message);
+      }
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <View style={styles.container}>
+      <Field placeholder="Nama lengkap" value={form.name} onChangeText={update("name")} autoComplete="name" error={fieldErrors.name} />
+      <Field
+        placeholder="Email"
+        value={form.email}
+        onChangeText={update("email")}
+        autoCapitalize="none"
+        autoComplete="email"
+        keyboardType="email-address"
+        error={fieldErrors.email}
+      />
+      <Field
+        placeholder="Password (minimal 8 karakter)"
+        value={form.password}
+        onChangeText={update("password")}
+        autoComplete="new-password"
+        secureTextEntry
+        error={fieldErrors.password}
+      />
+      {formError ? <Text style={styles.error}>{formError}</Text> : null}
+      <Pressable
+        style={[styles.button, submitting && styles.disabled]}
+        onPress={handleSubmit}
+        disabled={submitting}
+      >
+        {submitting ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>Daftar</Text>}
+      </Pressable>
+      <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace("/login"))}>
+        <Text style={styles.link}>Sudah punya akun? Masuk</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, justifyContent: "center", gap: 12, padding: 24, backgroundColor: "#FFFFFF" },
+  field: { gap: 4 },
+  input: { borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 },
+  inputError: { borderColor: "#DC2626" },
+  error: { color: "#DC2626" },
+  button: { minHeight: 48, borderRadius: 10, backgroundColor: "#4F46E5", alignItems: "center", justifyContent: "center" },
+  buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
+  disabled: { opacity: 0.6 },
+  link: { marginTop: 8, color: "#4F46E5", textAlign: "center" },
+});
+```
+
+Kedua layar tidak memanggil `router.replace("/")` setelah berhasil. Begitu `signIn` atau `signUp` mengisi `user`, `isLoggedIn` berubah menjadi `true` dan root layout yang memindahkan layar. Kalau form-mu tertutup keyboard di HP kecil, bungkus dengan `KeyboardAvoidingView` seperti di pelajaran [Form & Keyboard](/belajar/react-native/form-keyboard).
+
+</Step>
+<Step title="Perbarui src/lib/api.js: token sungguhan dan refresh otomatis">
+
+Selama ini `apiFetch` mendapat token dari `getToken`, fungsi yang dititipkan `dev-auth.js` lewat `setTokenGetter`. Kalau token ditolak, fungsi itu login ulang dengan akun demo. Mekanisme sementara itu sekarang kita ganti dengan tiga perubahan:
+
+1. Token dibaca dari `token-storage.js`, bukan dari fungsi titipan.
+2. Kalau request kena `401`, `apiFetch` memanggil `POST /api/auth/refresh` dengan refresh token, menyimpan pasangan token baru, lalu mengulang request itu **sekali**.
+3. Kalau refresh juga ditolak, token dihapus dan `AuthProvider` diberi tahu lewat `setSessionExpiredHandler`, sehingga pengguna kembali ke layar Masuk.
+
+Berikut isi lengkap `api.js` yang baru. Fungsi `send` dan `toApiError` tidak berubah sama sekali. Perubahannya ada di bagian atas file, di blok refresh, dan di dalam `apiFetch`.
+
+```js title="src/lib/api.js"
+import { clearTokens, getAccessToken, getRefreshToken, saveTokens } from "./token-storage";
+
+export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? "").replace(/\/+$/, "");
+
+const DEFAULT_TIMEOUT_MS = 10000;
+
+export class ApiError extends Error {
+  constructor(status, code, message, details = []) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status; // 0 = tidak ada respons HTTP sama sekali
+    this.code = code;
+    this.details = details;
+  }
+}
+
+let onSessionExpired = null;
+
+// Didaftarkan oleh AuthProvider: dipanggil saat refresh token ditolak server
+export function setSessionExpiredHandler(handler) {
+  onSessionExpired = handler;
+}
+
+async function send(path, { method, body, signal, headers, token, timeoutMs }) {
+  if (!API_URL) {
+    throw new ApiError(0, "CONFIG_ERROR", "EXPO_PUBLIC_API_URL belum diatur di file .env.");
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  // Teruskan pembatalan dari pemanggil (misalnya layar ditutup)
+  const onAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  signal?.addEventListener("abort", onAbort);
+
+  const finalHeaders = { Accept: "application/json", ...headers };
+  if (body !== undefined) finalHeaders["Content-Type"] = "application/json";
+  if (token) finalHeaders.Authorization = `Bearer ${token}`;
+
+  try {
+    return await fetch(`${API_URL}${path}`, {
+      method,
+      headers: finalHeaders,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (timedOut) {
+      throw new ApiError(0, "TIMEOUT", `Server tidak menjawab setelah ${timeoutMs} ms.`);
+    }
+    if (signal?.aborted) throw err; // dibatalkan pemanggil, bukan error jaringan
+    throw new ApiError(
+      0,
+      "NETWORK_ERROR",
+      `Tidak bisa terhubung ke ${API_URL}. Cek IP, port, Wi-Fi, dan firewall.`,
+    );
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+async function toApiError(response) {
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    // body kosong atau bukan JSON (misalnya halaman HTML)
+  }
+  const error = payload?.error ?? {};
+  return new ApiError(
+    response.status,
+    error.code ?? `HTTP_${response.status}`,
+    error.message ?? `Request gagal dengan status ${response.status}.`,
+    error.details ?? [],
+  );
+}
+
+async function requestNewTokens() {
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) {
+    throw new ApiError(401, "UNAUTHORIZED", "Sesi sudah berakhir. Silakan masuk lagi.");
+  }
+
+  // Sengaja memakai send(), bukan apiFetch(): refresh yang gagal tidak boleh memicu refresh lagi.
+  const response = await send("/api/auth/refresh", {
+    method: "POST",
+    body: { refreshToken },
+    headers: {},
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+  });
+  if (!response.ok) throw await toApiError(response);
+
+  const json = await response.json();
+  await saveTokens(json.data); // { accessToken, refreshToken } yang baru
+  return json.data.accessToken;
+}
+
+let refreshPromise = null;
+
+// Banyak request bisa kena 401 bersamaan. Semuanya menunggu SATU refresh yang sama.
+function refreshTokens() {
+  if (!refreshPromise) {
+    refreshPromise = requestNewTokens()
+      .catch(async (err) => {
+        // Hanya 401 yang berarti sesi habis. Offline, timeout, atau 429 bukan alasan logout.
+        if (err.status === 401) {
+          await clearTokens();
+          await onSessionExpired?.();
+        }
+        throw err;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+}
+
+export async function apiFetch(path, options = {}) {
+  const {
+    method = "GET",
+    body,
+    signal,
+    headers = {},
+    auth = true,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  } = options;
+  const request = { method, body, signal, headers, timeoutMs };
+
+  let token = auth ? await getAccessToken() : null;
+  let response = await send(path, { ...request, token });
+
+  // Access token ditolak? Refresh, lalu ulangi request SEKALI saja.
+  if (response.status === 401 && token) {
+    const latest = await getAccessToken();
+    if (!latest) throw await toApiError(response); // sesi sudah diakhiri request lain
+    // Kalau request lain sudah me-refresh, cukup pakai token terbarunya.
+    token = latest !== token ? latest : await refreshTokens();
+    response = await send(path, { ...request, token });
+  }
+
+  if (!response.ok) throw await toApiError(response);
+  if (response.status === 204) return null;
+
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new ApiError(
+      response.status,
+      "INVALID_JSON",
+      "Respons server bukan JSON. Apakah EXPO_PUBLIC_API_URL menunjuk ke API (port 3000)?",
+    );
+  }
+}
+```
+
+Singkatnya, `apiFetch` mengirim request dengan access token. Kalau dibalas `401`, ia meminta pasangan token baru lewat `refreshTokens()`, lalu mengirim ulang request yang sama satu kali.
+
+<Flow nodes={["GET /api/tasks", "401 TOKEN_EXPIRED", "refreshTokens()", "saveTokens()", "Ulangi GET /api/tasks"]} labels={["access token lama", "satu refresh untuk semua", "pasangan token baru", "token baru"]} caption="Refresh otomatis: pengguna tidak melihat apa-apa, request hanya sedikit lebih lambat" />
+
+<Callout type="analogi" title="Satu perwakilan ke loket penukaran">
+
+Kamu dan dua teman datang ke festival dengan satu kartu perpanjangan bersama. Gelang kalian bertiga habis di jam yang sama. Kalau kalian bertiga antre di tiga loket berbeda sambil membawa salinan kartu yang sama, loket kedua dan ketiga melihat kartu yang sudah dilubangi. Panitia mengira kartunya dipalsukan dan memblokir semuanya.
+
+Jalan keluarnya: satu orang jadi perwakilan dan pergi ke loket. Dua lainnya menunggu, lalu ikut memakai gelang baru yang dibawa pulang si perwakilan.
+
+- Perwakilan yang sedang antre = `refreshPromise`.
+- Teman yang menunggu = request lain yang kena `401` di saat yang sama.
+- Gelang baru = access token hasil refresh.
+
+</Callout>
+
+Variabel `refreshPromise` mencegah masalah berikut. Bayangkan kamu membuka aplikasi setelah HP menganggur 20 menit. Layar pertama bisa mengirim beberapa request sekaligus, misalnya daftar tugas dan daftar mata kuliah. Semuanya membawa access token yang sudah kedaluwarsa, jadi semuanya kena `401` hampir bersamaan. Tanpa `refreshPromise`, setiap request mengirim refresh token **yang sama** ke `/api/auth/refresh`:
+
+- Refresh pertama berhasil. Server merotasi token: refresh token lama ditandai terpakai, lalu pasangan baru dikirim.
+- Refresh berikutnya membawa refresh token yang sudah terpakai. Di Babak 1 kamu sudah melihat bahwa server menganggap ini tanda pencurian token, lalu mencabut **semua** sesi milik user tersebut.
+- Akibatnya pengguna ter-logout padahal tidak melakukan apa-apa.
+
+Dengan `refreshPromise`, request yang datang belakangan tidak memulai refresh baru. Mereka menunggu promise yang sama, lalu ikut memakai token hasil refresh pertama. Polanya sama dengan `loginPromise` di `dev-auth.js`, bedanya sekarang yang dipakai bersama adalah proses refresh. Jatah [rate limit](/glosarium#rate-limiting) 20 request per 15 menit untuk rute `/api/auth/*` juga jadi tidak terbuang.
+
+Pengecekan `latest !== token` menangani teman yang datang terlambat. Ada request yang berangkat dengan token lama, tapi baru kembali membawa `401` setelah refresh dari request lain **selesai**. Saat itu `refreshPromise` sudah kosong lagi (`null`), padahal token baru sudah tersimpan. Request seperti ini tidak perlu ke loket. Ia cukup mengambil token terbaru yang sudah ada, lalu mengulang request-nya.
+
+Beberapa detail lain yang sengaja dibuat begitu:
+
+- **Refresh dipanggil lewat `send`, bukan `apiFetch`.** Kalau lewat `apiFetch`, refresh yang kena `401` akan mencoba refresh lagi, yang juga kena `401`, dan seterusnya. Memanggil `send` langsung menutup kemungkinan loop tanpa akhir itu.
+- **Request diulang paling banyak sekali.** Kalau request ulangan masih `401`, error-nya dilempar apa adanya. Tidak ada percobaan ketiga.
+- **Syarat `token` pada pengecekan `401`.** Login dengan password salah juga dibalas `401`, tetapi request itu dikirim dengan `auth: false` sehingga `token` bernilai `null`. Jadi password salah tidak memicu refresh.
+- **Hanya `401` dari refresh yang mengakhiri sesi.** Kalau HP offline, server mati, atau kena `429`, refresh gagal padahal refresh token-nya mungkin masih sah. Pengguna tetap login, request-nya gagal biasa, dan TanStack Query bisa mencoba lagi nanti.
+- **Refresh tidak membawa `signal` milik pemanggil.** Satu refresh dipakai bersama banyak request. Kalau satu layar ditutup dan request-nya dibatalkan, refresh untuk request lain tidak boleh ikut batal.
+- **Semua `401` dicoba refresh, bukan hanya `TOKEN_EXPIRED`.** Kode `UNAUTHORIZED` bisa muncul misalnya ketika `JWT_ACCESS_SECRET` di server diganti. Refresh token tidak bergantung pada secret itu, jadi refresh tetap bisa menyelamatkan sesi.
+
+`setTokenGetter` sudah tidak ada, sehingga `dev-auth.js` sekarang rusak dan Metro akan menampilkan error merah. Itu wajar. File itu berhenti di-import pada langkah berikutnya dan dihapus di langkah terakhir.
+
+</Step>
+<Step title="Pasang AuthProvider dan Stack.Protected di root layout">
+
+Root layout punya tiga tugas baru: membungkus aplikasi dengan `AuthProvider`, menahan splash screen selama sesi dipulihkan, dan memilih layar mana yang boleh dibuka. Ganti seluruh isi `src/app/_layout.js` dengan kode berikut. Perhatikan bahwa baris `import "../lib/dev-auth";` sengaja tidak ada lagi.
+
+```jsx title="src/app/_layout.js"
+import { useEffect } from "react";
+import { useReactQueryDevTools } from "@dev-plugins/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { SplashScreen, Stack } from "expo-router";
+import { AuthProvider, useAuth } from "../features/auth/auth-context";
+import { queryClient } from "../lib/query-client";
+
+// Splash tetap tampil sampai kita tahu pengguna sudah login atau belum
+void SplashScreen.preventAutoHideAsync();
+
+function RootNavigator() {
+  const { isLoggedIn, isLoading } = useAuth();
+
+  useEffect(() => {
+    if (!isLoading) SplashScreen.hide();
+  }, [isLoading]);
+
+  // Selama sesi dipulihkan, splash screen yang terlihat. Jangan render layar apa pun.
+  if (isLoading) return null;
+
+  return (
+    <Stack screenOptions={{ headerTintColor: "#4F46E5" }}>
+      <Stack.Protected guard={isLoggedIn}>
+        <Stack.Screen name="index" options={{ title: "Tugas Kuliah" }} />
+        <Stack.Screen name="tasks/new" options={{ title: "Tugas Baru" }} />
+        <Stack.Screen name="tasks/[id]/index" options={{ title: "Detail Tugas" }} />
+        <Stack.Screen name="tasks/[id]/edit" options={{ title: "Ubah Tugas" }} />
+      </Stack.Protected>
+
+      <Stack.Protected guard={!isLoggedIn}>
+        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+      </Stack.Protected>
+    </Stack>
+  );
+}
+
+export default function RootLayout() {
+  useReactQueryDevTools(queryClient);
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <RootNavigator />
+      </AuthProvider>
+    </QueryClientProvider>
+  );
+}
+```
+
+Kenapa `RootNavigator` dipisah dari `RootLayout`? `useAuth()` hanya bisa dipakai oleh komponen yang berada **di dalam** `AuthProvider`. `RootLayout` adalah komponen yang merender `AuthProvider` itu sendiri, jadi ia berada di luar. Kalau `useAuth()` dipanggil di sana, kamu mendapat error dari `useAuth`.
+
+Urutan provider juga penting. `QueryClientProvider` berada di luar karena `AuthProvider` memakai `queryClient`. Header grup `(auth)` disembunyikan karena grup itu sudah punya Stack dengan judulnya sendiri, jadi tidak ada dua header yang bertumpuk.
+
+<Callout type="analogi" title="Layar mesin ATM">
+
+Sebelum kartu dan PIN dimasukkan, layar ATM hanya menampilkan satu hal: "Masukkan kartu Anda". Menu tarik tunai dan transfer belum ada sama sekali. Setelah PIN benar, layar langsung berganti ke menu utama tanpa kamu pilih. Begitu kartu diambil, layar kembali ke "Masukkan kartu Anda", dan tidak ada tombol untuk kembali ke menu transfer tadi.
+
+- Layar "Masukkan kartu" = grup `(auth)` berisi layar Masuk dan Daftar.
+- Menu tarik tunai dan transfer = layar tugas.
+- Status "kartu sudah masuk dan PIN benar" = `isLoggedIn`.
+- Mesin yang mengganti layar sesuai status = `Stack.Protected`.
+
+</Callout>
+
+`Stack.Protected` adalah [protected route](/glosarium#protected-route) (layar yang dikunci untuk kondisi tertentu) versi Expo Router. Layar di dalamnya hanya ada selama `guard` bernilai `true`. Lihat apa yang terjadi saat nilainya berubah:
+
+- **Login berhasil.** `isLoggedIn` menjadi `true`. Grup `(auth)` tidak lagi tersedia, jadi Expo Router otomatis pindah ke layar pertama yang boleh dibuka, yaitu `index`. Layar Masuk juga dibuang dari riwayat, sehingga tombol Back tidak membawa pengguna kembali ke form login.
+- **Logout atau sesi habis.** Kebalikannya: semua layar tugas hilang dari riwayat dan pengguna mendarat di `/login`.
+- **Deep link ke layar terlindungi.** Membuka `/tasks/7` saat belum login tidak menampilkan detail tugas. Pengguna diarahkan ke layar yang boleh diakses.
+
+Karena itulah layar Masuk dan Daftar di langkah 4 tidak memanggil `router.replace`. Kamu cukup mengubah state, lalu navigasi mengikuti. Tidak ada `useEffect` berisi redirect yang bisa berkedip atau berjalan dua kali.
+
+<Callout type="warning" title="Guard di aplikasi bukan pengaman data">
+
+`Stack.Protected` hanya mengatur layar yang tampil. Siapa pun tetap bisa memanggil API langsung dengan curl. Data tugas aman karena middleware `requireAuth` dan filter `userId` di server, yang sudah kamu baca di Babak 1. Di analogi ATM, layar hanya mengatur menu yang terlihat. Yang memutuskan uang boleh keluar atau tidak tetap komputer bank. Guard di aplikasi berguna untuk pengalaman pengguna, sedangkan keamanan tetap dijaga server.
+
+</Callout>
+
+Tentang splash screen (layar logo yang tampil saat aplikasi baru dibuka): tanpa `preventAutoHideAsync`, splash langsung hilang dan `RootNavigator` sempat merender sesuatu sebelum token selesai dibaca. Pengguna yang sebenarnya sudah login akan melihat layar Masuk berkedip sesaat, lalu berpindah ke daftar tugas. Dengan splash yang ditahan, layar pertama yang terlihat sudah benar. Ringkasan sintaks `Stack.Protected` bisa kamu buka lagi di [cheatsheet Expo Router](/cheatsheet/expo-router).
+
+</Step>
+<Step title="Buat tombol Keluar">
+
+Logika keluar sudah ada di `signOut`. Yang belum ada hanya tombolnya. Buat komponen kecil di folder fitur auth:
+
+```jsx title="src/features/auth/logout-button.js"
+import { useState } from "react";
+import { ActivityIndicator, Pressable, Text } from "react-native";
+import { useAuth } from "./auth-context";
+
+export default function LogoutButton() {
+  const { signOut } = useAuth();
+  const [leaving, setLeaving] = useState(false);
+
+  async function handlePress() {
+    setLeaving(true);
+    // signOut sudah menangkap error jaringan, jadi sesi selalu berakhir.
+    await signOut();
+  }
+
+  if (leaving) return <ActivityIndicator color="#4F46E5" />;
+
+  return (
+    <Pressable onPress={handlePress} hitSlop={8} accessibilityRole="button">
+      <Text style={{ color: "#DC2626", fontSize: 16, fontWeight: "600" }}>Keluar</Text>
+    </Pressable>
+  );
+}
+```
+
+Pasang tombolnya di kiri header layar daftar tugas. Sisi kanan sudah dipakai tombol Tambah, sedangkan sisi kiri kosong karena `index` adalah layar pertama dan tidak punya tombol Back. Cukup ubah opsi layar `index` di root layout:
+
+```diff title="src/app/_layout.js"
+ import { AuthProvider, useAuth } from "../features/auth/auth-context";
++import LogoutButton from "../features/auth/logout-button";
+ import { queryClient } from "../lib/query-client";
+
+ // ...
+
+       <Stack.Protected guard={isLoggedIn}>
+-        <Stack.Screen name="index" options={{ title: "Tugas Kuliah" }} />
++        <Stack.Screen
++          name="index"
++          options={{ title: "Tugas Kuliah", headerLeft: () => <LogoutButton /> }}
++        />
+         <Stack.Screen name="tasks/new" options={{ title: "Tugas Baru" }} />
+```
+
+Saat tombol ditekan, urutannya begini:
+
+1. `signOut` membaca refresh token, lalu mengirim `POST /api/auth/logout` dengan batas waktu 5 detik. Server menghapus refresh token itu dari database, sehingga token tersebut tidak bisa dipakai lagi walaupun sempat dicuri. Endpoint ini [idempotent](/glosarium#idempotent), jadi aman dipanggil walaupun token sudah tidak ada.
+2. Apa pun hasilnya, `endSession` menghapus token dari SecureStore dan dari memori.
+3. `user` menjadi `null`, sehingga `isLoggedIn` menjadi `false`. `Stack.Protected` membuang layar tugas dan menampilkan `/login`.
+4. `queryClient.clear()` membuang semua cache, sehingga akun berikutnya mulai dari cache kosong.
+
+Access token yang lama memang masih sah sampai 15 menit ke depan, karena JWT tidak bisa ditarik kembali. Tapi salinannya sudah dihapus dari HP, dan refresh token-nya sudah mati di server. Karena itulah access token dibuat berumur pendek.
+
+</Step>
+<Step title="Hapus src/lib/dev-auth.js">
+
+Jalan pintas login demo sudah tidak dibutuhkan. Hapus file-nya dari folder `kuliah-app`:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+Remove-Item src\lib\dev-auth.js
+Get-ChildItem src -Recurse -File | Select-String -Pattern "dev-auth|setTokenGetter|getDemoToken"
+```
+
+</Tab>
+<Tab>
+
+```bash
+rm src/lib/dev-auth.js
+grep -rnE "dev-auth|setTokenGetter|getDemoToken" src
+```
+
+</Tab>
+</Tabs>
+
+Perintah kedua mencari sisa pemakaian dan seharusnya tidak menemukan apa-apa. Kalau masih ada hasil, misalnya `import "../lib/dev-auth";` yang tertinggal di root layout, hapus baris tersebut. Import ke file yang sudah tidak ada akan membuat Metro gagal membangun bundle.
+
+Setelah itu, hentikan Metro dan jalankan ulang dengan cache bersih supaya modul lama tidak tertinggal:
+
+```bash
+npx expo start --clear
+```
+
+Aplikasi sekarang terbuka di layar Masuk. Masuk dengan akun demo `demo@kampus.ac.id` dan password `password123`, atau daftar akun baru. Mulai sekarang, setiap request ke `/api/tasks` membawa token milik pengguna yang benar-benar login, dan server hanya mengembalikan tugas miliknya.
+
+</Step>
+</Steps>
+
+## Uji coba dari ujung ke ujung
+
+Jalankan API dengan `npm run dev` di folder `api/`. Dalam mode development, API mencatat setiap request di terminal lewat morgan (library pencatat request), jadi kamu bisa melihat urutan request saat mencoba skenario berikut:
+
+1. **Daftar akun baru**, misalnya atas nama Sari. Aplikasi langsung pindah ke daftar tugas yang masih kosong, karena akun baru belum punya tugas. Tambahkan satu tugas.
+2. **Tutup aplikasi sepenuhnya** dengan menggesernya dari daftar aplikasi terbuka, lalu buka lagi. Splash tampil sebentar, kemudian langsung daftar tugas Sari tanpa layar Masuk yang berkedip. Di terminal API terlihat `GET /api/auth/me 200`.
+3. **Paksa refresh.** Ubah sementara `ACCESS_TOKEN_TTL` di `api/src/lib/tokens.ts` dari `"15m"` menjadi `"20s"`. `tsx watch` akan me-restart API. Keluar lalu masuk lagi supaya mendapat token berumur 20 detik, tunggu sekitar setengah menit, lalu tarik daftar tugas untuk refresh. Di terminal akan muncul tiga baris berurutan: `GET /api/tasks 401`, `POST /api/auth/refresh 200`, dan `GET /api/tasks 200`. Di aplikasi, tidak ada yang terlihat berbeda.
+4. **Sesi benar-benar habis.** Jalankan `npm run db:studio` di folder `api/`, buka tabel `RefreshToken`, lalu hapus semua barisnya. Tunggu 20 detik dan tarik daftar tugas lagi. Kali ini refresh dibalas `401`, sehingga aplikasi kembali ke layar Masuk dengan sendirinya.
+5. **Ganti akun.** Masuk sebagai Sari, tekan Keluar, lalu masuk dengan akun demo. Tugas Sari tidak boleh muncul walau sekejap, dan sebaliknya.
+6. **Tombol Back.** Setelah masuk, tekan tombol Back di Android. Aplikasi tidak boleh kembali ke form login.
+
+Setelah selesai, kembalikan `ACCESS_TOKEN_TTL` ke `"15m"`. Token berumur 20 detik membuat aplikasi terus-menerus me-refresh dan cepat menghabiskan jatah rate limit.
+
+## Kesalahan umum
+
+| Gejala | Penyebab | Perbaikan |
+| --- | --- | --- |
+| Setiap aplikasi dibuka ulang, pengguna kembali ke layar Masuk | Token hanya disimpan di state, atau sesi tidak dipulihkan saat aplikasi dibuka | Simpan lewat `saveTokens` dan pulihkan dengan `loadTokens` + `/api/auth/me` di `AuthProvider` |
+| Layar Masuk berkedip sebentar sebelum daftar tugas | Splash tidak ditahan, atau Stack dirender saat `isLoading` masih `true` | Panggil `SplashScreen.preventAutoHideAsync()` di top-level dan `return null` selama loading |
+| Error `useAuth harus dipakai di dalam <AuthProvider>.` | `useAuth()` dipanggil di komponen yang merender `AuthProvider` itu sendiri | Pisahkan `RootNavigator` sebagai anak `AuthProvider` |
+| Tiba-tiba ter-logout dengan pesan `Refresh token sudah pernah dipakai` | Beberapa request me-refresh bersamaan, atau refresh token baru tidak disimpan setelah rotasi | Pakai satu `refreshPromise` bersama dan simpan **kedua** token hasil refresh |
+| Request berputar terus dan rate limit cepat habis | Refresh dipanggil lewat `apiFetch`, atau request diulang lebih dari sekali | Panggil refresh lewat `send` dan ulangi request maksimal sekali |
+| Setelah ganti akun, tugas akun sebelumnya sempat terlihat | `queryClient.clear()` tidak dipanggil saat sesi berakhir | Bersihkan cache di `endSession` |
+| `429 RATE_LIMITED` saat mencoba login berkali-kali | Rute `/api/auth/*` dibatasi 20 request per 15 menit | Tunggu 15 menit, atau restart API saat development karena hitungannya disimpan di memori |
+| `Invalid key provided to SecureStore` | Kunci berisi karakter selain huruf, angka, `.`, `-`, dan `_`, misalnya `:` atau spasi | Pakai kunci seperti `kuliah.accessToken` |
+| `NETWORK_ERROR` hanya di HP atau emulator | `EXPO_PUBLIC_API_URL` masih `localhost` | Pakai IP LAN laptop untuk HP fisik atau `10.0.2.2` untuk emulator Android, lalu restart Metro |
+| Metro gagal: `Unable to resolve "../lib/dev-auth"` | Import ke file yang sudah dihapus masih tertinggal | Hapus baris import itu dari `src/app/_layout.js` |
+
+<Callout type="danger" title="Jangan simpan token di AsyncStorage">
+
+AsyncStorage adalah laci biasa: data disimpan sebagai teks tanpa enkripsi. Isinya bisa dibaca di HP yang sudah di-root (dibuka akses penuhnya) atau dari cadangan data yang tidak terlindungi. Refresh token kita berlaku 30 hari, jadi kebocoran satu token sama saja dengan menyerahkan akses akun selama sebulan. [SecureStore](/glosarium#secure-store) adalah brankasnya: ia memakai Keychain di iOS dan Keystore di Android, sehingga token dienkripsi oleh sistem operasi. AsyncStorage tetap cocok untuk data yang tidak rahasia, seperti pilihan tema atau filter terakhir.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Konfirmasi sebelum keluar" difficulty="mudah" hints={["Kamu sudah punya `confirmAsync` di `src/lib/confirm.js` dari pelajaran hapus tugas.", "Isi `confirmText` dengan `Keluar`, karena nilai bawaannya `Hapus`.", "Panggil `signOut` hanya kalau hasil `confirmAsync` bernilai `true`."]}>
+
+Tombol Keluar yang tersentuh tanpa sengaja cukup menyebalkan, karena pengguna harus mengetik email dan password lagi. Tambahkan dialog konfirmasi:
+
+1. Buka `src/features/auth/logout-button.js`.
+2. Di `handlePress`, tampilkan dialog "Keluar dari akun?" dengan `confirmAsync` sebelum melakukan apa pun.
+3. Kalau pengguna membatalkan, hentikan fungsi. Kalau setuju, baru tampilkan spinner dan panggil `signOut`.
+4. Coba di HP dan di Expo Web. Dialog harus muncul di keduanya.
+
+<Solution>
+
+```jsx title="src/features/auth/logout-button.js"
+import { useState } from "react";
+import { ActivityIndicator, Pressable, Text } from "react-native";
+import { confirmAsync } from "../../lib/confirm";
+import { useAuth } from "./auth-context";
+
+export default function LogoutButton() {
+  const { signOut } = useAuth();
+  const [leaving, setLeaving] = useState(false);
+
+  async function handlePress() {
+    const ok = await confirmAsync({
+      title: "Keluar dari akun?",
+      message: "Kamu perlu masuk lagi untuk melihat tugasmu.",
+      confirmText: "Keluar",
+    });
+    if (!ok) return;
+
+    setLeaving(true);
+    await signOut();
+  }
+
+  if (leaving) return <ActivityIndicator color="#4F46E5" />;
+
+  return (
+    <Pressable onPress={handlePress} hitSlop={8} accessibilityRole="button">
+      <Text style={{ color: "#DC2626", fontSize: 16, fontWeight: "600" }}>Keluar</Text>
+    </Pressable>
+  );
+}
+```
+
+`confirmAsync` sudah memakai `window.confirm` di web, karena `Alert.alert` tidak menampilkan apa-apa di sana. `setLeaving(true)` sengaja dipanggil setelah konfirmasi, sehingga membatalkan dialog tidak membuat tombol berubah menjadi spinner.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Beri tahu saat sesi berakhir" difficulty="sedang" hints={["Handler yang didaftarkan lewat `setSessionExpiredHandler` hanya dipanggil saat refresh ditolak, bukan saat pengguna menekan Keluar.", "Simpan pesannya di state `AuthProvider`, misalnya `notice`, lalu sediakan lewat context.", "Kosongkan `notice` di `startSession` supaya pesan hilang setelah login berhasil."]}>
+
+Sekarang, kalau refresh token ditolak, pengguna tiba-tiba berada di layar Masuk tanpa penjelasan. Tambahkan pesan pemberitahuan:
+
+1. Di `AuthProvider`, buat state baru `notice` untuk menyimpan pesan.
+2. Isi `notice` dengan "Sesi kamu sudah berakhir. Silakan masuk lagi." **hanya** saat refresh ditolak server, bukan saat pengguna menekan Keluar.
+3. Kosongkan `notice` lagi setelah login berhasil.
+4. Tampilkan `notice` dalam kotak berwarna di layar Masuk, di atas kolom email.
+5. Uji dengan skenario 4 di bagian uji coba, lalu pastikan pesan tidak muncul setelah menekan Keluar.
+
+<Solution>
+
+Di `AuthProvider`, bedakan handler sesi habis dari `endSession` biasa:
+
+```diff title="src/features/auth/auth-context.js"
+ export function AuthProvider({ children }) {
+   const [user, setUser] = useState(null);
+   const [isLoading, setIsLoading] = useState(true);
++  const [notice, setNotice] = useState(null);
+
+   // ...endSession tetap
+
+   useEffect(() => {
+     let active = true;
+-    setSessionExpiredHandler(endSession);
++    setSessionExpiredHandler(async () => {
++      await endSession();
++      setNotice("Sesi kamu sudah berakhir. Silakan masuk lagi.");
++    });
+
+   // ...
+
+   const startSession = useCallback(async (data) => {
+     await saveTokens(data);
++    setNotice(null);
+     setUser(data.user);
+   }, []);
+
+   // ...
+
+   const value = useMemo(
+-    () => ({ user, isLoggedIn: user !== null, isLoading, signIn, signUp, signOut }),
+-    [user, isLoading, signIn, signUp, signOut],
++    () => ({ user, isLoggedIn: user !== null, isLoading, notice, signIn, signUp, signOut }),
++    [user, isLoading, notice, signIn, signUp, signOut],
+   );
+```
+
+Lalu tampilkan di layar Masuk, di atas kolom email:
+
+```diff title="src/app/(auth)/login.js"
+-  const { signIn } = useAuth();
++  const { signIn, notice } = useAuth();
+
+   // ...
+
+       <Text style={styles.title}>Selamat datang kembali</Text>
++      {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+       <TextInput
+
+   // tambahkan ke StyleSheet:
++  notice: { padding: 12, borderRadius: 10, backgroundColor: "#FEF3C7", color: "#92400E" },
+```
+
+`signOut` memanggil `endSession` secara langsung, bukan lewat handler, jadi pesan ini tidak muncul saat pengguna keluar dengan sengaja. Pesan juga bisa tampil saat aplikasi dibuka setelah lebih dari 30 hari tidak dipakai. Itu benar, karena refresh token-nya memang sudah kedaluwarsa. Uji solusimu dengan skenario 4 di bagian uji coba.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Tiga request kena `401 TOKEN_EXPIRED` hampir bersamaan. Kenapa ketiganya harus menunggu satu `refreshPromise` yang sama?",
+    options: [
+      "Supaya aplikasi lebih hemat baterai",
+      "Karena refresh token dirotasi: refresh token yang sama dipakai dua kali dianggap pencurian, dan server mencabut semua sesi",
+      "Karena server hanya menerima satu request per detik",
+      "Karena access token baru hanya berlaku untuk satu request",
+    ],
+    answer: 1,
+    explain: "Setelah refresh pertama, refresh token lama ditandai terpakai. Refresh kedua dengan token yang sama memicu deteksi pencurian dan semua sesi user dicabut, sehingga pengguna ter-logout. Server tidak membatasi satu request per detik, dan access token baru bisa dipakai berkali-kali sampai kedaluwarsa. Penghematan baterai hanya efek samping kecil.",
+  },
+  {
+    q: "Kenapa `requestNewTokens` memanggil `send` secara langsung, bukan `apiFetch`?",
+    options: [
+      "Karena `send` tidak memakai timeout sehingga lebih cepat",
+      "Karena `apiFetch` tidak bisa mengirim request POST",
+      "Karena lewat `apiFetch`, refresh yang kena `401` akan mencoba refresh lagi sehingga bisa berputar tanpa akhir",
+      "Karena hanya `send` yang menambahkan header Authorization",
+    ],
+    answer: 2,
+    explain: "`apiFetch` punya logika refresh saat `401`. Kalau refresh itu sendiri lewat `apiFetch`, kegagalannya memicu refresh baru, dan seterusnya. `send` tetap memakai timeout, `apiFetch` bisa mengirim POST seperti saat login, dan request refresh justru tidak membawa header Authorization.",
+  },
+  {
+    q: "Setelah `signIn` berhasil, apa yang memindahkan pengguna dari layar Masuk ke daftar tugas?",
+    options: [
+      "`Stack.Protected`: `isLoggedIn` berubah menjadi `true`, grup `(auth)` tidak tersedia lagi, dan router pindah ke layar pertama yang boleh dibuka",
+      "`useEffect` di layar Masuk yang memanggil `router.replace` saat `user` terisi",
+      "`signIn` memanggil `router.push` setelah token tersimpan",
+      "Server membalas redirect `302` ke halaman utama",
+    ],
+    answer: 0,
+    explain: "Navigasi mengikuti state: begitu `guard` berubah, Expo Router menyesuaikan layar yang tersedia dan membuang layar Masuk dari riwayat. Layar Masuk dan `signIn` sengaja tidak memanggil router, dan API JSON kita tidak pernah mengirim redirect.",
+  },
+  {
+    q: "Andi keluar, lalu Sari masuk di HP yang sama. Apa yang terjadi kalau `queryClient.clear()` tidak dipanggil saat logout?",
+    options: [
+      "Sari gagal login karena cache masih penuh",
+      "Server menolak token Sari karena token Andi masih ada",
+      "Tidak ada bedanya, karena token Andi sudah dihapus",
+      "Layar Sari sempat menampilkan tugas Andi dari cache sebelum data miliknya tiba",
+    ],
+    answer: 3,
+    explain: "Cache TanStack Query tidak tahu siapa yang login. Key `tasks` milik Andi masih ada, jadi layar Sari langsung menampilkannya sambil refetch di belakang. Login Sari tetap berhasil, server tidak peduli cache di HP, dan menghapus token tidak ikut menghapus cache.",
+  },
+  {
+    q: "HP sedang offline ketika access token kedaluwarsa, sehingga refresh gagal dengan `NETWORK_ERROR`. Apa yang dilakukan `api.js` versi kita?",
+    options: [
+      "Menghapus token dan mengembalikan pengguna ke layar Masuk",
+      "Melempar error tanpa menghapus token, sehingga pengguna tetap login dan request bisa dicoba lagi saat online",
+      "Mengulang refresh terus-menerus sampai HP online",
+      "Login ulang memakai akun demo",
+    ],
+    answer: 1,
+    explain: "Hanya `401` dari endpoint refresh yang mengakhiri sesi. Gagal jaringan bukan bukti refresh token tidak sah, jadi token dibiarkan dan TanStack Query bisa mencoba lagi. Tidak ada loop refresh, dan login demo sudah dihapus bersama `dev-auth.js`.",
+  },
+]} />
+
+## Ringkasan
+
+- Password disimpan sebagai hash [bcrypt](/glosarium#bcrypt), seperti jus dari blender yang tidak bisa dikembalikan jadi buah. Server hanya mencocokkan hash, tidak pernah menyimpan password asli.
+- Login dan register memberi dua token. [Access token](/glosarium#access-token) (JWT, gelang harian) berlaku 15 menit. [Refresh token](/glosarium#refresh-token) (kartu perpanjangan) berlaku 30 hari dan diganti baru setiap kali dipakai.
+- Middleware `requireAuth` memverifikasi header `Authorization: Bearer ...` dan mengisi `req.userId`. Setiap query tugas difilter dengan `userId`, jadi Andi tidak bisa melihat tugas Sari. Rute `/api/auth/*` dibatasi 20 request per 15 menit untuk menahan tebakan password.
+- Di `kuliah-app`, `token-storage.js` menyimpan token di SecureStore (brankas) dengan salinan di memori. `AuthProvider` memulihkan sesi lewat `/api/auth/me` dan membagikan `signIn`, `signUp`, dan `signOut` ke semua layar lewat `useAuth()`.
+- Root layout menahan splash selama `isLoading`. Setelah itu `Stack.Protected` memilih layar berdasarkan `isLoggedIn`, tanpa redirect manual.
+- `apiFetch` me-refresh otomatis saat kena `401`. Semua request menunggu satu refresh yang sama, request diulang paling banyak sekali, dan sesi hanya diakhiri kalau refresh ditolak `401`.
+- Keluar berarti tiga hal: mencabut refresh token di server (kalau sedang online), menghapus token di HP, lalu membersihkan cache dengan `queryClient.clear()`.
+
+<Callout type="capstone" title="Langkah capstone">
+
+"Aplikasi Tugas & Catatan Kuliah" sekarang punya akun sungguhan: setiap mahasiswa hanya melihat tugas dan mata kuliahnya sendiri. Pastikan keenam skenario uji coba di atas lolos di HP sungguhan, bukan hanya di web. Di [Capstone](/belajar/fullstack/capstone), `AuthProvider` dan `Stack.Protected` yang kamu tulis menjadi kerangka seluruh navigasi aplikasi.
+
+</Callout>
+
+Berikutnya, di [Upload Gambar](/belajar/fullstack/upload-gambar), kamu menambahkan lampiran foto ke setiap tugas. Endpoint upload juga dilindungi `requireAuth`, jadi token dan refresh otomatis yang baru kamu bangun langsung ikut bekerja.

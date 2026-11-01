@@ -1,0 +1,1079 @@
+## Pengantar
+
+Buka `src/server.js` milikmu. Setelah [Pagination, Filter, Search & Sort](/belajar/crud-backend/pagination-filter-search), file itu sudah sekitar 150 baris. Isinya campur aduk: logger (pencatat request), health check, enam route tugas, tiga route mata kuliah, handler 404, error handler, dan `app.listen`. Semuanya masih jalan, tapi mulai muncul empat masalah:
+
+- **Sulit dicari.** Mau mengubah cara mencari tugas? Kamu harus menggulir melewati route mata kuliah dan middleware (fungsi "penjaga" yang jalan sebelum handler) dulu.
+- **Sulit diuji.** Test adalah kode yang mengecek kode lain secara otomatis. Masalahnya, begitu `server.js` di-import, `app.listen` langsung jalan. Test jadi ikut menyalakan server di port 3000.
+- **Konfigurasi tercecer.** `process.env.PORT` dibaca di satu tempat, `process.env.NODE_ENV` di tempat lain. Kalau isi `.env` salah ketik, server tetap menyala lalu baru gagal di tengah request.
+- **Ditolak browser.** Saat aplikasi Expo dibuka versi web-nya, browser menolak respons API karena server belum mengaktifkan CORS. Penjelasannya ada di bagian CORS nanti.
+
+Pelajaran terakhir Track 1 ini tidak menambah fitur baru. Kamu merapikan `belajar-api` menjadi beberapa lapisan, sama seperti API pendamping di Track 3. Setiap endpoint tetap memberi respons yang sama persis. Yang berubah hanya letak kodenya. Kegiatan ini disebut **refactor**.
+
+Mirip merapikan kamar kos: buku dan baju tetap sama, hanya dipindah ke rak dan lemari supaya gampang dicari.
+
+Diagram ini menunjukkan perjalanan satu request setelah refactor. Setiap kotaknya kamu bangun di pelajaran ini.
+
+<Flow nodes={["Request", "Middleware global", "Router modul", "validate()", "Handler", "Service", "Prisma"]} labels={["logger, helmet, cors, json", "/api/tasks", "schema Zod", "req → argumen", "logika", "SQL"]} caption="Perjalanan satu request setelah refactor" />
+
+## Peta lapisan: route, controller, service
+
+<Callout type="analogi" title="Seperti kantin kampus">
+
+Di kantin, setiap orang punya tugas sendiri. Papan petunjuk mengarahkanmu ke loket yang benar. Petugas loket mengecek pesananmu masuk akal (menunya ada, jumlahnya wajar). Kasir mencatat pesanan, lalu menyerahkan makanan kepadamu. Juru masak memasak tanpa peduli kamu bayar tunai atau QRIS. Bahannya diambil dari gudang.
+
+- papan petunjuk = **route**
+- petugas yang mengecek pesanan = **validasi**
+- kasir = **controller** (handler)
+- juru masak = **service**
+- gudang bahan = **Prisma** dan database
+
+Bedanya dengan kantin sungguhan: di backend yang rapi, juru masak tidak pernah bertemu pembeli. Ia hanya menerima daftar pesanan dari kasir.
+
+</Callout>
+
+Backend yang rapi membagi tugas dengan cara yang sama. Satu lapisan, satu jenis pekerjaan:
+
+| Lapisan | Lokasi di `belajar-api` | Tugasnya | Tidak boleh |
+| --- | --- | --- | --- |
+| **Route** | `tasks.routes.js` | Mencocokkan method + URL ke rangkaian middleware | Berisi logika bisnis |
+| **Validasi** | `validate()` + `tasks.schemas.js` | Memastikan `params`, `query`, `body` sesuai schema | Mengakses database |
+| **Controller** (handler) | fungsi `async (req, res)` di `tasks.routes.js` | Mengambil data dari `req`, memanggil service, menulis `res` | Menulis query Prisma |
+| **Service** | `tasks.service.js` | Logika bisnis dan akses data lewat Prisma; melempar `HttpError` | Menyentuh `req` atau `res` |
+| **Data** | `src/lib/prisma.js` | Satu Prisma Client untuk seluruh aplikasi | Dibuat ulang di file lain |
+
+[Controller](/glosarium#controller) adalah si kasir. Ia membaca data dari request, memanggil fungsi service, lalu mengubah hasilnya menjadi status code dan JSON. Banyak tutorial membuat file `tasks.controller.js` tersendiri. Handler kita hanya dua sampai tiga baris, jadi kita menulisnya langsung di file routes, sama seperti API pendamping.
+
+[Service layer](/glosarium#service-layer) adalah si juru masak. Aturannya satu: service tidak pernah menyentuh `req` atau `res`. Ia menerima argumen biasa (angka, objek), lalu mengembalikan data atau melempar error.
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+```js
+export async function getTask(req, res) {
+  const task = await prisma.task.findUnique({
+    where: { id: req.params.id },
+  });
+  if (!task) return res.status(404).json({ /* ... */ });
+  res.json({ data: task });
+}
+```
+
+Fungsi ini hanya bisa dipanggil dari Express. Untuk memakainya di script seed atau di test, kamu harus membuat objek `req` dan `res` palsu.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+```js
+export async function getTask(id) {
+  const task = await prisma.task.findUnique({ where: { id } });
+  if (!task) throw HttpError.notFound("Tugas tidak ditemukan");
+  return task;
+}
+```
+
+Cukup panggil `await getTask(7)` dari mana saja. Kalau tugasnya tidak ada, fungsi ini melempar `HttpError`. Error handler dari [Validasi & Error Handling](/belajar/crud-backend/validasi-error-handling) yang mengubahnya menjadi status 404.
+
+</CompareItem>
+</Compare>
+
+### Folder per fitur, bukan per jenis file
+
+<Callout type="analogi" title="Map per mata kuliah">
+
+Ada dua cara menyimpan kertas kuliah. Cara pertama: satu map untuk semua catatan, satu map untuk semua tugas, satu map untuk semua kuis. Cara kedua: satu map per mata kuliah. Map "Basis Data" berisi catatan, tugas, dan kuis Basis Data. Menjelang UAS Basis Data, cara kedua jauh lebih enak karena semua bahannya ada di satu map.
+
+Cara pertama = folder **per jenis file**. Cara kedua = folder **per fitur**.
+
+</Callout>
+
+Gaya per jenis membuat folder `routes/`, `controllers/`, dan `services/`. Gaya per fitur membuat satu folder untuk setiap fitur, misalnya `modules/tasks/`. Kita memakai gaya per fitur karena:
+
+- Saat mengubah fitur tugas, semua file yang terkait ada berdekatan.
+- Menambah fitur baru cukup dengan menambah satu folder di `modules/`.
+
+Kode yang dipakai bersama oleh semua fitur tetap di `lib/` dan `middleware/`. Anggap saja alat tulis yang kamu simpan di tas, bukan di salah satu map.
+
+Ini struktur akhir yang akan kamu capai. File yang disorot adalah file yang kamu buat atau tulis ulang di pelajaran ini:
+
+<FileTree title="belajar-api" tree={`
+prisma/
+  migrations/
+  schema.prisma
+  seed.js
+src/
+  config/
+    * env.js # membaca & memvalidasi .env
+  generated/prisma/ # hasil prisma generate
+  lib/
+    http-error.js
+    prisma.js
+  middleware/
+    error-handler.js
+    * logger.js # dipindah dari server.js
+    * not-found.js # dipindah dari server.js
+    validate.js
+  modules/
+    courses/
+      * courses.routes.js
+      * courses.schemas.js
+      * courses.service.js
+    tasks/
+      * tasks.routes.js # route + handler
+      * tasks.schemas.js # schema Zod tugas
+      * tasks.service.js # logika + Prisma
+  * app.js # createApp(): merakit middleware & router
+  * server.js # hanya listen + graceful shutdown
+tests/
+  * app.test.js # integration test pertama
+.env
+* .env.example # contoh konfigurasi, masuk git
+package.json
+prisma7.config.ts
+`} />
+
+File `src/schemas.js` dari pelajaran validasi nanti dihapus. Isinya dibagi ke `tasks.schemas.js` dan `courses.schemas.js`.
+
+## Konfigurasi lewat environment variable
+
+<Callout type="analogi" title="Laptop yang sama, Wi-Fi yang berbeda">
+
+Kamu membawa laptop yang sama ke kampus, ke kos, dan ke rumah. Laptopnya tidak berubah. Yang berbeda hanya nama Wi-Fi dan password yang kamu masukkan di tiap tempat.
+
+- laptop = kode `belajar-api`
+- nama Wi-Fi dan password = **environment variable** (`PORT`, `DATABASE_URL`, dan lainnya)
+- catatan pribadimu "di kos pakai Wi-Fi ini" = file `.env`
+
+Password Wi-Fi juga tidak kamu tempel di pintu kos. Begitu pula nilai rahasia di `.env`: tidak ditulis di kode dan tidak dibagikan.
+
+</Callout>
+
+[Environment variable](/glosarium#env-variable) adalah pengaturan yang diberikan dari luar kode. Contohnya nomor port, alamat database, dan mode (development atau production). Dengan `.env` yang berbeda, kode yang sama bisa berjalan di laptopmu dan di server kampus.
+
+Ada satu jebakan. Isi `process.env` selalu berupa teks (string) atau `undefined`. Jadi salah ketik seperti `PORT=abc` tidak langsung ketahuan. Server tetap menyala, lalu error di tempat yang membingungkan.
+
+Solusinya: periksa semua variabel sekali saja saat server baru menyala, memakai Zod yang sudah kamu kenal. Kalau ada yang salah, server langsung berhenti dengan pesan yang jelas. Prinsip ini disebut **fail fast** (gagal secepatnya), seperti driver ojek yang mengecek bensin di garasi, bukan setelah mogok di jalan.
+
+Instal dulu dua paket yang akan dipakai sebentar lagi (penjelasannya ada di bagian CORS):
+
+```bash
+npm install cors helmet
+```
+
+Lalu buat `src/config/env.js`:
+
+```js title="src/config/env.js"
+import "dotenv/config";
+import { z } from "zod";
+
+// Pesan bawaan Zod berbahasa Indonesia untuk seluruh aplikasi
+z.config(z.locales.id());
+
+const envSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  DATABASE_URL: z.string({ error: "wajib diisi, contoh: file:./dev.db" }).min(1, "wajib diisi, contoh: file:./dev.db"),
+  // "*" = semua origin boleh; selain itu daftar origin dipisah koma
+  CORS_ORIGIN: z
+    .string()
+    .default("*")
+    .transform((value) => (value === "*" ? "*" : value.split(",").map((origin) => origin.trim()))),
+});
+
+const parsed = envSchema.safeParse(process.env);
+
+if (!parsed.success) {
+  const masalah = parsed.error.issues
+    .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
+    .join("\n");
+  console.error(`Konfigurasi environment tidak valid:\n${masalah}\nPeriksa file .env (contoh ada di .env.example).`);
+  process.exit(1);
+}
+
+export const env = parsed.data;
+export const isProduction = env.NODE_ENV === "production";
+export const isTest = env.NODE_ENV === "test";
+```
+
+Cara kerja file ini:
+
+- `import "dotenv/config"` membaca file `.env` dan memasukkan isinya ke `process.env`.
+- `envSchema` berisi aturan untuk setiap variabel. `z.coerce.number()` mengubah teks `"3000"` menjadi angka `3000`. `.default(...)` dipakai kalau variabel tidak diisi sama sekali.
+- `CORS_ORIGIN` diubah menjadi `"*"` atau array alamat. Contoh: `"a.com,b.com"` menjadi `["a.com", "b.com"]`.
+- `safeParse` memeriksa `process.env`. Kalau gagal, semua masalah dicetak, lalu `process.exit(1)` menghentikan program.
+- Kalau lolos, hasil yang sudah rapi di-export sebagai `env`.
+
+Mulai sekarang, hanya file ini yang boleh membaca `process.env`. File lain meng-import `env` yang tipenya sudah benar. Baris `z.config(z.locales.id())` juga pindah ke sini dari `src/schemas.js`, karena `env.js` adalah file proyek yang paling awal dimuat.
+
+Buat juga `.env.example`. Anggap saja ini formulir contoh: kolomnya lengkap, isinya nilai contoh. File ini masuk git, sedangkan `.env` tidak:
+
+```dotenv title=".env.example"
+NODE_ENV=development
+PORT=3000
+DATABASE_URL="file:./dev.db"
+# Untuk production isi daftar origin dipisah koma, contoh: https://kuliah.kampus.ac.id
+CORS_ORIGIN="*"
+```
+
+Salin isinya ke `.env` milikmu. Kalau sebuah variabel di-set langsung di terminal, nilai dari terminal itulah yang dipakai, karena `dotenv` tidak menimpa variabel yang sudah ada.
+
+Setelah refactor selesai nanti, coba jalankan server dengan port yang salah. Di PowerShell, baris kedua menghapus `PORT` lagi supaya terminalmu kembali normal:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+$env:PORT = "abc"; npm start
+Remove-Item Env:PORT
+```
+
+</Tab>
+<Tab>
+
+```bash
+PORT=abc npm start
+```
+
+</Tab>
+</Tabs>
+
+Server menolak menyala dan menyebut variabel mana yang salah:
+
+```txt
+Konfigurasi environment tidak valid:
+  - PORT: Input tidak valid: diharapkan number, diterima NaN
+Periksa file .env (contoh ada di .env.example).
+```
+
+<Callout type="warning" title="Rahasia tidak pernah masuk kode">
+
+Nanti `.env` akan berisi [secret](/glosarium#secret) (nilai rahasia), misalnya kunci JWT di API pendamping. Jangan menulis nilainya langsung di kode, dan jangan meng-commit `.env`. Pastikan `.env` tercantum di `.gitignore` (sudah ditambahkan oleh `prisma init`). Yang kamu bagikan hanya `.env.example` berisi nilai contoh.
+
+</Callout>
+
+## Refactor langkah demi langkah
+
+Hentikan server dengan <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd>. Kerjakan langkah di bawah secara berurutan. Di tengah proses, server belum bisa dijalankan. Setelah langkah terakhir, server menyala lagi.
+
+<Steps>
+<Step title="Pindahkan logger dan 404 ke folder middleware">
+
+Kode kedua fungsi ini sama dengan yang sudah ada di `server.js`. Bedanya, sekarang masing-masing punya nama dan di-export supaya bisa di-import file lain.
+
+```js title="src/middleware/logger.js"
+export function logger(req, res, next) {
+  const mulai = Date.now();
+  res.on("finish", () => {
+    const durasi = Date.now() - mulai;
+    console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${durasi} ms)`);
+  });
+  next();
+}
+```
+
+```js title="src/middleware/not-found.js"
+export function notFound(req, res) {
+  res.status(404).json({
+    error: { message: "Route tidak ditemukan", code: "ROUTE_NOT_FOUND" },
+  });
+}
+```
+
+`logger` mencatat setiap request setelah responsnya selesai dikirim (event `finish`). `notFound` membalas 404 untuk URL yang tidak cocok dengan route mana pun.
+
+</Step>
+<Step title="Pakai env di prisma.js dan error-handler.js">
+
+```diff title="src/lib/prisma.js"
+-import "dotenv/config";
+ import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
++import { env } from "../config/env.js";
+ import { PrismaClient } from "../generated/prisma/client.ts";
+
+-const adapter = new PrismaBetterSqlite3({ url: process.env.DATABASE_URL });
++const adapter = new PrismaBetterSqlite3({ url: env.DATABASE_URL });
+```
+
+```diff title="src/middleware/error-handler.js"
+ import { z } from "zod";
+ import { Prisma } from "../generated/prisma/client.ts";
++import { isProduction } from "../config/env.js";
+ import { HttpError } from "../lib/http-error.js";
+-
+-const isProduction = process.env.NODE_ENV === "production";
+```
+
+Baris bertanda `-` dihapus, baris bertanda `+` ditambahkan. Kedua file berhenti membaca `process.env` sendiri dan memakai `env` dari `config/env.js`.
+
+`validate.js` dan `http-error.js` tidak berubah. `prisma/seed.js` juga tetap jalan, karena ia meng-import `src/lib/prisma.js` yang kini memuat `.env` lewat `env.js`.
+
+</Step>
+<Step title="Modul tasks: schemas">
+
+Schema (aturan bentuk data) tugas dipindah dari `src/schemas.js` tanpa diubah, termasuk `TASK_SORTS` dan `listTasksQuerySchema` dari pelajaran pagination. Satu-satunya perubahan: `idParamsSchema` diganti nama menjadi `taskIdParamsSchema`. Setiap modul punya schema `:id` sendiri supaya tidak bergantung pada modul lain.
+
+```js title="src/modules/tasks/tasks.schemas.js"
+import { z } from "zod";
+
+const title = z
+  .string({
+    error: (issue) => (issue.input === undefined ? "Judul wajib diisi" : "Judul harus berupa teks"),
+  })
+  .trim()
+  .min(3, "Judul minimal 3 karakter")
+  .max(100, "Judul maksimal 100 karakter");
+
+const priority = z.enum(["rendah", "sedang", "tinggi"], {
+  error: "Prioritas harus rendah, sedang, atau tinggi",
+});
+
+const done = z.boolean({ error: "done harus true atau false" });
+
+const courseId = z
+  .number({ error: "courseId harus berupa angka" })
+  .int("courseId harus bilangan bulat")
+  .positive("courseId harus lebih dari 0")
+  .nullable();
+
+export const taskIdParamsSchema = z.object({
+  id: z.coerce
+    .number({ error: "id harus berupa angka" })
+    .int("id harus bilangan bulat")
+    .positive("id harus lebih dari 0"),
+});
+
+export const TASK_SORTS = ["createdAt", "-createdAt", "title", "priority"];
+
+export const listTasksQuerySchema = z.object({
+  page: z.coerce
+    .number({ error: "page harus berupa angka" })
+    .int("page harus bilangan bulat")
+    .min(1, "page minimal 1")
+    .default(1),
+  limit: z.coerce
+    .number({ error: "limit harus berupa angka" })
+    .int("limit harus bilangan bulat")
+    .min(1, "limit minimal 1")
+    .max(50, "limit maksimal 50")
+    .default(10),
+  done: z
+    .stringbool({ truthy: ["true"], falsy: ["false"], error: "done harus true atau false" })
+    .optional(),
+  priority: priority.optional(),
+  courseId: z.coerce
+    .number({ error: "courseId harus berupa angka" })
+    .int("courseId harus bilangan bulat")
+    .positive("courseId harus lebih dari 0")
+    .optional(),
+  q: z.string({ error: "q harus berupa teks" }).trim().max(100, "q maksimal 100 karakter").optional(),
+  sort: z
+    .enum(TASK_SORTS, { error: `sort harus salah satu dari: ${TASK_SORTS.join(", ")}` })
+    .default("-createdAt"),
+});
+
+export const createTaskSchema = z.object({
+  title,
+  priority: priority.optional(),
+  done: done.optional(),
+  courseId: courseId.optional(),
+});
+
+export const replaceTaskSchema = z.object({
+  title,
+  done,
+  priority: priority.default("sedang"),
+  courseId: courseId.default(null),
+});
+
+export const updateTaskSchema = createTaskSchema.partial();
+```
+
+Ada tiga schema untuk body: `createTaskSchema` untuk POST, `replaceTaskSchema` untuk PUT (data wajib lengkap), dan `updateTaskSchema` untuk PATCH (boleh sebagian).
+
+</Step>
+<Step title="Modul tasks: service">
+
+Semua kode Prisma pindah ke file ini, termasuk peta `TASK_ORDER_BY` dari pelajaran pagination. Coba cari `req` atau `res` di file ini. Tidak ada satu pun.
+
+```js title="src/modules/tasks/tasks.service.js"
+import { HttpError } from "../../lib/http-error.js";
+import { prisma } from "../../lib/prisma.js";
+
+const TASK_ORDER_BY = {
+  createdAt: [{ createdAt: "asc" }, { id: "asc" }],
+  "-createdAt": [{ createdAt: "desc" }, { id: "desc" }],
+  title: [{ title: "asc" }, { id: "asc" }],
+  priority: [{ priority: "asc" }, { id: "asc" }],
+};
+
+export async function listTasks({ page, limit, done, priority, courseId, q, sort }) {
+  const where = {
+    done,
+    priority,
+    courseId,
+    title: q ? { contains: q } : undefined,
+  };
+
+  const [tasks, total] = await prisma.$transaction([
+    prisma.task.findMany({
+      where,
+      orderBy: TASK_ORDER_BY[sort],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.task.count({ where }),
+  ]);
+
+  return {
+    data: tasks,
+    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+}
+
+export async function getTask(id) {
+  const task = await prisma.task.findUnique({ where: { id }, include: { course: true } });
+  if (!task) throw HttpError.notFound("Tugas tidak ditemukan");
+  return task;
+}
+
+export function createTask(input) {
+  return prisma.task.create({ data: input });
+}
+
+// Dipakai PUT dan PATCH: bedanya hanya di schema validasi
+export function updateTask(id, input) {
+  return prisma.task.update({ where: { id }, data: input });
+}
+
+export async function deleteTask(id) {
+  await prisma.task.delete({ where: { id } });
+}
+```
+
+Isi file ini dalam bahasa sehari-hari:
+
+- `listTasks` menerima objek filter biasa. Lewat `$transaction`, ia menjalankan dua query dalam satu paket: mengambil satu halaman tugas dan menghitung totalnya.
+- `getTask` melempar `HttpError.notFound` kalau tugasnya tidak ada.
+- `createTask`, `updateTask`, dan `deleteTask` masing-masing cukup satu panggilan Prisma.
+
+Service tidak peduli request datang lewat PUT atau PATCH. Aturan "wajib lengkap" atau "boleh sebagian" adalah urusan HTTP, jadi sudah ditangani schema di lapisan validasi.
+
+</Step>
+<Step title="Modul tasks: routes">
+
+`express.Router()` membuat "mini-app" yang punya daftar route sendiri. Bayangkan gedung kampus. Di lobi ada papan "Tugas: lantai 2". Di lantai 2 cukup ditulis "Ruang 1, Ruang 2", karena semua orang tahu ini lantai tugas. Path di dalam router juga begitu: dihitung dari tempat router dipasang, jadi cukup `/` dan `/:id`.
+
+```js title="src/modules/tasks/tasks.routes.js"
+import express from "express";
+import { validate } from "../../middleware/validate.js";
+import {
+  createTaskSchema,
+  listTasksQuerySchema,
+  replaceTaskSchema,
+  taskIdParamsSchema,
+  updateTaskSchema,
+} from "./tasks.schemas.js";
+import * as tasksService from "./tasks.service.js";
+
+export const tasksRouter = express.Router();
+
+tasksRouter.get("/", validate({ query: listTasksQuerySchema }), async (req, res) => {
+  res.json(await tasksService.listTasks(req.query));
+});
+
+tasksRouter.get("/:id", validate({ params: taskIdParamsSchema }), async (req, res) => {
+  const task = await tasksService.getTask(req.params.id);
+  res.json({ data: task });
+});
+
+tasksRouter.post("/", validate({ body: createTaskSchema }), async (req, res) => {
+  const task = await tasksService.createTask(req.body);
+  res.status(201).json({ data: task });
+});
+
+tasksRouter.put(
+  "/:id",
+  validate({ params: taskIdParamsSchema, body: replaceTaskSchema }),
+  async (req, res) => {
+    const task = await tasksService.updateTask(req.params.id, req.body);
+    res.json({ data: task });
+  },
+);
+
+tasksRouter.patch(
+  "/:id",
+  validate({ params: taskIdParamsSchema, body: updateTaskSchema }),
+  async (req, res) => {
+    const task = await tasksService.updateTask(req.params.id, req.body);
+    res.json({ data: task });
+  },
+);
+
+tasksRouter.delete("/:id", validate({ params: taskIdParamsSchema }), async (req, res) => {
+  await tasksService.deleteTask(req.params.id);
+  res.status(204).end();
+});
+```
+
+`import * as tasksService` mengumpulkan semua export service dalam satu objek, sehingga di handler terbaca jelas: `tasksService.getTask(...)`. Semua route mengikuti pola yang sama: `validate(...)` memeriksa input dulu, lalu handler memanggil satu fungsi service dan mengirim hasilnya.
+
+</Step>
+<Step title="Modul courses">
+
+Polanya sama dengan modul tasks: tiga file untuk tiga lapisan.
+
+```js title="src/modules/courses/courses.schemas.js"
+import { z } from "zod";
+
+export const courseIdParamsSchema = z.object({
+  id: z.coerce
+    .number({ error: "id harus berupa angka" })
+    .int("id harus bilangan bulat")
+    .positive("id harus lebih dari 0"),
+});
+
+export const createCourseSchema = z.object({
+  name: z
+    .string({ error: "Nama mata kuliah wajib diisi" })
+    .trim()
+    .min(3, "Nama mata kuliah minimal 3 karakter")
+    .max(100, "Nama mata kuliah maksimal 100 karakter"),
+  lecturer: z
+    .string({ error: "Nama dosen wajib diisi" })
+    .trim()
+    .min(3, "Nama dosen minimal 3 karakter")
+    .max(100, "Nama dosen maksimal 100 karakter"),
+  sks: z
+    .number({ error: "sks harus berupa angka" })
+    .int("sks harus bilangan bulat")
+    .min(1, "sks minimal 1")
+    .max(6, "sks maksimal 6")
+    .nullable()
+    .optional(),
+});
+```
+
+```js title="src/modules/courses/courses.service.js"
+import { HttpError } from "../../lib/http-error.js";
+import { prisma } from "../../lib/prisma.js";
+
+export async function listCourses() {
+  const courses = await prisma.course.findMany({
+    orderBy: { name: "asc" },
+    include: { _count: { select: { tasks: true } } },
+  });
+  return { data: courses, meta: { total: courses.length } };
+}
+
+export async function getCourse(id) {
+  const course = await prisma.course.findUnique({
+    where: { id },
+    include: { tasks: { orderBy: { id: "asc" } } },
+  });
+  if (!course) throw HttpError.notFound("Mata kuliah tidak ditemukan");
+  return course;
+}
+
+export function createCourse(input) {
+  return prisma.course.create({ data: input });
+}
+```
+
+```js title="src/modules/courses/courses.routes.js"
+import express from "express";
+import { validate } from "../../middleware/validate.js";
+import { courseIdParamsSchema, createCourseSchema } from "./courses.schemas.js";
+import * as coursesService from "./courses.service.js";
+
+export const coursesRouter = express.Router();
+
+coursesRouter.get("/", async (req, res) => {
+  res.json(await coursesService.listCourses());
+});
+
+coursesRouter.get("/:id", validate({ params: courseIdParamsSchema }), async (req, res) => {
+  const course = await coursesService.getCourse(req.params.id);
+  res.json({ data: course });
+});
+
+coursesRouter.post("/", validate({ body: createCourseSchema }), async (req, res) => {
+  const course = await coursesService.createCourse(req.body);
+  res.status(201).json({ data: course });
+});
+```
+
+Kalau kamu mengerjakan latihan PATCH atau DELETE mata kuliah di pelajaran sebelumnya, endpoint itu juga pindah ke sini (lihat latihan di akhir pelajaran). Setelah semua schema pindah, hapus `src/schemas.js`.
+
+</Step>
+<Step title="Rakit semuanya di createApp()">
+
+File `app.js` adalah tempat semua bagian dipasang menjadi satu aplikasi.
+
+```js title="src/app.js" showLineNumbers
+import cors from "cors";
+import express from "express";
+import helmet from "helmet";
+import { env, isTest } from "./config/env.js";
+import { errorHandler } from "./middleware/error-handler.js";
+import { logger } from "./middleware/logger.js";
+import { notFound } from "./middleware/not-found.js";
+import { coursesRouter } from "./modules/courses/courses.routes.js";
+import { tasksRouter } from "./modules/tasks/tasks.routes.js";
+
+// Membuat app tanpa listen(), supaya bisa dipakai server.js maupun test
+export function createApp() {
+  const app = express();
+
+  if (!isTest) app.use(logger);
+  app.use(helmet());
+  app.use(cors({ origin: env.CORS_ORIGIN }));
+  app.use(express.json());
+
+  app.get("/api/health", (req, res) => {
+    res.json({ data: { status: "ok" } });
+  });
+  app.use("/api/tasks", tasksRouter);
+  app.use("/api/courses", coursesRouter);
+
+  // Urutan penting: 404 setelah semua route, error handler paling akhir
+  app.use(notFound);
+  app.use(errorHandler);
+
+  return app;
+}
+```
+
+Baca dari atas ke bawah. Urutannya sama dengan urutan request diproses:
+
+- Baris 15–18: middleware global. Logger (dilewati saat test), helmet, cors, lalu `express.json()` yang membaca body JSON.
+- Baris 20–24: health check dan dua router.
+- Baris 27–28: `notFound` untuk URL yang tidak cocok dengan route mana pun, lalu error handler paling akhir.
+
+`app.use("/api/tasks", tasksRouter)` memasang router di prefix `/api/tasks`. Request `GET /api/tasks/7` masuk ke router sebagai `GET /7` dan cocok dengan `tasksRouter.get("/:id", ...)`.
+
+App sengaja dibungkus fungsi `createApp()`, tidak langsung di-export sebagai `const app = express()`. Setiap pemanggilan `createApp()` menghasilkan app baru, dan tidak ada port yang dinyalakan sampai seseorang memanggil `listen`. Dengan begitu, test bisa membuat app sendiri tanpa menyalakan server.
+
+</Step>
+<Step title="Kecilkan server.js">
+
+Sekarang `server.js` hanya punya dua tugas: menyalakan server, lalu mematikannya dengan rapi saat diminta. Cara mematikan yang rapi ini disebut **graceful shutdown**.
+
+<Callout type="analogi" title="Seperti warung yang mau tutup">
+
+Warung yang tutup dengan rapi tidak langsung mematikan kompor. Pemilik membalik papan menjadi "Tutup" supaya tidak ada pembeli baru. Pembeli yang sudah memesan tetap dilayani sampai selesai. Setelah itu baru gas dimatikan.
+
+- membalik papan "Tutup" = `server.close()` (berhenti menerima koneksi baru)
+- melayani pembeli yang tersisa = menunggu request yang sedang berjalan
+- mematikan gas = `prisma.$disconnect()` (menutup koneksi database)
+
+</Callout>
+
+Seluruh isi `src/server.js` diganti menjadi file pendek ini:
+
+```js title="src/server.js"
+import { createApp } from "./app.js";
+import { env } from "./config/env.js";
+import { prisma } from "./lib/prisma.js";
+
+const app = createApp();
+
+const server = app.listen(env.PORT, (error) => {
+  if (error) throw error;
+  console.log(`Server jalan di http://localhost:${env.PORT} (${env.NODE_ENV})`);
+});
+
+// Graceful shutdown: selesaikan request yang berjalan, tutup database, baru keluar
+function shutdown(signal) {
+  console.log(`${signal} diterima, menutup server...`);
+  server.close(async () => {
+    await prisma.$disconnect();
+    console.log("Server berhenti dengan rapi");
+    process.exit(0);
+  });
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+```
+
+`SIGINT` dan `SIGTERM` adalah sinyal dari sistem operasi yang artinya "tolong berhenti". `SIGINT` dikirim saat kamu menekan <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd>. `SIGTERM` dikirim platform hosting saat server dihentikan atau di-deploy ulang. Keduanya menjalankan `shutdown`. Tanpa graceful shutdown, request yang sedang menyimpan tugas bisa terputus di tengah jalan.
+
+</Step>
+</Steps>
+
+Jalankan `npm start`, panggil `GET /api/tasks?limit=2` sekali, lalu tekan <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd>:
+
+```txt
+Server jalan di http://localhost:3000 (development)
+GET /api/tasks?limit=2 -> 200 (125 ms)
+SIGINT diterima, menutup server...
+Server berhenti dengan rapi
+```
+
+Di Command Prompt, jawab `Terminate batch job (Y/N)?` dengan `Y`. Kalau memakai `npm run dev` di Windows, watcher Node bisa mematikan proses sebelum baris terakhir sempat tercetak. Itu normal.
+
+Terakhir, jalankan lagi semua request di `requests.http` milikmu. Hasilnya harus sama persis dengan sebelum refactor. Kalau sama, refactor-mu berhasil.
+
+## CORS dan helmet
+
+<Callout type="analogi" title="Seperti satpam asrama">
+
+Kamu tinggal di asrama dan menitip surat lewat satpam ke sebuah kantor. Balasannya datang ke pos satpam. Satpam hanya menyerahkan balasan itu kalau amplopnya diberi cap "boleh diberikan ke penghuni asrama ini". Tanpa cap, balasan ditahan. Untuk urusan tertentu, satpam bahkan menelepon kantor dulu untuk bertanya boleh atau tidak.
+
+- kamu = JavaScript di halaman web (misalnya Expo Web di `localhost:8081`)
+- satpam = browser
+- kantor = API di `localhost:3000`
+- cap di amplop = header `Access-Control-Allow-Origin`
+- telepon dulu = request *preflight*
+
+Aplikasi di HP dan `curl` tidak tinggal di asrama itu, jadi tidak melewati satpam sama sekali.
+
+</Callout>
+
+Browser punya aturan keamanan bernama **same-origin policy**. Origin adalah gabungan protokol, alamat, dan port, misalnya `http://localhost:8081`. Menurut aturan ini, JavaScript di halaman `http://localhost:8081` (Expo Web) tidak boleh membaca respons dari `http://localhost:3000`, kecuali server mengizinkannya.
+
+Izin itu dikirim lewat header `Access-Control-Allow-Origin`. Mekanismenya disebut [CORS](/glosarium#cors) (Cross-Origin Resource Sharing). Paket `cors` menambahkan header tersebut untukmu. Paket ini juga menjawab request *preflight*, yaitu request `OPTIONS` yang dikirim browser untuk minta izin dulu sebelum `PATCH` atau `DELETE`.
+
+Tanpa CORS, Console browser menampilkan:
+
+```txt
+Access to fetch at 'http://localhost:3000/api/tasks' from origin 'http://localhost:8081' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+```
+
+[Helmet](/glosarium#helmet) mirip memasang kunci tambahan dan tirai di kamar kos. Isi kamarnya tidak berubah, hanya celahnya yang ditutup. Helmet menambahkan belasan header keamanan sekaligus. Contohnya `X-Content-Type-Options: nosniff`, supaya browser tidak menebak-nebak tipe file. Helmet juga menghapus header `X-Powered-By: Express` yang memberi tahu orang luar teknologi servermu.
+
+Cek hasilnya dengan `curl`. Opsi `-i` menampilkan header respons, dan `-H` menambahkan header `Origin` seolah request datang dari Expo Web:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+curl.exe -i -H "Origin: http://localhost:8081" http://localhost:3000/api/health
+```
+
+</Tab>
+<Tab>
+
+```bash
+curl -i -H "Origin: http://localhost:8081" http://localhost:3000/api/health
+```
+
+</Tab>
+</Tabs>
+
+Respons asli (sebagian header dipotong):
+
+```http
+HTTP/1.1 200 OK
+Content-Security-Policy: default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+Origin-Agent-Cluster: ?1
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-DNS-Prefetch-Control: off
+X-Download-Options: noopen
+X-Frame-Options: SAMEORIGIN
+X-Permitted-Cross-Domain-Policies: none
+X-XSS-Protection: 0
+Access-Control-Allow-Origin: *
+Content-Type: application/json; charset=utf-8
+Content-Length: 24
+
+{"data":{"status":"ok"}}
+```
+
+Baris `Access-Control-Allow-Origin: *` berasal dari `cors`. Hampir semua baris di atasnya berasal dari helmet.
+
+<Callout type="info" title="Aplikasi HP tidak terkena CORS">
+
+CORS adalah aturan browser. Aplikasi Expo yang berjalan di HP atau emulator memanggil API tanpa pemeriksaan CORS, begitu juga `curl`. Jadi CORS tidak melindungi API-mu dari siapa pun. CORS hanya memberi izin kepada halaman web dari origin lain. Untuk development, `CORS_ORIGIN="*"` aman dan praktis. Di production, isi dengan alamat web aplikasimu saja.
+
+</Callout>
+
+## Logging request
+
+<Callout type="analogi" title="Seperti buku tamu satpam">
+
+Satpam kampus mencatat setiap tamu di buku tamu: jam datang, tujuan, dan jam pulang. Isi tas tamu tidak ikut ditulis. Kalau ada laporan barang hilang, buku itulah yang pertama kali dibuka.
+
+Logger-mu melakukan hal yang sama untuk setiap request: method, URL, status, dan durasi. Isi body, seperti isi tas tamu, tidak dicatat.
+
+</Callout>
+
+[Logging](/glosarium#logging) adalah mencatat apa yang terjadi di server. Saat pengguna melapor "tadi gagal simpan", log menunjukkan request apa yang datang, status apa yang dikirim, dan berapa lama prosesnya.
+
+Tiga aturan yang berlaku di proyek mana pun:
+
+- **Jangan log isi body atau header `Authorization`.** Di Track 3, body bisa berisi password dan header bisa berisi token.
+- **Log error lengkap hanya di server.** Error handler sudah melakukannya dengan `console.error(err)`, sementara client hanya mendapat pesan umum.
+- **Matikan log yang tidak perlu.** Di `createApp()`, logger dilewati saat `NODE_ENV=test`, supaya output test tidak penuh baris request.
+
+Proyek besar biasanya memakai library seperti `morgan` atau `pino` (log berformat JSON). API pendamping memakai `morgan("dev")`, yang hasilnya mirip logger buatanmu.
+
+## Integration test pertama
+
+Karena `createApp()` tidak memanggil `listen`, kamu bisa mengujinya langsung. [Integration test](/glosarium#integration-test) adalah test yang menguji beberapa lapisan sekaligus: route, validasi, service, dan database. Mirip juru masak yang mencicipi hidangan utuh di dapur sebelum warung dibuka, bukan mencicipi nasi dan sambal satu per satu. Kamu butuh dua alat:
+
+- **Supertest** menyalakan app di port acak sementara, mengirim request HTTP, lalu mematikannya lagi.
+- **`node:test`** adalah test runner (alat yang menjalankan test dan melaporkan hasilnya) bawaan Node. Jadi tidak perlu memasang Jest atau Vitest.
+
+```bash
+npm install --save-dev supertest
+```
+
+Buat file `.env.test` berisi satu baris `NODE_ENV=test`, lalu tulis test-nya:
+
+```js title="tests/app.test.js"
+import assert from "node:assert/strict";
+import { after, test } from "node:test";
+import request from "supertest";
+import { createApp } from "../src/app.js";
+import { prisma } from "../src/lib/prisma.js";
+
+const app = createApp();
+
+after(() => prisma.$disconnect());
+
+test("GET /api/health membalas status ok", async () => {
+  const res = await request(app).get("/api/health");
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { data: { status: "ok" } });
+});
+
+test("route asing dibalas 404 ROUTE_NOT_FOUND", async () => {
+  const res = await request(app).get("/api/tidak-ada");
+  assert.equal(res.status, 404);
+  assert.equal(res.body.error.code, "ROUTE_NOT_FOUND");
+});
+
+test("POST /api/tasks dengan judul terlalu pendek dibalas 400", async () => {
+  const res = await request(app).post("/api/tasks").send({ title: "ab" });
+  assert.equal(res.status, 400);
+  assert.equal(res.body.error.code, "VALIDATION_ERROR");
+  assert.deepEqual(res.body.error.details, [{ field: "title", message: "Judul minimal 3 karakter" }]);
+});
+
+test("GET /api/tasks memakai format { data, meta }", async () => {
+  const res = await request(app).get("/api/tasks?limit=2");
+  assert.equal(res.status, 200);
+  assert.ok(Array.isArray(res.body.data));
+  assert.ok(res.body.data.length <= 2);
+  assert.equal(res.body.meta.limit, 2);
+});
+```
+
+Cara membaca test di atas:
+
+- `test("nama", fungsi)` mendefinisikan satu test. Namanya ditulis seperti kalimat, supaya laporan hasilnya mudah dibaca.
+- `request(app).get(...)` mengirim request ke app. `.send(objek)` otomatis mengirim JSON beserta header `Content-Type`-nya.
+- `assert.equal(a, b)` membuat test gagal kalau `a` tidak sama dengan `b`. `assert.deepEqual` membandingkan isi objek sampai ke dalam.
+- Hook `after` menutup koneksi Prisma setelah semua test selesai.
+
+Tiga test pertama tidak menyentuh database. Test keempat membaca `dev.db`, jadi jalankan `npx prisma db seed` lebih dulu. Di [Testing Backend](/belajar/expert/testing-backend) kamu akan belajar memakai database khusus test, supaya test boleh menulis data tanpa merusak data development.
+
+## Script package.json
+
+Script npm mirip tombol pintasan di HP: satu nama pendek untuk perintah yang panjang. Rapikan `scripts` supaya perintah sehari-hari mudah diingat:
+
+```json title="package.json"
+{
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --env-file=.env.test --test tests/*.test.js",
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio --url file://./dev.db"
+  }
+}
+```
+
+`--env-file=.env.test` adalah fitur bawaan Node. Ia mengisi `NODE_ENV=test` sebelum kodemu berjalan. Setelah itu `dotenv` mengisi `DATABASE_URL` dari `.env`, tanpa menimpa `NODE_ENV` yang sudah ada. Pola `tests/*.test.js` diurai oleh Node sendiri, jadi perintah ini berjalan sama di PowerShell dan bash.
+
+```bash
+npm test
+```
+
+```txt
+✔ GET /api/health membalas status ok (28.1848ms)
+✔ route asing dibalas 404 ROUTE_NOT_FOUND (5.7961ms)
+✔ POST /api/tasks dengan judul terlalu pendek dibalas 400 (24.1619ms)
+✔ GET /api/tasks memakai format { data, meta } (117.6226ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 919.0555
+```
+
+## Jembatan ke Track 3: API pendamping
+
+Mulai Track 3, aplikasi Expo-mu memakai API pendamping di folder `api/`. Strukturnya sama dengan yang baru kamu bangun. Bedanya, ia ditulis dalam TypeScript dan punya fitur tambahan. TypeScript adalah JavaScript yang ditambah label tipe data, misalnya "ini angka" atau "ini teks", supaya salah ketik tertangkap sebelum kode dijalankan.
+
+Tabel berikut memasangkan file milikmu dengan padanannya di `api/`:
+
+| `belajar-api` (kamu) | `api/` (pendamping) | Tambahan di pendamping |
+| --- | --- | --- |
+| `src/app.js` | `src/app.ts` | `morgan`, folder `/uploads` statis, router `/api/auth` |
+| `src/server.js` | `src/server.ts` | Menampilkan alamat IP LAN untuk HP |
+| `src/config/env.js` | `src/config/env.ts` | `JWT_ACCESS_SECRET`, `UPLOAD_DIR` |
+| `src/lib/prisma.js`, `http-error.js` | `src/lib/prisma.ts`, `http-error.ts` | `pagination.ts`, `tokens.ts`, `password.ts` |
+| `src/middleware/*.js` | `src/middleware/*.ts` | `auth.ts`, `rate-limit.ts`, `upload.ts` |
+| `src/modules/tasks/*`, `courses/*` | `src/modules/tasks/*`, `courses/*`, `auth/*` | Setiap query difilter `userId` |
+| `tests/app.test.js` (`node:test`) | `tests/*.test.ts` (Vitest) | Database test terpisah |
+
+Bandingkan graceful shutdown di `api/src/server.ts` dengan milikmu. Polanya sama persis:
+
+```ts title="api/src/server.ts (potongan)"
+// Tutup server & koneksi database dengan rapi saat proses dihentikan (Ctrl+C).
+function shutdown() {
+  server.close(async () => {
+    await prisma.$disconnect();
+    process.exit(0);
+  });
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+```
+
+Saat membuka `api/src/modules/courses/courses.routes.ts`, kamu akan mengenali handler pendek yang memanggil `coursesService.listCourses(...)`. Bentuknya sama dengan yang kamu tulis hari ini.
+
+## Kesalahan umum
+
+Kalau ada yang macet setelah refactor, cocokkan pesan error-nya dengan tabel ini.
+
+| Pesan / gejala | Penyebab | Cara memperbaiki |
+| --- | --- | --- |
+| `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '...\src\modules\tasks\tasks.service' imported from ...\tasks.routes.js` | Lupa ekstensi `.js` di import ESM | Tulis lengkap: `./tasks.service.js` |
+| `Cannot find module '...\src\modules\lib\prisma.js'` | Path relatif kurang satu tingkat | Dari `src/modules/tasks/` ke `src/lib/` butuh `../../lib/prisma.js` |
+| `GET /api/tasks` dibalas `ROUTE_NOT_FOUND` | Router menulis path lengkap, misalnya `tasksRouter.get("/api/tasks", ...)`, sehingga URL-nya menjadi `/api/tasks/api/tasks` | Di dalam router pakai path relatif: `"/"` dan `"/:id"` |
+| `Konfigurasi environment tidak valid: - DATABASE_URL: wajib diisi` | `.env` belum dibuat atau salah nama variabel | Salin `.env.example` menjadi `.env` |
+| `Error: listen EADDRINUSE: address already in use :::3000` | Server lama masih jalan di terminal lain | Hentikan dengan <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd>, atau set `PORT` lain |
+| `node.exe: .env.test: not found` (macOS/Linux: `node: ...`) saat `npm test` | File `.env.test` belum dibuat | Buat file berisi `NODE_ENV=test` |
+
+## Latihan
+
+<Exercise title="Pindahkan PATCH mata kuliah ke modul" difficulty="sedang" hints={["Schema: `export const updateCourseSchema = createCourseSchema.partial();` di `courses.schemas.js`.", "Service menerima `(id, input)` dan memanggil `prisma.course.update`; route memanggil service itu."]}>
+
+Di latihan pelajaran validasi, kamu menulis `PATCH /api/courses/:id` langsung di `server.js`. Sekarang pindahkan endpoint itu ke modul `courses`, lapis demi lapis:
+
+1. Di `courses.schemas.js`, tambahkan `updateCourseSchema`. Semua field-nya opsional.
+2. Di `courses.service.js`, tambahkan fungsi `updateCourse(id, input)` yang memanggil Prisma.
+3. Di `courses.routes.js`, tambahkan route `PATCH /:id` yang memvalidasi input lalu memanggil service.
+4. Kirim body `{"lecturer":"Bu Rina Wati"}` ke mata kuliah yang ada, misalnya `PATCH /api/courses/1`. Hasilnya harus 200.
+5. Kirim body yang sama ke `id` 999. Hasilnya harus 404.
+
+<Solution>
+
+```js title="src/modules/courses/courses.schemas.js (tambahan)"
+export const updateCourseSchema = createCourseSchema.partial();
+```
+
+```js title="src/modules/courses/courses.service.js (tambahan)"
+export function updateCourse(id, input) {
+  return prisma.course.update({ where: { id }, data: input });
+}
+```
+
+```js title="src/modules/courses/courses.routes.js (tambahan)"
+coursesRouter.patch(
+  "/:id",
+  validate({ params: courseIdParamsSchema, body: updateCourseSchema }),
+  async (req, res) => {
+    const course = await coursesService.updateCourse(req.params.id, req.body);
+    res.json({ data: course });
+  },
+);
+```
+
+Tambahkan `updateCourseSchema` ke import di `courses.routes.js`. `.partial()` membuat semua field schema create menjadi opsional. Untuk `id` 999, Prisma melempar error P2025, artinya "data yang mau diubah tidak ditemukan". Error handler mengubahnya menjadi 404 `NOT_FOUND`. Service tetap tidak tahu apa-apa soal HTTP.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Test untuk id yang tidak valid" difficulty="mudah" hints={["Pakai `request(app).get(\"/api/tasks/abc\")`.", "Bandingkan `res.body.error.details[0].field` dengan `\"id\"`."]}>
+
+Pastikan `GET /api/tasks/abc` dibalas 400 `VALIDATION_ERROR` dengan detail pada field `id`:
+
+1. Buka `tests/app.test.js`.
+2. Tambahkan satu `test(...)` baru di bagian bawah file.
+3. Di dalamnya, kirim `GET /api/tasks/abc` lalu periksa status, kode error, dan nama field.
+4. Jalankan `npm test`. Pastikan ada 5 test yang lulus.
+
+<Solution>
+
+```js title="tests/app.test.js (tambahan)"
+test("GET /api/tasks/abc dibalas 400 untuk field id", async () => {
+  const res = await request(app).get("/api/tasks/abc");
+  assert.equal(res.status, 400);
+  assert.equal(res.body.error.code, "VALIDATION_ERROR");
+  assert.equal(res.body.error.details[0].field, "id");
+});
+```
+
+Test ini menguji empat lapisan sekaligus:
+
+- router mencocokkan `/:id`,
+- `validate()` menolak `abc`,
+- Express 5 meneruskan `ZodError` ke error handler,
+- error handler membentuk JSON-nya.
+
+Database tidak tersentuh karena validasi sudah gagal lebih dulu.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Di proyek berlapis kita, lapisan mana yang boleh membaca `req.params` dan memanggil `res.json()`?",
+    options: ["Service", "Handler (controller) di file routes", "`src/lib/prisma.js`", "Schema Zod"],
+    answer: 1,
+    explain: "Handler adalah penerjemah HTTP. Ia membaca `req`, memanggil service dengan argumen biasa, lalu menulis `res`. Service sengaja tidak menyentuh `req`/`res` supaya bisa dipakai ulang dan mudah diuji. Prisma dan schema tidak tahu apa-apa soal HTTP.",
+  },
+  {
+    q: "Router dipasang dengan `app.use(\"/api/tasks\", tasksRouter)`. Path apa yang harus ditulis agar `DELETE /api/tasks/7` cocok?",
+    options: ["`tasksRouter.delete(\"/api/tasks/:id\", ...)`", "`tasksRouter.delete(\"/tasks/:id\", ...)`", "`tasksRouter.delete(\"/:id\", ...)`", "`tasksRouter.delete(\"*\", ...)`"],
+    answer: 2,
+    explain: "Path di dalam router relatif terhadap prefix tempat router dipasang. Menulis `/api/tasks/:id` membuat URL efektifnya `/api/tasks/api/tasks/:id`. Wildcard `*` dimaksudkan menangkap semua path, dan di Express 5 bahkan harus diberi nama seperti `/*splat`.",
+  },
+  {
+    q: "Kenapa `src/app.js` meng-export fungsi `createApp()` dan tidak memanggil `listen()`?",
+    options: ["Supaya test bisa memakai app lewat Supertest tanpa menyalakan server di port 3000", "Karena Express 5 melarang `listen()` di file selain `server.js`", "Agar CORS aktif", "Supaya `.env` terbaca"],
+    answer: 0,
+    explain: "Karena pembuatan app dipisah dari `listen()`, test bisa memakai app tanpa bentrok dengan server yang sedang jalan. Express tidak melarang `listen()` di file mana pun. CORS dan `.env` juga tidak bergantung pada pemisahan ini.",
+  },
+  {
+    q: "Isi `.env` adalah `PORT=abc`. Apa yang terjadi saat `npm start` dengan `src/config/env.js` kita?",
+    options: ["Server jalan di port 3000 karena ada default", "Server jalan, lalu error saat request pertama", "Server menyala di port acak", "Server langsung berhenti dengan pesan konfigurasi tidak valid"],
+    answer: 3,
+    explain: "`z.coerce.number()` mengubah `\"abc\"` menjadi `NaN`, dan nilai itu ditolak. `env.js` lalu mencetak daftar masalah dan memanggil `process.exit(1)`. Default 3000 hanya dipakai kalau `PORT` tidak ada sama sekali. Prinsip ini disebut fail fast: server berhenti sejak awal kalau bekalnya salah.",
+  },
+  {
+    q: "Aplikasi Expo di HP Android berhasil memanggil API, tetapi versi web-nya di browser gagal dengan pesan `blocked by CORS policy`. Apa penyebabnya?",
+    options: ["Endpoint-nya salah", "Server tidak mengirim header `Access-Control-Allow-Origin` untuk origin halaman web", "Helmet memblokir semua request dari HP", "Database belum di-seed"],
+    answer: 1,
+    explain: "CORS hanya diperiksa browser, jadi aplikasi native tetap berhasil. Kalau endpoint salah atau database kosong, aplikasi di HP juga akan gagal. Helmet hanya menambah header keamanan dan tidak memblokir request.",
+  },
+]} />
+
+## Ringkasan
+
+- Refactor mengubah susunan kode tanpa mengubah perilakunya. Buktinya: semua request lama tetap memberi respons yang sama.
+- Urutan lapisan `belajar-api`: route → `validate()` → handler (controller) → service → Prisma. Service tidak menyentuh `req`/`res`, dan handler tidak menulis query.
+- Folder per fitur (`src/modules/tasks`, `src/modules/courses`) menyimpan routes, service, dan schema satu fitur di satu tempat. Kode bersama tinggal di `lib/` dan `middleware/`.
+- `src/config/env.js` memeriksa environment variable dengan Zod sekali saat server start (fail fast). `.env` tetap rahasia, `.env.example` masuk git.
+- `cors` memberi izin kepada halaman web dari origin lain. `helmet` menambah header keamanan. Logger mencatat method, URL, status, dan durasi tanpa data sensitif.
+- `createApp()` di `src/app.js` dipisah dari `listen()`, jadi app bisa diuji dengan `node:test` + Supertest. `server.js` hanya menyalakan server dan menutupnya dengan rapi saat `SIGINT`/`SIGTERM`.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Track 1 selesai! `belajar-api` kini punya struktur yang sama dengan backend Aplikasi Tugas & Catatan Kuliah. Di [Track 2](/belajar/react-native/dasar-react) kamu beralih ke sisi aplikasi dengan React dan Expo. Saat tiba di [Arsitektur Full-stack](/belajar/fullstack/arsitektur-fullstack), kamu akan menjalankan API pendamping `api/` dan menemukan `app.ts`, `config/env.ts`, serta `modules/tasks/` yang sudah kamu kenal hari ini.
+
+</Callout>

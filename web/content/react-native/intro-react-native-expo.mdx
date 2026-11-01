@@ -1,0 +1,573 @@
+## Pengantar
+
+Di pelajaran sebelumnya kamu sudah membuat komponen, state, dan list dengan React di browser. Semua itu berjalan di laptop, di dalam Chrome atau Edge. Sekarang bayangkan aplikasi tugas kuliah itu dipasang di HP Andi dan Sari. Ada tombol yang bisa ditekan, keyboard yang muncul saat mengetik, dan layar yang bisa digeser dengan jari.
+
+Untuk itu kita memakai **React Native**. Kamu tetap menulis komponen React dengan JavaScript. Bedanya, hasil akhirnya berupa aplikasi Android dan iOS, bukan halaman web.
+
+Di pelajaran ini kamu akan:
+
+- memahami cara React Native mengubah kode menjadi tampilan di HP,
+- membuat proyek pertama dengan Expo,
+- menjalankannya di HP sendiri.
+
+Proyek latihan `latihan-rn` yang kamu buat hari ini akan dipakai lagi di pelajaran berikutnya. Jadi simpan baik-baik.
+
+## Apa itu React Native?
+
+<Callout type="analogi" title="Satu resep untuk dua cabang warung">
+
+Bayangkan kamu punya resep nasi goreng dan dua cabang warung: satu di Bandung, satu di Medan. Kamu cukup menulis resep sekali. Koki di tiap cabang memasaknya dengan kompor dan wajan asli di dapur masing-masing. Pembeli menerima nasi goreng sungguhan, bukan foto nasi goreng yang ditempel di piring.
+
+- Resep = kode React yang kamu tulis.
+- Cabang Bandung dan Medan = Android dan iOS.
+- Kompor dan wajan asli = komponen bawaan HP (view native).
+- Foto yang ditempel di piring = WebView, cara lama yang hanya "menampilkan halaman web" di dalam aplikasi.
+
+Analoginya tidak sempurna: kadang tiap cabang tetap butuh sedikit penyesuaian, misalnya tombol "kembali" yang hanya ada di Android.
+
+</Callout>
+
+React Native adalah *framework* (kerangka kerja, yaitu kumpulan alat dan aturan siap pakai) untuk membuat aplikasi mobile dengan React. Di web, React mengubah komponen menjadi HTML. React Native tidak membuat HTML sama sekali.
+
+Sebagian teknologi lain membungkus halaman web di dalam **WebView** (browser mini yang ditempel di dalam aplikasi). React Native tidak begitu. Ia membuat **view native** sungguhan. View native artinya komponen tampilan bawaan Android dan iOS. Komponen ini sama dengan yang dipakai aplikasi buatan Kotlin (bahasa resmi Android) atau Swift (bahasa resmi iOS).
+
+Contohnya, `<Text>` di Android menjadi `TextView`, dan di iOS menjadi `UITextView`. Karena memakai komponen asli, scroll, keyboard, dan animasi terasa mulus seperti aplikasi lain di HP-mu.
+
+<Flow nodes={["Komponen React (JS)", "Hermes + JSI", "Fabric (renderer)", "View native Android/iOS"]} labels={["dijalankan oleh", "memanggil langsung", "membuat & memperbarui"]} caption="Dari kode JavaScript menjadi tampilan native" />
+
+Cara membaca diagram di atas: kode React-mu dijalankan oleh Hermes. Lewat JSI, kode itu meminta Fabric membuat tampilan. Fabric lalu membuat dan memperbarui view native yang kamu lihat di layar. Istilah-istilah ini dijelaskan di bagian berikut.
+
+### Sekilas New Architecture
+
+<Callout type="analogi" title="Dulu titip surat lewat kurir, sekarang telepon langsung">
+
+Dulu, kalau kamu (JavaScript) ingin minta sesuatu ke bagian gudang (kode native HP), kamu menulis surat, menitipkannya ke kurir, lalu menunggu balasan. Kurir ini namanya **bridge**. Kalau suratnya banyak, antrean kurir jadi panjang dan aplikasi terasa lambat.
+
+Sekarang kamu punya **telepon langsung** ke gudang. Itulah **JSI**. Kamu bertanya, gudang langsung menjawab. Barang di gudang juga baru diambil saat kamu benar-benar memintanya. Itulah **TurboModules**.
+
+</Callout>
+
+Sejak beberapa versi terakhir, React Native memakai **New Architecture** (arsitektur baru, yaitu cara kerja internal yang lebih cepat). Di Expo SDK 58 (react-native 0.88), arsitektur ini selalu aktif dan tidak bisa dimatikan. **SDK** (Software Development Kit) adalah paket alat dengan nomor versi tertentu. Jadi "SDK 58" berarti paket alat Expo versi 58.
+
+Kamu tidak perlu mengatur apa pun. Tapi istilahnya akan sering muncul di dokumentasi dan pesan error, jadi kenali dulu:
+
+- **Hermes**: mesin yang menjalankan kode JavaScript-mu di HP. Mesin ini dibuat khusus supaya hemat memori dan cepat dibuka.
+- **JSI** (JavaScript Interface): jalur agar JavaScript bisa memanggil kode native (C++) secara langsung. Dulu komunikasi lewat "bridge" yang mengirim pesan JSON secara bergantian, sehingga lebih lambat.
+- **Fabric**: *renderer* baru. Renderer adalah bagian yang menerjemahkan pohon komponen React menjadi view native di layar.
+- **TurboModules**: modul native (kamera, penyimpanan, sensor) yang baru dimuat ketika benar-benar dipakai. Aplikasi jadi lebih cepat terbuka.
+
+Ringkasnya, kamu menulis React biasa. React Native yang mengurus urusan di balik layar.
+
+## Expo vs React Native "bare"
+
+<Callout type="analogi" title="Kos lengkap perabot vs rumah kosong">
+
+Kamu mau pindah ke kota tempat kuliah. Ada dua pilihan:
+
+- **Rumah kosong** (React Native "bare"): kamu beli kasur, lemari, kompor, dan pasang Wi-Fi sendiri. Bebas mengatur apa saja, tapi butuh waktu dan tenaga sebelum bisa tidur nyenyak.
+- **Kos lengkap perabot** (Expo): kasur, lemari, dan Wi-Fi sudah ada. Hari pertama kamu sudah bisa belajar.
+
+Di kos ini kamu tetap boleh renovasi kecil kalau benar-benar perlu. Di Expo, "renovasi" itu artinya menambah kode native sendiri.
+
+</Callout>
+
+**Expo** adalah kumpulan alat dan *library* di atas React Native. *Library* adalah kode siap pakai buatan orang lain yang tinggal kamu pasang, misalnya untuk kamera atau gambar. Dokumentasi resmi React Native sendiri menganjurkan memulai proyek baru dengan framework seperti Expo. Lihat juga [glosarium Expo](/glosarium#expo).
+
+Istilah "bare" berarti React Native polos, tanpa Expo. Perbandingannya:
+
+<Compare>
+<CompareItem title="React Native bare" tone="neutral">
+
+- Kamu mengelola folder `android/` dan `ios/` sendiri.
+- Harus memasang Android Studio dan Xcode sejak awal. Keduanya aplikasi besar untuk membangun aplikasi Android dan iOS.
+- Fitur seperti kamera, notifikasi, atau navigasi kamu cari dan atur sendiri.
+- Cocok jika tim sudah paham pengembangan native.
+
+</CompareItem>
+<CompareItem title="Expo" tone="good">
+
+- Proyek siap jalan dengan satu perintah. Sudah termasuk Expo Router untuk navigasi (pindah antarlayar).
+- Bisa langsung dicoba di HP lewat aplikasi Expo Go, tanpa Android Studio atau Xcode.
+- Ada ratusan *library* resmi (`expo-image`, `expo-camera`, dan lain-lain) yang versinya sudah saling cocok.
+- Tetap bisa menambah kode native. Folder `android/` dan `ios/` dibuat otomatis saat dibutuhkan (`npx expo prebuild`).
+
+</CompareItem>
+</Compare>
+
+Di kursus ini kita memakai Expo. Dengan begitu kamu bisa fokus belajar React Native, bukan sibuk mengatur konfigurasi native.
+
+### Expo Go vs development build
+
+<Callout type="analogi" title="Komputer lab kampus vs laptop pribadi">
+
+**Expo Go** mirip komputer di lab kampus. Software-nya sudah terpasang dan kamu tinggal pakai. Tapi kamu tidak boleh memasang software lain sendiri. Komputer lab juga biasanya hanya punya satu versi software tertentu.
+
+**Development build** mirip laptop pribadimu. Kamu bebas memasang apa saja, tapi harus menyiapkannya sendiri dulu.
+
+Untuk belajar, komputer lab sudah cukup.
+
+</Callout>
+
+Ada dua cara menjalankan proyek Expo di perangkat:
+
+| | Expo Go | Development build |
+| --- | --- | --- |
+| Apa itu | Aplikasi "kotak pasir" dari Expo yang bisa memuat proyekmu | Aplikasi milikmu sendiri yang berisi `expo-dev-client` |
+| Cara pasang | Unduh dari toko aplikasi atau expo.dev/go | Build dengan `npx expo run:android` atau `eas build` |
+| Kode native kustom | Tidak bisa, hanya *library* yang sudah ada di Expo Go | Bisa, *library* apa pun |
+| Versi SDK | Satu versi Expo Go hanya mendukung satu SDK | Mengikuti proyekmu |
+| Cocok untuk | Belajar dan prototipe cepat | Aplikasi sungguhan yang akan dirilis |
+
+"Kotak pasir" artinya Expo Go adalah aplikasi wadah. Ia bisa memuat proyek siapa saja, asalkan proyek itu hanya memakai *library* yang sudah tersedia di dalamnya. Untuk seluruh Track 2, Expo Go sudah cukup.
+
+<Callout type="warning" title="Expo Go dan SDK 58">
+
+Satu versi Expo Go hanya bisa membuka proyek dengan SDK yang sama. Menurut dokumentasi Expo, Expo Go di **App Store (iPhone)** berhenti di SDK 54. Artinya, proyek SDK 58 tidak bisa dibuka dengan Expo Go dari App Store. Pilihan yang paling mudah:
+
+- **HP Android**: pasang Expo Go dari Play Store. Jika versinya belum mendukung SDK 58, unduh versi yang cocok dari halaman expo.dev/go.
+- **Emulator Android** atau **iOS Simulator** (khusus Mac): ini HP tiruan yang berjalan di laptop. Tekan `a` atau `i` di terminal, dan Expo CLI akan memasang Expo Go yang cocok secara otomatis.
+- **iPhone fisik**: perlu `eas go` (membangun Expo Go sendiri lewat TestFlight, butuh akun Apple Developer) atau development build.
+
+</Callout>
+
+## Membuat proyek pertama
+
+Pastikan Node.js 22 LTS (versi stabil dengan dukungan jangka panjang) sudah terpasang. Cek dengan perintah `node -v` di terminal. Hasilnya harus diawali `v22` atau lebih baru.
+
+Buka terminal di folder tempat kamu menyimpan latihan, lalu jalankan:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+cd $HOME\Documents
+npx create-expo-app@latest latihan-rn
+cd latihan-rn
+```
+
+</Tab>
+<Tab>
+
+```bash
+cd ~/Documents
+npx create-expo-app@latest latihan-rn
+cd latihan-rn
+```
+
+</Tab>
+</Tabs>
+
+Arti tiap baris:
+
+- Baris 1 pindah ke folder Documents.
+- Baris 2 membuat proyek baru bernama `latihan-rn` memakai alat `create-expo-app` versi terbaru.
+- Baris 3 masuk ke folder proyek yang baru dibuat.
+
+Perintah ini mengunduh *template* (kerangka proyek siap pakai) SDK 58: `expo` ~58, `react-native` 0.88, `react` 19.3, dan `expo-router` ~58. Setelah itu ia menjalankan `npm install` untuk mengunduh semua *library*. Prosesnya bisa memakan beberapa menit, apalagi kalau internet kampus sedang ramai.
+
+Jika ternyata `package.json` menunjukkan SDK lama, ulangi dengan `npx create-expo-app@latest latihan-rn --template default@sdk-58`.
+
+Struktur proyek yang dihasilkan kurang lebih seperti ini:
+
+<FileTree title="latihan-rn (template asli)" tree={`
+.vscode/
+assets/
+  expo.icon/
+  images/ # ikon aplikasi, splash, dan gambar demo
+node_modules/
+scripts/
+  reset-project.js # script untuk mengosongkan contoh
+src/
+  app/ # setiap file di sini = satu layar (Expo Router)
+    * _layout.tsx # layout utama: tab navigasi
+    * index.tsx # layar "Welcome to Expo"
+    explore.tsx
+  components/
+    app-tabs.tsx
+    themed-text.tsx
+    themed-view.tsx
+    ui/
+      collapsible.tsx
+  constants/
+    theme.ts
+  hooks/
+    use-color-scheme.ts
+    use-theme.ts
+  global.css
+.gitignore
+app.json # nama aplikasi, ikon, plugin
+package.json
+package-lock.json
+tsconfig.json
+README.md
+`} />
+
+Kamu tidak perlu menghafal semuanya. Yang penting untuk sekarang:
+
+- **`src/app/`** adalah folder khusus Expo Router. Setiap file di sana menjadi satu layar. Navigasi akan dibahas di pelajaran [Expo Router](/belajar/react-native/expo-router).
+- **`app.json`** berisi pengaturan aplikasi, misalnya nama, ikon, dan skema warna (terang atau gelap).
+- Template memakai TypeScript (`.tsx`). TypeScript adalah JavaScript yang ditambah keterangan tipe data. Di Track 2 kita menulis **JavaScript** biasa, jadi file-nya nanti kita ubah ke `.js`.
+
+### Mengosongkan template dengan reset-project
+
+Template berisi banyak contoh layar. Itu berguna untuk dilihat-lihat, tapi membingungkan kalau kita mau mulai dari nol. Jalankan perintah ini agar proyek kembali bersih seperti buku tulis baru:
+
+```bash
+npm run reset-project
+```
+
+Script (program kecil yang sudah disiapkan template) akan bertanya `Do you want to move existing files to /example instead of deleting them? (Y/n)`. Ketik **`n`** lalu Enter agar contoh dihapus. Jika kamu menjawab `Y`, semua contoh dipindah ke folder `example/`, bukan dihapus. Output-nya kurang lebih:
+
+```txt
+❌ /src deleted.
+❌ /scripts deleted.
+📁 New /src/app directory created.
+📄 src/app/index.tsx created.
+📄 src/app/_layout.tsx created.
+
+✅ Project reset complete.
+```
+
+Artinya: folder `src` dan `scripts` lama dihapus. Lalu script membuat folder `src/app` baru berisi dua file kecil, `index.tsx` dan `_layout.tsx`.
+
+### Beralih ke file `.js`
+
+Sekarang ubah dua file tadi menjadi JavaScript. Isinya tidak memakai tipe TypeScript, jadi cukup ganti ekstensinya (akhiran nama file):
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+Rename-Item src\app\index.tsx index.js
+Rename-Item src\app\_layout.tsx _layout.js
+```
+
+</Tab>
+<Tab>
+
+```bash
+mv src/app/index.tsx src/app/index.js
+mv src/app/_layout.tsx src/app/_layout.js
+```
+
+</Tab>
+</Tabs>
+
+Biarkan `tsconfig.json` apa adanya. Expo tetap bisa membaca file `.js`. Folder `scripts/` sudah terhapus, jadi baris `"reset-project"` di bagian `scripts` pada `package.json` tidak berguna lagi. Kamu boleh menghapusnya. Hasil akhirnya:
+
+<FileTree title="latihan-rn (setelah reset)" tree={`
+assets/
+  expo.icon/
+  images/ # tinggal ikon, favicon, dan splash
+node_modules/
+src/
+  app/
+    * _layout.js # <Stack /> dari expo-router
+    * index.js # layar pertama
+app.json
+package.json
+tsconfig.json # biarkan saja
+`} />
+
+Isi `src/app/_layout.js` hanya merender `Stack` dari Expo Router. `Stack` adalah navigasi bertumpuk: layar baru ditaruh di atas layar lama, seperti menumpuk kertas. Sementara itu, `src/app/index.js` berisi layar pertama:
+
+```jsx title="src/app/index.js"
+import { Text, View, StyleSheet } from "react-native";
+
+export default function Index() {
+  return (
+    <View style={styles.container}>
+      <Text>Edit src/app/index.tsx to edit this screen.</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+});
+```
+
+Cara membaca kode ini:
+
+- Baris 1 mengambil tiga komponen dari React Native: `Text` untuk tulisan, `View` untuk kotak pembungkus, dan `StyleSheet` untuk menulis gaya.
+- Fungsi `Index` adalah komponen layar. Ia mengembalikan satu kotak berisi satu tulisan.
+- `styles.container` membuat kotak itu memenuhi layar (`flex: 1`) dan menaruh isinya di tengah.
+
+Mulai sekarang kita pakai aturan ini:
+
+- File layar dan layout **hanya** ditaruh di `src/app/`.
+- Kode lain ditaruh di `src/components`, `src/lib`, atau `src/features`.
+- *Library* tambahan selalu dipasang dengan `npx expo install nama-paket`, bukan `npm install`. Perintah ini memilih versi yang cocok dengan SDK proyekmu.
+
+## Menjalankan di Expo Go
+
+<Callout type="analogi" title="Dapur pusat dan kurir antar">
+
+Bayangkan laptopmu adalah dapur pusat, dan HP-mu adalah meja makan.
+
+- **Metro** = juru kemas di dapur. Ia mengumpulkan semua bahan (file JavaScript) lalu membungkusnya jadi satu paket.
+- **QR code** = alamat pengiriman. HP memindainya supaya tahu harus mengambil paket ke mana.
+- **Wi-Fi yang sama** = dapur dan meja makan ada di satu rumah. Paket bisa diantar langsung.
+- **Tunnel** = paket dikirim lewat kurir ojek online karena kamu sedang di tempat lain. Tetap sampai, tapi lebih lama.
+
+</Callout>
+
+<Steps>
+<Step title="Jalankan development server">
+
+```bash
+npx expo start
+```
+
+Perintah ini menyalakan **development server**, yaitu program di laptop yang melayani aplikasi selama kamu sedang mengembangkannya. Di dalamnya ada **Metro**, sebuah *bundler*. Bundler menggabungkan semua file JavaScript-mu menjadi satu paket, lalu mengirimkannya ke perangkat.
+
+Metro memakai **port** 8081. Port adalah nomor pintu di laptop, tempat program menerima kiriman dari jaringan. Terminal akan menampilkan QR code dan daftar tombol pintas.
+
+</Step>
+<Step title="Pindai QR code">
+
+Pastikan laptop dan HP terhubung ke **Wi-Fi yang sama**. Di Android, buka Expo Go lalu pilih *Scan QR code*. Tunggu proses *bundling* (pembuatan paket) selesai. Setelah itu tulisan "Edit src/app/index.tsx to edit this screen." muncul di HP.
+
+</Step>
+<Step title="Kalau Wi-Fi berbeda atau diblokir: tunnel">
+
+Wi-Fi kampus sering memblokir koneksi antarperangkat. Akibatnya HP tidak bisa menemukan laptop, walaupun keduanya tersambung ke Wi-Fi yang sama. Gunakan mode tunnel:
+
+```bash
+npx expo start --tunnel
+```
+
+Tunnel membuat alamat sementara di internet yang meneruskan kiriman ke laptopmu. Saat pertama kali dipakai, Expo akan meminta izin memasang `@expo/ngrok` secara global (berlaku untuk semua proyek di laptopmu). Mode ini lebih lambat, tapi HP cukup terhubung ke internet.
+
+</Step>
+<Step title="Kenali tombol pintas">
+
+Saat server berjalan, tekan tombol ini di terminal:
+
+- <Kbd>r</Kbd> untuk *reload*, yaitu memuat ulang aplikasi dari awal.
+- <Kbd>m</Kbd> untuk membuka **dev menu**, menu khusus developer di perangkat.
+- <Kbd>j</Kbd> untuk membuka React Native DevTools, alat untuk memeriksa dan mencari error.
+- <Kbd>a</Kbd> untuk membuka emulator Android, dan <Kbd>w</Kbd> untuk versi web.
+- <Kbd>?</Kbd> untuk melihat semua perintah.
+
+Dev menu juga bisa dibuka dengan menggoyang HP, atau <Kbd>Ctrl</Kbd> + <Kbd>M</Kbd> di emulator Android. Hentikan server dengan <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd>.
+
+</Step>
+</Steps>
+
+### Perubahan pertama
+
+Buka `src/app/index.js`, lalu ganti teksnya. Baris 6 dan 7 yang disorot adalah bagian yang berubah:
+
+```jsx title="src/app/index.js" {6-7}
+import { Text, View, StyleSheet } from "react-native";
+
+export default function Index() {
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Halo, Andi!</Text>
+      <Text>Siap mengerjakan tugas Pemrograman Mobile?</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: "bold",
+  },
+});
+```
+
+Sekarang ada dua tulisan. Tulisan pertama memakai gaya `styles.title`, yaitu ukuran huruf 24 dan cetak tebal. Tulisan kedua memakai gaya bawaan.
+
+Simpan file. Layar di HP langsung berubah tanpa perlu memindai ulang QR code. Fitur ini bernama **Fast Refresh**. Rasanya seperti mengganti tulisan di papan menu tanpa menutup warung: pembeli yang sedang makan tidak perlu keluar dulu.
+
+Selama kamu hanya mengubah isi komponen, **state** (data yang sedang diingat komponen, misalnya isi kolom ketikan) tetap dipertahankan. Jika perubahan tidak muncul, tekan <Kbd>r</Kbd> di terminal.
+
+Belum punya HP yang cocok? Coba kode yang sama di **Expo Snack**, editor React Native yang berjalan langsung di browser:
+
+<SnackEmbed name="Halo React Native" code={`import { Text, View, StyleSheet } from "react-native";
+
+export default function App() {
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Halo, Andi!</Text>
+      <Text>Siap mengerjakan tugas Pemrograman Mobile?</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: "bold",
+  },
+});
+`} />
+
+## Web vs React Native
+
+<Callout type="analogi" title="Pindah dari kompor gas ke kompor listrik">
+
+Kamu sudah bisa masak nasi goreng di kompor gas. Sekarang kamu pindah ke kos yang hanya punya kompor listrik. Resepnya tetap sama: bumbu, urutan, dan takarannya. Yang beda hanya alatnya. Tombolnya lain, dan panasnya diatur dengan cara lain.
+
+- Resep = konsep React yang sudah kamu pelajari (komponen, props, state, hook).
+- Kompor gas = web (HTML seperti `div`, `button`).
+- Kompor listrik = React Native (`View`, `Pressable`).
+
+</Callout>
+
+Kamu sudah memakai React di web. Sebagian besar konsepnya sama persis: komponen, props, state, dan hook. Yang berbeda adalah "bahan bangunan" tampilannya. Tabel ini memasangkan elemen web dengan penggantinya di React Native:
+
+| Web (React DOM) | React Native | Catatan |
+| --- | --- | --- |
+| `<div>` | `<View>` | Kotak pembungkus layout |
+| `<p>`, `<span>`, `<h1>` | `<Text>` | **Semua** teks wajib di dalam `<Text>` |
+| `<img>` | `<Image>` | Gambar dari jaringan wajib diberi ukuran |
+| `<input>` | `<TextInput>` | Pakai `onChangeText`, bukan `onChange` |
+| `<button onClick>` | `<Pressable onPress>` | Tidak ada `onClick` |
+| File `.css`, `className` | Objek `StyleSheet` di prop `style` | Tidak ada selector maupun cascade |
+| `px`, `rem` | Angka tanpa satuan (dp) | Contoh: `padding: 16` |
+| Halaman otomatis bisa di-scroll | `<ScrollView>` atau `<FlatList>` | Tanpa itu, konten yang panjang terpotong |
+| Flexbox default `row` | Flexbox default `column` | Semua View sudah memakai flexbox |
+
+Beberapa istilah di tabel:
+
+- **Selector** dan **cascade** adalah cara CSS memilih elemen dan mewariskan gaya dari induk ke anak. Di React Native keduanya tidak ada. Setiap komponen diberi gaya langsung lewat prop `style`.
+- **dp** (density-independent pixel) adalah satuan yang menyesuaikan kerapatan layar. Jadi `padding: 16` terlihat kira-kira sama besar di HP murah maupun HP mahal.
+- **Flexbox** adalah aturan menyusun isi kotak. Di React Native, isi kotak default-nya disusun dari atas ke bawah (`column`), bukan dari kiri ke kanan.
+
+Komponen-komponen ini dibahas lengkap di [Core Components](/belajar/react-native/core-components), dan styling di [Styling & Flexbox](/belajar/react-native/styling-flexbox).
+
+## Kesalahan umum
+
+Pesan error biasanya berbahasa Inggris dan terlihat menakutkan. Berikut arti dan cara mengatasi yang paling sering muncul.
+
+<Callout type="danger" title="Masalah yang paling sering muncul">
+
+- **`Project is incompatible with this version of Expo Go`**: versi Expo Go di HP tidak sama dengan SDK proyek. Perbarui Expo Go atau unduh versi yang cocok dari expo.dev/go. Jika versi paket di proyekmu yang tidak cocok satu sama lain, jalankan `npx expo-doctor@latest` untuk memeriksa, lalu `npx expo install --fix` untuk memperbaiki.
+- **`java.net.SocketTimeoutException: failed to connect to /192.168.x.x (port 8081)`** atau loading tidak pernah selesai: HP tidak bisa menjangkau laptop. Pastikan Wi-Fi sama. Izinkan Node.js di Windows Firewall untuk jaringan *private* (jaringan rumah atau kos). Atau pakai `npx expo start --tunnel`.
+- **`CommandError: ngrok tunnel took too long to connect.`**: koneksi tunnel gagal. Coba lagi, ganti jaringan, atau periksa antivirus yang memblokir ngrok.
+- **`Text strings must be rendered within a <Text> component.`**: ada teks (atau spasi/karakter nyasar) langsung di dalam `<View>`. Bungkus teks dengan `<Text>`.
+- **Port 8081 sedang dipakai**: ada program lain yang sudah memakai pintu 8081. Expo CLI akan menawarkan port lain (misalnya 8082). Jawab `Y`, atau tutup terminal lama yang masih menjalankan `npx expo start`.
+- **Perubahan tidak muncul**: tekan <Kbd>r</Kbd>, atau buka dev menu dan pastikan Fast Refresh aktif.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Layar perkenalan mata kuliah" difficulty="mudah" hints={["Setiap baris teks butuh `<Text>` sendiri.", "Tambahkan key baru di `StyleSheet.create`, misalnya `subtitle`."]}>
+
+Buat layar sederhana yang menampilkan ringkasan tugas Sari.
+
+1. Buka proyek `latihan-rn`, lalu buka file `src/app/index.js`.
+2. Tampilkan judul besar "Tugas Kuliah Sari".
+3. Di bawahnya, tampilkan teks "Basis Data: 3 tugas".
+4. Lalu tampilkan teks "Pemrograman Mobile: 2 tugas" berwarna abu-abu.
+5. Simpan file. Pastikan perubahan muncul di Expo Go tanpa memindai ulang QR code.
+
+<Solution>
+
+```jsx title="src/app/index.js"
+import { Text, View, StyleSheet } from "react-native";
+
+export default function Index() {
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Tugas Kuliah Sari</Text>
+      <Text>Basis Data: 3 tugas</Text>
+      <Text style={styles.muted}>Pemrograman Mobile: 2 tugas</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: "bold",
+    marginBottom: 8,
+  },
+  muted: {
+    color: "#6b7280",
+  },
+});
+```
+
+Penjelasan:
+
+- Setiap baris teks punya `<Text>` sendiri. Di React Native, teks tidak boleh ditaruh langsung di `<View>`.
+- React Native tidak punya file CSS. Gaya ditulis sebagai objek di `StyleSheet.create`, lalu dipasang lewat prop `style`.
+- `title` membuat judul besar dan tebal, dengan jarak 8 di bawahnya. `muted` memberi warna abu-abu.
+- Fast Refresh langsung memperbarui layar setelah file disimpan.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Bagaimana React Native menampilkan komponen `<Text>` di HP?",
+    options: ["Sebagai HTML di dalam WebView", "Sebagai view native milik Android/iOS", "Sebagai gambar yang digambar ulang setiap frame", "Sebagai halaman web yang dibuka di browser"],
+    answer: 1,
+    explain: "React Native membuat komponen asli Android/iOS lewat Fabric. Tidak ada HTML, WebView, atau browser. Seperti nasi goreng yang dimasak sungguhan di tiap cabang, bukan foto yang ditempel di piring.",
+  },
+  {
+    q: "Proyek SDK 58 menampilkan `Project is incompatible with this version of Expo Go`. Apa penyebabnya?",
+    options: ["Laptop dan HP beda Wi-Fi", "Ada teks di luar `<Text>`", "Port 8081 sedang dipakai", "Versi SDK yang didukung Expo Go berbeda dengan SDK proyek"],
+    answer: 3,
+    explain: "Satu versi Expo Go hanya bisa membuka satu versi SDK. Kata kuncinya \"incompatible\" (tidak cocok). Masalah Wi-Fi atau port memunculkan error koneksi, bukan error versi.",
+  },
+  {
+    q: "Setelah `npm run reset-project` (jawab `n`), file apa saja yang tersisa di `src/app/`?",
+    options: ["`_layout.tsx` dan `index.tsx`", "`index.tsx`, `explore.tsx`, dan `_layout.tsx`", "Tidak ada, foldernya kosong", "`App.js` saja"],
+    answer: 0,
+    explain: "Script menghapus semua contoh, termasuk `explore.tsx`. Lalu ia membuat dua file baru: `src/app/index.tsx` dan `src/app/_layout.tsx`. Keduanya kemudian kita ubah menjadi `.js`.",
+  },
+  {
+    q: "Laptop dan HP tidak bisa berada di Wi-Fi yang sama. Perintah apa yang sebaiknya dipakai?",
+    options: ["`npx expo start --clear`", "`npm run reset-project`", "`npx expo start --tunnel`", "`npx expo start --tunnel`".replace("start --tunnel", "prebuild")],
+    answer: 2,
+    explain: "`--tunnel` membuat alamat sementara di internet lewat ngrok, jadi HP cukup tersambung ke internet. `--clear` hanya membersihkan cache Metro. `reset-project` mengosongkan template. `prebuild` membuat folder native.",
+  },
+  {
+    q: "Sari ingin memakai library kamera buatan komunitas yang tidak tersedia di Expo Go. Dalam analogi komputer lab vs laptop pribadi, apa yang ia butuhkan?",
+    options: ["Komputer lab lain, yaitu Expo Go versi lain", "Laptop pribadi, yaitu development build", "Menekan `r` untuk reload", "Menjalankan `npm run reset-project`"],
+    answer: 1,
+    explain: "Expo Go seperti komputer lab: hanya bisa memakai software yang sudah terpasang. Development build seperti laptop pribadi, jadi library native apa pun boleh dipasang. Reload dan reset-project tidak menambah kode native.",
+  },
+]} />
+
+## Ringkasan
+
+- React Native membuat **view native** Android/iOS, bukan HTML di dalam WebView. Di SDK 58, New Architecture (Hermes, JSI, Fabric, TurboModules) selalu aktif.
+- Expo seperti kos lengkap perabot: proyek siap jalan, ada *library* resmi, dan sudah ada Expo Router. Expo Go cukup untuk belajar. Development build dipakai kalau butuh kode native sendiri.
+- Buat proyek dengan `npx create-expo-app@latest latihan-rn`. Kosongkan dengan `npm run reset-project` (jawab `n`). Lalu ubah `index` dan `_layout` menjadi `.js`.
+- `npx expo start` menyalakan Metro. Pindai QR code di Wi-Fi yang sama, atau pakai `--tunnel`. Tekan <Kbd>r</Kbd> untuk reload dan <Kbd>m</Kbd> untuk dev menu.
+- Di React Native, `div` menjadi `View`, semua teks wajib di dalam `Text`, `onClick` menjadi `onPress`, dan CSS diganti objek `StyleSheet`.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Proyek `latihan-rn` adalah tempat berlatih untuk seluruh Track 2. Di Track 3 kamu akan membuat proyek baru `kuliah-app` dengan cara yang sama persis: create-expo-app, reset-project, lalu ubah ke `.js`. Jadi pastikan langkah hari ini sudah lancar. Lanjutkan ke [Core Components](/belajar/react-native/core-components).
+
+</Callout>

@@ -1,0 +1,803 @@
+## Pengantar
+
+Sari login di aplikasi tugas, lalu membuka tugasnya lewat `GET /api/tasks/12`. Karena penasaran, ia menyalin access token-nya ke curl. Access token adalah tiket bukti login yang ikut di setiap request. curl adalah program untuk mengirim request dari terminal. Di curl, Sari mengganti angka `12` menjadi `13`.
+
+Kalau API hanya bertanya "apakah token ini sah?", Sari sekarang bisa membaca, mengubah, bahkan menghapus tugas milik Budi. Ia tidak butuh trik hacker. Cukup mengganti satu angka.
+
+Celah ini ada di urutan pertama [OWASP](/glosarium#owasp) API Security Top 10 (2023). OWASP adalah komunitas keamanan web yang terbuka untuk umum. Top 10 mereka berisi sepuluh risiko API yang paling sering ditemukan di aplikasi sungguhan. Kita memakai daftar itu sebagai daftar periksa untuk mengaudit API companion di folder `api/`. Mengaudit artinya memeriksa satu per satu. API companion adalah API pendamping yang sudah kamu pakai sejak track Full-stack. Pertahanan yang belum ada di sana ditandai **saran pengembangan**.
+
+Di tabel ini, **endpoint** berarti alamat tujuan request, mirip nomor loket di kantor pos. Kolom "Artinya" menjelaskan risikonya dengan bahasa sehari-hari.
+
+| Kode OWASP | Risiko | Artinya | Pertahanan di companion |
+| --- | --- | --- | --- |
+| API1:2023 | Broken Object Level Authorization | Bisa membuka data orang lain dengan mengganti ID | Setiap query difilter `userId` dari token (`tasks.service.ts`) |
+| API2:2023 | Broken Authentication | Login atau token mudah dibobol | bcrypt, JWT 15 menit, rotasi refresh token + deteksi pemakaian ulang |
+| API3:2023 | Broken Object Property Level Authorization | Bisa mengisi atau melihat kolom yang seharusnya terlarang | Zod membuang field asing, `toPublicUser`, `omit: { userId: true }` |
+| API4:2023 | Unrestricted Resource Consumption | Satu orang bisa menghabiskan tenaga server | Rate limit auth, `limit` ≤ 50, body JSON 100 kb, upload 5 MB |
+| API5:2023 | Broken Function Level Authorization | User biasa bisa memakai fitur khusus admin | Belum ada peran admin; setiap endpoint hanya untuk pemilik data |
+| API6:2023 | Unrestricted Access to Sensitive Business Flows | Bot memakai fitur penting secara massal | Rate limit pada register agar akun tidak dibuat massal |
+| API7:2023 | Server Side Request Forgery | Server disuruh membuka alamat pilihan penyerang | API tidak pernah mengambil URL yang dikirim user |
+| API8:2023 | Security Misconfiguration | Pengaturan server yang ceroboh | helmet, CORS, env tervalidasi, error 500 generik |
+| API9:2023 | Improper Inventory Management | Endpoint lama terlupa tapi masih hidup | Satu prefix `/api`; endpoint lama dihapus, bukan dibiarkan |
+| API10:2023 | Unsafe Consumption of APIs | Terlalu percaya pada data dari API pihak lain | Belum memanggil API pihak ketiga; respons mereka nanti juga divalidasi |
+
+<Callout type="analogi" title="Seperti meminjam buku langka di perpustakaan kampus">
+
+Untuk meminjam buku langka, kamu melewati beberapa pemeriksaan. Satpam di pintu masuk menolak orang yang membawa barang terlarang. Petugas meja depan mengecek kartu mahasiswamu. Petugas lain memeriksa formulir peminjamanmu sudah lengkap. Terakhir, pustakawan mengecek apakah kamu memang berhak meminjam koleksi itu. Kalau satu petugas lengah, petugas berikutnya masih bisa menahan.
+
+- Satpam pintu masuk = helmet, CORS, dan batas ukuran body
+- Cek kartu mahasiswa = `requireAuth` (siapa kamu?)
+- Cek formulir = validasi Zod (datanya lengkap dan benar?)
+- Cek hak pinjam = service yang memfilter `userId` (data ini milikmu?)
+- Meja customer service = `errorHandler` (menjawab dengan sopan tanpa membuka isi gudang)
+
+Bedanya, petugas API bekerja otomatis dalam hitungan milidetik dan tidak bisa dibujuk.
+
+</Callout>
+
+Di Express, tiap petugas itu adalah **middleware**: fungsi yang memeriksa request sebelum request sampai ke tujuan. Pertahanan bertumpuk seperti ini disebut *defense in depth* (pertahanan berlapis). Setiap kotak di diagram berikut dibahas di bagiannya masing-masing.
+
+<Flow nodes={["Request", "helmet + cors", "express.json (100 kb)", "rate limit / requireAuth", "validate (Zod)", "service: where userId", "errorHandler"]} labels={["header aman", "parse body", "siapa kamu?", "bentuk data", "milik siapa?", "respons aman"]} caption="Lapisan keamanan yang dilewati satu request di api/src" />
+
+## API1: Broken Object Level Authorization (IDOR)
+
+<Callout type="analogi" title="Seperti penitipan tas di perpustakaan">
+
+Saat menitipkan tas, kamu menerima kartu bernomor 12. Bayangkan petugas yang hanya mengecek kartu mahasiswamu, lalu menyerahkan tas nomor berapa pun yang kamu sebut. Kamu tinggal bilang "13" dan membawa pulang tas orang lain. Petugas yang benar mencocokkan nomor tas dengan nama pemilik yang ia catat.
+
+- Kartu mahasiswa = token login (membuktikan kamu siapa)
+- Nomor tas yang kamu sebut = ID tugas di URL (`/api/tasks/13`)
+- Mencocokkan nomor dengan nama pemilik = query `where: { id, userId }`
+
+</Callout>
+
+Ada dua pertanyaan berbeda di sini. [Autentikasi](/glosarium#autentikasi) menjawab "siapa kamu?". [Otorisasi](/glosarium#otorisasi) menjawab "bolehkah kamu menyentuh data **ini**?". BOLA (Broken Object Level Authorization) artinya pemeriksaan hak akses per data yang bolong. Dulu celah ini disebut [IDOR](/glosarium#idor) (Insecure Direct Object Reference). Celah ini muncul saat endpoint memakai ID kiriman client tanpa memeriksa siapa pemilik datanya. Test yang hanya memakai satu user tidak akan pernah menemukannya, karena semua data memang milik user itu.
+
+<Compare>
+<CompareItem title="Rentan: hanya cek ID" tone="bad">
+
+```ts
+export async function getTask(id: number) {
+  const task = await prisma.task.findUnique({ where: { id } });
+  if (!task) throw HttpError.notFound("Tugas tidak ditemukan");
+  return task;
+}
+```
+
+`requireAuth` (middleware pemeriksa token) memang memastikan user sudah login. Tetapi query ini hanya mencari berdasarkan `id`. Siapa pun yang login bisa membaca tugas orang lain dengan menebak angka berikutnya.
+
+</CompareItem>
+<CompareItem title="Companion: ID + pemilik" tone="good">
+
+```ts
+export async function getTask(userId: number, id: number) {
+  const task = await prisma.task.findFirst({
+    ...taskQueryArgs,
+    where: { id, userId },
+  });
+  if (!task) throw HttpError.notFound("Tugas tidak ditemukan");
+  return task;
+}
+```
+
+Query mencari tugas dengan `id` itu **dan** milik `userId` itu. Data orang lain tidak pernah keluar dari database.
+
+</CompareItem>
+</Compare>
+
+Pola ini muncul di semua service companion, bukan hanya di `getTask`:
+
+```ts title="api/src/modules/tasks/tasks.service.ts" {2,10,17}
+function buildWhere(userId: number, query: ListTasksQuery): Prisma.TaskWhereInput {
+  const where: Prisma.TaskWhereInput = { userId };
+  // ...filter status, priority, courseId, q ditambahkan di atas where ini
+  return where;
+}
+
+// courseId boleh kosong, tapi kalau diisi harus mata kuliah milik user sendiri.
+async function assertCourseOwned(userId: number, courseId: number | null | undefined) {
+  if (courseId == null) return;
+  const course = await prisma.course.findFirst({ where: { id: courseId, userId }, select: { id: true } });
+  if (!course) {
+    throw HttpError.validation([{ field: "courseId", message: "Mata kuliah tidak ditemukan" }]);
+  }
+}
+
+export async function deleteAttachment(userId: number, taskId: number, attachmentId: number) {
+  const attachment = await prisma.attachment.findFirst({
+    where: { id: attachmentId, taskId, task: { userId } },
+  });
+  // ...
+}
+```
+
+Dalam bahasa sehari-hari, ketiga fungsi itu melakukan ini:
+
+- `buildWhere` selalu memulai filter daftar tugas dengan `userId`. Filter lain (status, prioritas, pencarian) hanya ditambahkan di atasnya.
+- `assertCourseOwned` menolak tugas yang ditempelkan ke mata kuliah milik orang lain.
+- `deleteAttachment` mencari lampiran lewat rantai "lampiran ini milik tugas ini, dan tugas ini milik user ini" dalam satu query.
+
+Aturan yang perlu kamu pegang:
+
+- **`userId` hanya berasal dari token.** Controller memanggil `getUserId(req)`. Nilainya diisi `requireAuth` dari klaim `sub` JWT, yaitu kolom di dalam token yang berisi id user. Jangan pernah mengambilnya dari body, query, atau params.
+- **Relasi juga diperiksa.** Contohnya `courseId` milik orang lain tadi, dan rantai `attachment → task → userId` saat menghapus lampiran.
+- **Balas 404, bukan 403.** 404 artinya "tidak ditemukan", 403 artinya "dilarang". Jawaban 403 sudah memberi tahu penyerang bahwa tugas nomor 13 itu ada. Test isolasinya dibahas di [Testing Backend](/belajar/expert/testing-backend).
+- **Operasi massal juga.** `updateMany`/`deleteMany` mengubah banyak baris sekaligus. Tanpa `userId` di `where`, data seluruh pengguna ikut berubah. Kamu akan menambal kasus ini di latihan.
+
+Saudara dekat BOLA adalah **API5 (Broken Function Level Authorization)**: user biasa bisa memanggil endpoint khusus admin. Companion belum punya peran admin. Kalau kelak ada, periksa peran di middleware (misalnya `requireRole("ADMIN")`). Menyembunyikan tombol admin di aplikasi tidak cukup, karena endpoint-nya tetap bisa dipanggil lewat curl.
+
+## API2: autentikasi yang tahan serangan
+
+Dasar [JWT](/glosarium#jwt) dan alur login ada di [Autentikasi](/belajar/fullstack/autentikasi). Di sini kita fokus pada keputusan keamanannya: kenapa angka dan pengaturannya dipilih seperti itu.
+
+### Password: bcrypt dan waktu respons yang sama
+
+<Callout type="analogi" title="Seperti blender yang sengaja dibuat lambat">
+
+Hashing password mirip memblender buah. Buah jadi jus dengan mudah, tetapi jus tidak bisa dikembalikan jadi buah. Server hanya menyimpan "jus"-nya (hash). Saat login, password yang kamu ketik diblender lagi, lalu hasilnya dicocokkan.
+
+Sekarang bayangkan blendernya sengaja dibuat lambat, sekitar sepersepuluh detik per gelas. Untuk satu orang yang login, itu tidak terasa. Untuk pencuri yang ingin mencoba miliaran tebakan password, waktunya jadi bertahun-tahun.
+
+</Callout>
+
+```ts title="api/src/lib/password.ts"
+import bcrypt from "bcryptjs";
+
+const SALT_ROUNDS = 10;
+
+export function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, SALT_ROUNDS);
+}
+```
+
+[bcrypt](/glosarium#bcrypt) adalah fungsi hash password yang memang dirancang lambat. `SALT_ROUNDS` adalah *cost*, yaitu tingkat kelambatannya. Naik satu angka, waktu hash menjadi dua kali lipat. Di satu laptop uji, bcryptjs butuh sekitar 76 ms untuk cost 10 dan 275 ms untuk cost 12. User tidak merasakannya. Penyerang yang mencoba miliaran tebakan dari database curian harus membayar mahal. Ukur dulu di server kamu sebelum menaikkan cost.
+
+bcrypt hanya membaca **72 byte** pertama password. Karena itu `auth.schemas.ts` membatasi password `max(72)`.
+
+Login juga tidak boleh membocorkan email mana yang terdaftar. Bayangkan petugas yang langsung bilang "tidak ada" untuk nama yang tidak terdaftar, tetapi lama mengecek untuk nama yang terdaftar. Hanya dari lamanya menunggu, kamu bisa menebak siapa saja yang punya akun. Companion mencegahnya seperti ini:
+
+```ts title="api/src/modules/auth/auth.service.ts" {6,9}
+// Hash bcrypt dari string acak. Dipakai saat email tidak terdaftar agar waktu
+// respons login tetap sama (tidak bisa dipakai menebak email yang terdaftar).
+const DUMMY_PASSWORD_HASH = "$2b$10$IVXN74WDTBP.dQBjLahWjOBSZNFwozrrhxsSUpaFru2//PgkkCB7q";
+
+export async function login(input: LoginInput) {
+  const user = await prisma.user.findUnique({ where: { email: input.email } });
+  const passwordValid = await verifyPassword(input.password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+
+  // Pesan sengaja dibuat sama agar tidak membocorkan email mana yang terdaftar.
+  if (!user || !passwordValid) {
+    throw HttpError.unauthorized("Email atau password salah");
+  }
+  return { user: toPublicUser(user), ...(await issueTokens(user.id)) };
+}
+```
+
+Cara kerjanya:
+
+- Baris 6: kalau user ditemukan, password dicocokkan dengan hash miliknya. Kalau tidak ditemukan, password tetap dicocokkan dengan *dummy hash* (hash palsu). Jadi kedua jalur sama-sama menjalankan satu `bcrypt.compare` yang lambat.
+- Baris 9: email salah dan password salah dibalas dengan pesan yang sama persis.
+
+Kalau fungsi langsung `return` saat email tidak ditemukan, respons jauh lebih cepat. Penyerang cukup mengukur waktu respons untuk tahu email mana yang terdaftar.
+
+### Access token: secret panjang, algoritma dikunci, umur pendek
+
+<Callout type="analogi" title="Seperti gelang tiket konser">
+
+Di pintu konser, kamu mendapat gelang. Panitia di dalam tidak perlu mengecek KTP-mu lagi. Mereka cukup melihat gelang. Siapa pun bisa membaca tulisan di gelang, tetapi hanya panitia yang punya mesin segel aslinya. Gelang juga hanya berlaku hari itu.
+
+- Gelang = access token (JWT)
+- Mesin segel milik panitia = secret di server
+- Tulisan di gelang yang bisa dibaca siapa saja = payload JWT
+- Berlaku hari itu saja = umur token 15 menit
+
+Kalau mesin segelnya mudah ditiru (secret pendek), siapa pun bisa membuat gelang palsu.
+
+</Callout>
+
+```ts title="api/src/lib/tokens.ts"
+export const ACCESS_TOKEN_TTL = "15m";
+
+export function signAccessToken(userId: number): string {
+  // Payload hanya berisi `sub` (subject) = id user dalam bentuk string.
+  return jwt.sign({}, env.JWT_ACCESS_SECRET, {
+    algorithm: "HS256",
+    subject: String(userId),
+    expiresIn: ACCESS_TOKEN_TTL,
+  });
+}
+
+export function verifyAccessToken(token: string): { userId: number } {
+  const payload = jwt.verify(token, env.JWT_ACCESS_SECRET, { algorithms: ["HS256"] });
+  // ...
+}
+```
+
+- **Secret minimal 32 karakter.** Secret pendek seperti `rahasia123` bisa ditebak offline dari satu token, lalu penyerang bebas membuat token untuk user mana pun. `config/env.ts` menolak secret di bawah 32 karakter.
+- **Algoritma dikunci.** `algorithms: ["HS256"]` menolak token palsu dengan header `"alg": "none"` atau algoritma lain.
+- **Payload bisa dibaca siapa saja.** JWT hanya *ditandatangani*, tidak *dienkripsi*, jadi companion hanya menaruh `sub` di dalamnya:
+
+```ts title="decode-jwt.ts"
+const [, payload] = accessToken.split(".");
+console.log(Buffer.from(payload, "base64url").toString());
+```
+
+```txt
+{"iat":1793402672,"exp":1793403572,"sub":"12"}
+```
+
+- **Umur 15 menit.** Access token tidak bisa dicabut sebelum kedaluwarsa (`exp - iat` = 900 detik), jadi umur pendek membatasi waktu pencuri token.
+
+Buat secret yang benar-benar acak (96 karakter heksadesimal):
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+</Tab>
+<Tab>
+
+```bash
+openssl rand -hex 48
+```
+
+</Tab>
+</Tabs>
+
+### Refresh token: rotasi dan deteksi pemakaian ulang
+
+[Refresh token](/glosarium#refresh-token) companion adalah 48 byte acak (bukan JWT), dan database hanya menyimpan hash SHA-256-nya. Setiap `/api/auth/refresh` mencabut token lama dan menerbitkan yang baru (rotasi). Kalau token yang **sudah dicabut** datang lagi, berarti dua pihak memegangnya, user asli dan pencuri. API tidak bisa membedakan keduanya, jadi semua sesi user itu dicabut.
+
+```ts title="api/src/modules/auth/auth.service.ts" {3-6,10-13}
+// Token yang sudah dicabut dipakai lagi = kemungkinan dicuri.
+// Cabut semua sesi user tersebut supaya pencuri (dan user) harus login ulang.
+if (stored.revokedAt) {
+  await revokeAllForUser(stored.userId);
+  throw HttpError.unauthorized("Refresh token sudah pernah dipakai. Silakan login ulang.");
+}
+// ...
+// Rotasi: cabut token lama. Filter `revokedAt: null` mencegah dua request
+// bersamaan memakai token yang sama dan sama-sama berhasil.
+const { count } = await prisma.refreshToken.updateMany({
+  where: { id: stored.id, revokedAt: null },
+  data: { revokedAt: new Date() },
+});
+```
+
+<Flow nodes={["Pencuri pakai token A", "API: A dicabut, terbit B", "User asli pakai token A", "API: A sudah dicabut!", "Semua sesi dicabut"]} labels={["refresh", "kemudian", "deteksi reuse", "login ulang"]} caption="Deteksi pemakaian ulang refresh token" />
+
+## API3: validasi input dan mass assignment
+
+*Mass assignment* terjadi saat body request langsung diteruskan ke database. Kalau `createTask` menulis `data: req.body`, client bisa menyelipkan `"userId": 99` dan menaruh tugas di akun orang lain. Companion mencegahnya dengan [Zod](/glosarium#zod) di middleware `validate`: secara default `z.object` **membuang** key yang tidak ada di skema, lalu hasil parse menggantikan `req.body`.
+
+```ts
+createTaskSchema.parse({ title: "Laporan praktikum", userId: 99, id: 1 });
+```
+
+```txt
+{ title: 'Laporan praktikum' }
+```
+
+`userId` dan `id` hilang. Service lalu menulis `data: { ...input, userId }`; karena `userId` ditulis setelah spread, nilai dari token yang menang. Kalau client perlu tahu bahwa field asing ditolak, pakai `z.strictObject({...})`, yang menghasilkan error `unrecognized_keys` dan dibalas 400.
+
+Sisi sebaliknya adalah **data yang keluar**. `toPublicUser` hanya memilih `id`, `name`, `email`, dan `createdAt`, jadi `passwordHash` tidak pernah keluar. `taskQueryArgs` memakai `omit: { userId: true }`, dan relasi `course` hanya memilih `id`, `name`, serta `color`. Menyembunyikan field di layar bukan perlindungan, karena JSON mentahnya tetap terlihat lewat curl.
+
+## API4: membatasi konsumsi sumber daya
+
+Tanpa batas, satu skrip bisa mencoba ribuan password per menit atau mendaftarkan ribuan akun. Companion memasang [rate limiting](/glosarium#rate-limiting) pada endpoint autentikasi:
+
+```ts title="api/src/middleware/rate-limit.ts"
+export function authRateLimiter({ enabled = !isTest }: { enabled?: boolean } = {}) {
+  return rateLimit({
+    windowMs: AUTH_RATE_WINDOW_MS, // 15 menit
+    limit: AUTH_RATE_LIMIT, // 20 request per IP
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    skip: () => !enabled,
+    handler: (_req, _res, next) => {
+      next(new HttpError(429, "RATE_LIMITED", "Terlalu banyak percobaan. Coba lagi dalam 15 menit."));
+    },
+  });
+}
+```
+
+Limiter dipasang di `/register`, `/login`, `/refresh`, dan `/logout`, **sebelum** `validate`, jadi request yang ditolak tidak sempat menyentuh bcrypt atau database. Request ke-21 dalam 15 menit dibalas seperti ini (`r` = sisa jatah, `t` = detik sampai jendela direset, `pk` = hash kunci partisi, yaitu IP):
+
+```http
+HTTP/1.1 429 Too Many Requests
+RateLimit-Policy: "20-in-15min"; q=20; w=900; pk=:MTJjYTE3YjQ5YWYy:
+RateLimit: "20-in-15min"; r=0; t=900
+Content-Type: application/json; charset=utf-8
+
+{"error":{"message":"Terlalu banyak percobaan. Coba lagi dalam 15 menit.","code":"RATE_LIMITED"}}
+```
+
+Batas lain yang sudah ada: body JSON 100 kb (bawaan `express.json()`, dibalas 413), `limit` pagination 50, pencarian `q` 100 karakter, dan upload 5 MB. **Saran pengembangan** untuk production:
+
+- **`trust proxy`.** Di belakang reverse proxy, semua request tampak datang dari IP proxy dan berbagi satu jatah 20 request. Pasang `app.set("trust proxy", 1)` agar Express membaca IP asli dari `X-Forwarded-For`.
+- **Limiter global yang longgar** untuk semua `/api` (misalnya 300 request per menit), di samping limiter ketat untuk auth.
+- **Store bersama.** Hitungan limiter ada di memori proses. Untuk beberapa instance, pakai store Redis (lihat [Performa Backend](/belajar/expert/performa-backend)).
+
+## API8: konfigurasi yang aman
+
+### Header keamanan dengan helmet
+
+```ts title="api/src/app.ts"
+// Gambar di /uploads boleh ditampilkan dari origin lain (mis. Expo Web).
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+app.use(cors({ origin: corsOrigin(env.CORS_ORIGIN) }));
+```
+
+[helmet](/glosarium#helmet) menambahkan belasan [header](/glosarium#header) respons yang membuat browser lebih berhati-hati. Sebagian header dari `GET /api/health`:
+
+```http
+HTTP/1.1 200 OK
+Content-Security-Policy: default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests
+Cross-Origin-Resource-Policy: cross-origin
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+Referrer-Policy: no-referrer
+```
+
+`nosniff` mencegah browser "menebak" bahwa file gambar sebenarnya HTML atau JavaScript, dan HSTS menyuruh browser selalu memakai HTTPS. helmet juga menghapus `X-Powered-By: Express`. `crossOriginResourcePolicy: "cross-origin"` sengaja dilonggarkan agar gambar lampiran bisa tampil di Expo Web.
+
+### CORS: aturan browser, bukan kunci pintu
+
+[CORS](/glosarium#cors) adalah mekanisme **browser**. Saat halaman di `https://app.kampus.ac.id` memanggil API di domain lain, browser lebih dulu mengirim preflight `OPTIONS`. Kalau header `Access-Control-Allow-Origin` tidak cocok, browser menahan respons dan console menampilkan:
+
+```txt
+Access to fetch at 'https://api.kampus.ac.id/api/tasks' from origin 'https://contoh-lain.com' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+```
+
+Dua akibat penting:
+
+1. **Aplikasi React Native native tidak terkena CORS.** `fetch` di Android dan iOS bukan browser, jadi tidak ada preflight maupun pemblokiran. Expo Web berjalan di browser, sehingga origin-nya harus diizinkan.
+2. **CORS bukan kontrol akses.** curl, Postman, dan skrip penyerang mengabaikannya. Yang melindungi data tetap token dan filter `userId`. CORS hanya mencegah situs *lain* yang dibuka korban membaca respons API kamu.
+
+`CORS_ORIGIN="*"` cocok untuk development. Di production, isi daftar origin yang dipisah koma:
+
+```dotenv title="api/.env (production)"
+CORS_ORIGIN="https://app.kampus.ac.id,https://admin.kampus.ac.id"
+```
+
+Preflight dari origin terdaftar dibalas `Access-Control-Allow-Origin: https://app.kampus.ac.id`. Preflight dari `https://contoh-lain.com` tetap dibalas 204, tetapi **tanpa** header itu, sehingga browser memblokirnya.
+
+### Gagal cepat saat konfigurasi salah
+
+```ts title="api/src/config/env.ts"
+JWT_ACCESS_SECRET: z.string().min(32, "minimal 32 karakter"),
+```
+
+```txt
+Konfigurasi environment tidak valid:
+  - JWT_ACCESS_SECRET: minimal 32 karakter
+Periksa file .env (lihat .env.example).
+```
+
+Server menolak menyala daripada berjalan dengan secret lemah. Celahnya: nilai contoh di `.env.example` (`ganti-dengan-string-acak-...`) lebih dari 32 karakter sehingga lolos, dan `CORS_ORIGIN="*"` tetap diterima di production. **Saran pengembangan**:
+
+```ts title="api/src/config/env.ts (saran pengembangan)"
+const envSchema = z
+  .object({
+    // ...field yang sudah ada
+  })
+  .superRefine((env, ctx) => {
+    if (env.NODE_ENV !== "production") return;
+    if (env.JWT_ACCESS_SECRET.startsWith("ganti-dengan")) {
+      ctx.addIssue({ code: "custom", path: ["JWT_ACCESS_SECRET"], message: "masih memakai nilai contoh" });
+    }
+    if (env.CORS_ORIGIN.trim() === "*") {
+      ctx.addIssue({ code: "custom", path: ["CORS_ORIGIN"], message: "jangan pakai * di production" });
+    }
+  });
+```
+
+```txt
+Konfigurasi environment tidak valid:
+  - JWT_ACCESS_SECRET: masih memakai nilai contoh
+  - CORS_ORIGIN: jangan pakai * di production
+Periksa file .env (lihat .env.example).
+```
+
+### Pesan error yang tidak membocorkan isi server
+
+Stack trace, nama tabel, atau pesan Prisma memberi penyerang peta sistem kamu. [Error handler](/glosarium#error-handler) companion hanya mengirim pesan yang sudah dipetakan, seperti `"Body bukan JSON yang valid"` atau `"Token akses tidak ditemukan"`. Error lain hanya masuk log:
+
+```ts title="api/src/middleware/error-handler.ts"
+// Error tak terduga: detailnya hanya dicatat di log, client cukup dapat pesan generik.
+console.error(isProduction ? String(error) : error);
+res.status(500).json({
+  error: { message: "Terjadi kesalahan pada server", code: "INTERNAL_ERROR" },
+});
+```
+
+## SQL injection dan query mentah Prisma
+
+[SQL injection](/glosarium#sql-injection) tidak masuk API Top 10 karena sudah lama tercakup di OWASP Top 10 umum ("Injection"). Prisma Client selalu memakai parameter, jadi `findMany` dan kawan-kawannya aman. Bahaya muncul saat kamu menulis SQL sendiri.
+
+<Compare>
+<CompareItem title="Rentan: string digabung" tone="bad">
+
+```ts
+const rows = await prisma.$queryRawUnsafe(
+  `SELECT id, title FROM "Task"
+   WHERE "userId" = ${userId} AND title LIKE '%${q}%'`,
+);
+```
+
+Isi `q` menjadi bagian dari teks SQL.
+
+</CompareItem>
+<CompareItem title="Aman: tagged template" tone="good">
+
+```ts
+const pattern = `%${q}%`;
+const rows = await prisma.$queryRaw<{ id: number; title: string }[]>`
+  SELECT id, title FROM "Task"
+  WHERE "userId" = ${userId} AND title LIKE ${pattern}
+`;
+```
+
+Setiap `${}` dikirim sebagai parameter, bukan teks SQL.
+
+</CompareItem>
+</Compare>
+
+Kalau penyerang mengirim `q` berisi `' OR 1=1 --`, versi rentan menghasilkan `... AND title LIKE '%' OR 1=1 --%'`. `AND` diproses lebih dulu daripada `OR`, sehingga kondisinya menjadi "(milik user ini) **atau** 1=1", dan sisanya menjadi komentar. Coba pada data contoh: Sari (user 1) tiba-tiba melihat tugas semua orang.
+
+<SqlPlayground initialQuery="SELECT id, user_id, title FROM tasks WHERE user_id = 1 AND title LIKE '%' OR 1=1 --%';" />
+
+Aturan praktisnya:
+
+- Pakai `$queryRaw` / `$executeRaw` dengan tagged template. Kalau terpaksa memakai `$queryRawUnsafe`, kirim nilai sebagai argumen terpisah: `$queryRawUnsafe('SELECT ... WHERE "userId" = ? AND title LIKE ?', userId, pattern)` (placeholder SQLite `?`, PostgreSQL `$1`).
+- `Prisma.raw(teks)` di dalam tagged template **melewati** parameterisasi. Jangan masukkan input user ke sana.
+- Nama kolom dan arah urutan tidak bisa dijadikan parameter, jadi pakai whitelist seperti companion: `sort` divalidasi `z.enum(TASK_SORTS)` lalu dipetakan lewat objek `ORDER_BY`.
+
+## Upload file yang aman
+
+Endpoint upload menulis file dari internet ke disk server. Companion menutupnya dengan beberapa lapis:
+
+```ts title="api/src/middleware/upload.ts" {3-7,11,16}
+// Hanya gambar yang diizinkan. Ekstensi file ditentukan dari mimetype,
+// bukan dari nama file kiriman client.
+const EXTENSIONS: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+};
+
+const storage = multer.diskStorage({
+  destination: uploadDir,
+  filename: (_req, file, cb) => {
+    const uniqueName = `${Date.now()}-${randomBytes(8).toString("hex")}${EXTENSIONS[file.mimetype]}`;
+    cb(null, uniqueName);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: MAX_FILE_SIZE, files: 1 },
+  // fileFilter: tipe di luar EXTENSIONS → 415 "Format file harus JPEG, PNG, atau WEBP"
+});
+```
+
+- **Whitelist tipe.** Hanya JPEG, PNG, dan WEBP, tidak ada `.html`, `.svg`, atau `.js` yang bisa dijalankan browser dari domain kamu.
+- **Nama acak dari server.** Nama kiriman seperti `../../app.ts` atau `foto.php` tidak pernah dipakai di disk, dan ekstensinya ditentukan server.
+- **Batas ukuran.** File di atas 5 MB dibalas 413 "Ukuran file maksimal 5 MB".
+- **Penghapusan dengan `path.basename`.** `removeUploadedFile` hanya memakai bagian nama file dari URL:
+
+```ts title="api/src/lib/storage.ts"
+// path.basename mencegah path traversal (mis. "/uploads/../../.env").
+const filePath = path.join(uploadDir, path.basename(url));
+```
+
+```js title="demo-traversal.mjs"
+import path from "node:path";
+
+const uploadDir = "/srv/api/uploads";
+const evil = "../.env";
+console.log(path.posix.join(uploadDir, evil));
+console.log(path.posix.join(uploadDir, path.posix.basename(evil)));
+```
+
+```txt
+/srv/api/.env
+/srv/api/uploads/.env
+```
+
+Tanpa `basename`, file `.env` server ikut terhapus. Dengan `basename`, yang dicari hanya `.env` di dalam folder uploads, yang memang tidak ada.
+
+Satu batasan: `file.mimetype` berasal dari header kiriman client, jadi bisa dipalsukan. **Saran pengembangan**: setelah file tersimpan, cek beberapa byte pertamanya (*magic bytes*), misalnya PNG selalu diawali `89 50 4E 47` dan JPEG `FF D8 FF`, lalu hapus yang tidak cocok. Header `nosniff` dari helmet menjadi lapis cadangan. Ingat juga bahwa file di `/uploads` bisa dibuka siapa pun yang tahu URL-nya. Nama acak membuatnya sulit ditebak, tetapi bukan pengganti otorisasi untuk dokumen rahasia.
+
+## Secret, dependensi, log, dan HTTPS
+
+### Secret tidak boleh masuk Git
+
+[Secret](/glosarium#secret) seperti `JWT_ACCESS_SECRET` dan password database tinggal di `.env`, yang sudah diabaikan Git:
+
+```txt title="api/.gitignore"
+# Environment
+.env
+```
+
+Yang di-commit adalah `.env.example` berisi nilai contoh. Kalau `.env` terlanjur ter-commit, menghapus file saja tidak cukup karena secret tetap ada di riwayat Git:
+
+```bash
+git rm --cached .env
+git commit -m "chore: berhenti melacak .env"
+```
+
+Setelah itu **ganti secret-nya**. Mengganti `JWT_ACCESS_SECRET` sekaligus membatalkan semua access token lama. Anggap setiap secret yang pernah di-push sudah bocor.
+
+### Audit dependensi
+
+Sebagian besar kode API kamu berasal dari paket npm. Periksa kerentanan yang sudah diketahui secara berkala:
+
+```bash
+npm audit --omit=dev
+npm audit fix
+```
+
+`--omit=dev` fokus pada paket yang berjalan di production, dan `npm audit fix` hanya memasang versi yang kompatibel. Hindari `npm audit fix --force` tanpa membaca daftarnya karena bisa menaikkan versi mayor. Jalankan `npm test` setelah setiap perbaikan.
+
+### Log tanpa secret
+
+[Log](/glosarium#logging) sering disimpan lebih lama dan dibaca lebih banyak orang daripada database. Jangan mencatat password, header `Authorization`, atau refresh token. Companion memakai `morgan("dev")` saat development, dan morgan mencatat URL lengkap. Karena itu token **tidak boleh** dikirim lewat query string (`?token=...`), selalu lewat header atau body.
+
+### HTTPS di production
+
+Di Wi-Fi kampus atau publik, HTTP biasa bisa disadap sehingga token dan password terbaca. Di production, API harus berjalan di HTTPS, biasanya lewat reverse proxy atau platform hosting yang mengurus sertifikat. Build rilis Android dan iOS juga memblokir HTTP biasa secara default. Detailnya ada di [Deploy & CI](/belajar/expert/deploy-ci).
+
+## Sisi mobile: bundle itu publik
+
+Semua yang ikut di dalam aplikasi bisa dibongkar: APK bisa diekstrak dan bundle JavaScript bisa dibaca. Variabel berawalan `EXPO_PUBLIC_` (lihat [EXPO_PUBLIC env](/glosarium#expo-public-env)) **ditulis langsung ke dalam bundle** saat build:
+
+```dotenv title="kuliah-app/.env.example"
+EXPO_PUBLIC_API_URL=http://192.168.1.10:3000
+```
+
+URL API memang boleh publik. Yang tidak boleh adalah `EXPO_PUBLIC_JWT_SECRET`, API key berbayar, atau password database. Buktikan sendiri dengan mencari nilainya di hasil build web:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+npx expo export --platform web
+Get-ChildItem dist -Recurse -Filter *.js | Select-String "192.168.1.10" -List | Select-Object Path
+```
+
+</Tab>
+<Tab>
+
+```bash
+npx expo export --platform web
+grep -rl "192.168.1.10" dist
+```
+
+</Tab>
+</Tabs>
+
+Kalau aplikasi butuh layanan pihak ketiga yang memakai secret, panggil layanan itu dari **API kamu**, dan aplikasi cukup memanggil API.
+
+Token di HP disimpan dengan [SecureStore](/glosarium#secure-store), bukan AsyncStorage. SecureStore memakai Keychain di iOS dan Keystore di Android, sedangkan AsyncStorage menyimpan teks biasa yang mudah dibaca di perangkat yang sudah di-root:
+
+```ts title="kuliah-app/src/lib/token-storage.ts"
+// Penyimpanan token di keychain (iOS) / keystore (Android) lewat expo-secure-store.
+// Nilai juga disimpan di memori supaya setiap request tidak perlu membaca storage lagi.
+const ACCESS_KEY = 'auth.accessToken';
+const REFRESH_KEY = 'auth.refreshToken';
+```
+
+SecureStore tidak tersedia di web, dan beberapa versi iOS bisa menolak nilai di atas sekitar 2 KB. Token companion kecil, jadi aman. Simpan token saja, jangan objek user yang besar.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Jebakan yang sering lolos review">
+
+- **Mengambil `userId` dari body atau query** (`req.body.userId`). Sumber yang sah hanya token, yaitu `getUserId(req)`.
+- **`updateMany`/`deleteMany` tanpa `userId`.** Tidak ada error atau test merah, tetapi data semua user ikut berubah.
+- **Menganggap CORS sebagai keamanan.** curl tidak peduli CORS. API tanpa token tetap terbuka walaupun CORS ketat.
+- **Secret contoh dipakai di production.** Server companion menolak secret pendek (`JWT_ACCESS_SECRET: minimal 32 karakter`), tetapi nilai contoh yang panjang tetap lolos. Selalu generate secret baru.
+- **Semua user kena 429 bersamaan.** Di belakang proxy tanpa `trust proxy`, semua request terlihat dari satu IP, dan log berisi peringatan `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
+- **`$queryRawUnsafe` dengan template string.** `${}` di template biasa (tanpa tag) adalah penggabungan teks, bukan parameter.
+- **Menaruh secret di `EXPO_PUBLIC_*`.** Prefix itu artinya "publik", persis seperti namanya.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Tambal IDOR di operasi massal" difficulty="sedang" hints={["`getCourse(userId, id)` di `courses.service.ts` sudah melempar 404 untuk mata kuliah milik orang lain.", "Tambahkan juga `userId` di `where` milik `updateMany` sebagai lapis kedua.", "Di `courses.test.ts` sudah ada user `owner` dan `stranger`; orang asing harus mendapat 404 dan tugas pemilik tetap `TODO`."]}>
+
+Seorang teman menambahkan fitur "tandai semua tugas mata kuliah ini selesai" di `courses.service.ts` dan route `PATCH /api/courses/:id/complete-tasks`. Test-nya hijau, tetapi ada celah BOLA. Temukan, perbaiki, lalu tulis test yang membuktikan celahnya sudah tertutup.
+
+```ts title="api/src/modules/courses/courses.service.ts (kode latihan)"
+export async function completeCourseTasks(userId: number, courseId: number) {
+  const { count } = await prisma.task.updateMany({
+    where: { courseId },
+    data: { status: "DONE" },
+  });
+  return { updated: count };
+}
+```
+
+<Solution>
+
+`userId` diterima tetapi tidak dipakai. Siapa pun yang login bisa menyelesaikan tugas di mata kuliah milik orang lain hanya dengan menebak `courseId`. Perbaikannya ada dua lapis:
+
+```diff title="api/src/modules/courses/courses.service.ts"
+ export async function completeCourseTasks(userId: number, courseId: number) {
++  await getCourse(userId, courseId); // 404 kalau bukan milik user
+   const { count } = await prisma.task.updateMany({
+-    where: { courseId },
++    where: { courseId, userId },
+     data: { status: "DONE" },
+   });
+   return { updated: count };
+ }
+```
+
+Test isolasinya memakai `owner`, `stranger`, dan helper `createCourse` yang sudah ada di file test companion (pola dari [Testing Backend](/belajar/expert/testing-backend)):
+
+```ts title="api/tests/courses.test.ts"
+it("tidak bisa menyelesaikan tugas di mata kuliah milik orang lain", async () => {
+  const course = await createCourse(owner, { name: "Basis Data" });
+  const task = await api()
+    .post("/api/tasks")
+    .set(owner.auth)
+    .send({ title: "ERD perpustakaan", courseId: course.id })
+    .expect(201);
+
+  await api().patch(`/api/courses/${course.id}/complete-tasks`).set(stranger.auth).expect(404);
+
+  const after = await api().get(`/api/tasks/${task.body.data.id}`).set(owner.auth).expect(200);
+  expect(after.body.data.status).toBe("TODO");
+});
+```
+
+`getCourse` memberi respons 404 yang konsisten dengan endpoint lain. `userId` di `where` menjaga agar query tetap aman walaupun suatu saat pengecekan di atasnya terhapus saat refactor.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Helper log yang menyensor secret" difficulty="sedang" hints={["Tangani tiga kasus: array, objek biasa, dan nilai primitif.", "Bandingkan nama key dalam huruf kecil agar `Authorization` dan `authorization` sama-sama tertangkap.", "`Object.entries` + `Object.fromEntries` memudahkan membangun objek baru tanpa mengubah aslinya."]}>
+
+Buat fungsi `redact(value: unknown): unknown` yang menyalin data secara rekursif dan mengganti nilai key sensitif (`password`, `passwordHash`, `accessToken`, `refreshToken`, `authorization`) dengan `"[REDACTED]"`. Fungsi ini akan dipakai sebelum mencatat body request ke log. Uji dengan objek bersarang yang berisi array.
+
+<Solution>
+
+```ts title="api/src/lib/redact.ts"
+const SENSITIVE_KEYS = new Set(["password", "passwordhash", "accesstoken", "refreshtoken", "authorization"]);
+
+export function redact(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redact);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, inner]) =>
+        SENSITIVE_KEYS.has(key.toLowerCase()) ? [key, "[REDACTED]"] : [key, redact(inner)],
+      ),
+    );
+  }
+  return value;
+}
+```
+
+```ts title="redact-demo.ts"
+import { redact } from "./src/lib/redact.ts";
+
+console.log(
+  JSON.stringify(
+    redact({
+      email: "sari@kampus.ac.id",
+      password: "rahasia-sekali",
+      headers: { Authorization: "Bearer eyJhbGciOi..." },
+      sessions: [{ refreshToken: "a1b2c3", device: "Android" }],
+    }),
+  ),
+);
+```
+
+```txt
+{"email":"sari@kampus.ac.id","password":"[REDACTED]","headers":{"Authorization":"[REDACTED]"},"sessions":[{"refreshToken":"[REDACTED]","device":"Android"}]}
+```
+
+Fungsi ini membuat salinan baru, jadi `req.body` asli tidak berubah. Tambah daftar key saat API berkembang, karena helper ini hanya menyensor key yang dikenal.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Sari mengganti `GET /api/tasks/12` menjadi `/api/tasks/13` dan melihat tugas Budi. Celah apa ini, dan apa perbaikannya?",
+    options: [
+      "CORS terlalu longgar; isi `CORS_ORIGIN` dengan daftar origin",
+      "BOLA/IDOR; sertakan `userId` dari token di `where` query",
+      "Rate limit kurang ketat; turunkan batas menjadi 5 request",
+      "JWT kedaluwarsa terlalu lama; ubah TTL menjadi 1 menit",
+    ],
+    answer: 1,
+    explain: "Ini Broken Object Level Authorization (API1). Sari sudah terautentikasi dengan sah, tetapi API tidak memeriksa pemilik objek. Perbaikannya adalah `findFirst({ where: { id, userId } })`. CORS, rate limit, dan TTL tidak berhubungan dengan pemeriksaan kepemilikan.",
+  },
+  {
+    q: "Kenapa aplikasi React Native di Android tetap bisa memanggil API walaupun `CORS_ORIGIN` hanya berisi `https://app.kampus.ac.id`?",
+    options: [
+      "Karena Expo otomatis menambahkan header `Origin` yang benar",
+      "Karena helmet menonaktifkan CORS untuk perangkat mobile",
+      "Karena access token melewati pemeriksaan CORS",
+      "Karena CORS hanya ditegakkan oleh browser, dan `fetch` native bukan browser",
+    ],
+    answer: 3,
+    explain: "CORS adalah aturan yang dijalankan browser. Klien native, curl, dan Postman tidak melakukan preflight dan tidak memblokir respons. Itu juga alasan CORS bukan pengganti autentikasi. Expo Web berjalan di browser, jadi origin-nya tetap harus diizinkan.",
+  },
+  {
+    q: "Mana pemanggilan query mentah yang aman dari SQL injection?",
+    options: [
+      "``prisma.$queryRaw`SELECT * FROM \"Task\" WHERE title LIKE ${pattern}` ``",
+      "``prisma.$queryRawUnsafe(`SELECT * FROM \"Task\" WHERE title LIKE '${pattern}'`)``",
+      "``prisma.$queryRaw`SELECT * FROM \"Task\" ORDER BY ${Prisma.raw(req.query.sort)}` ``",
+      "Semua aman karena Prisma selalu meng-escape input",
+    ],
+    answer: 0,
+    explain: "Tagged template `$queryRaw` mengirim setiap `${}` sebagai parameter. `$queryRawUnsafe` dengan template string biasa menggabungkan teks, sehingga rentan. `Prisma.raw` sengaja melewati parameterisasi, jadi input user tidak boleh masuk ke sana.",
+  },
+  {
+    q: "Refresh token yang sudah dicabut (sudah dirotasi) dikirim lagi ke `/api/auth/refresh`. Apa yang dilakukan companion?",
+    options: [
+      "Menerbitkan token baru karena token itu pernah sah",
+      "Membalas 429 karena dianggap brute force",
+      "Mencabut semua refresh token user itu dan meminta login ulang",
+      "Mengabaikan request dan membalas 204",
+    ],
+    answer: 2,
+    explain: "Pemakaian ulang token yang sudah dirotasi berarti ada dua pihak yang memegangnya. API tidak bisa membedakan pencuri dari pemilik, jadi `revokeAllForUser` mencabut semua sesi dan membalas 401 \"Refresh token sudah pernah dipakai. Silakan login ulang.\"",
+  },
+  {
+    q: "Kamu butuh API key layanan cuaca berbayar di aplikasi mobile. Di mana sebaiknya key itu disimpan?",
+    options: [
+      "Di `EXPO_PUBLIC_WEATHER_KEY` agar mudah dibaca kode",
+      "Di SecureStore saat aplikasi pertama kali dibuka",
+      "Di-hardcode tetapi dipecah menjadi beberapa string",
+      "Di `.env` server; aplikasi memanggil endpoint API kamu yang meneruskan request",
+    ],
+    answer: 3,
+    explain: "Semua yang dikirim bersama aplikasi, termasuk variabel `EXPO_PUBLIC_` dan string yang dipecah, bisa dibongkar dari bundle. SecureStore cocok untuk token milik user, tetapi key-nya tetap harus berasal dari bundle. Secret pihak ketiga harus tinggal di server.",
+  },
+]} />
+
+## Ringkasan
+
+- OWASP API Security Top 10 (2023) adalah peta audit yang praktis. BOLA, risiko nomor satu, dicegah dengan `userId` dari token di **setiap** query, termasuk relasi dan operasi massal.
+- Autentikasi kuat: bcrypt dengan cost terukur, secret JWT acak ≥ 32 karakter dengan algoritma dikunci, access token 15 menit, dan rotasi refresh token dengan deteksi pemakaian ulang.
+- Zod membuang field asing, rate limit menahan brute force, helmet memasang header aman, dan CORS hanya berlaku di browser.
+- Error 500 tidak membawa detail internal, query mentah hanya lewat tagged template, dan upload memakai whitelist, nama acak, serta `basename`.
+- Secret tinggal di `.env` yang tidak di-commit, bukan di `EXPO_PUBLIC_`; token di HP disimpan di SecureStore.
+
+### Checklist keamanan
+
+| Area | Pertanyaan audit | Status di companion |
+| --- | --- | --- |
+| Otorisasi objek | Setiap `find`/`update`/`delete` memakai `userId` dari token? | Sudah (`tasks.service.ts`, `courses.service.ts`) |
+| Password | bcrypt cost ≥ 10, batas 72 byte, pesan login seragam? | Sudah |
+| JWT & refresh | Secret ≥ 32 karakter acak, `algorithms` dikunci, TTL pendek, refresh di-hash, dirotasi, reuse mencabut semua sesi? | Sudah; tolak nilai contoh = saran |
+| Input & output | Validasi Zod, field asing dibuang, tanpa `passwordHash`/`userId` di respons? | Sudah |
+| Rate limit | Login/register dibatasi, `trust proxy` di production? | Auth sudah; `trust proxy` = saran |
+| Header & CORS | helmet aktif, `CORS_ORIGIN` bukan `*` di production? | helmet sudah; CORS bergantung `.env` |
+| Error | 500 generik, detail hanya di log? | Sudah |
+| SQL mentah | Hanya tagged template, kolom urut di-whitelist? | Tidak ada SQL mentah; sort di-whitelist |
+| Upload | Whitelist MIME, nama acak, batas ukuran, `basename`? | Sudah; cek magic bytes = saran |
+| Secret | `.env` di `.gitignore`, secret diganti bila bocor? | Sudah di `.gitignore` |
+| Dependensi | `npm audit --omit=dev` rutin? | Jalankan sebelum deploy |
+| Log | Tanpa password/token, token tidak di query string? | Sudah; `redact` = latihan |
+| Transport | HTTPS + HSTS di production? | Saat deploy |
+| Mobile (`kuliah-app`) | Tanpa secret di bundle, token di SecureStore? | Cek di `kuliah-app`; pola di atas |
+
+<Callout type="capstone" title="Langkah capstone">
+
+Pakai tabel checklist di atas untuk mengaudit backend capstone "Aplikasi Tugas & Catatan Kuliah". Untuk setiap endpoint baru, tulis satu test isolasi (user B tidak bisa membaca atau mengubah data user A) sebelum fiturnya dianggap selesai. Sebelum [Deploy & CI](/belajar/expert/deploy-ci), generate `JWT_ACCESS_SECRET` baru, isi `CORS_ORIGIN` dengan origin web yang sebenarnya, dan jalankan `npm audit --omit=dev`.
+
+</Callout>

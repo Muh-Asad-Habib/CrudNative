@@ -1,0 +1,21 @@
+node_modules/
+dist/
+coverage/
+
+# Prisma Client hasil generate (dibuat ulang dengan `npm run db:generate`)
+src/generated/
+
+# Environment
+.env
+
+# Database SQLite lokal (dev.db) dan database test (test.db)
+*.db
+test.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# File upload
+uploads/*
+!uploads/.gitkeep
+uploads-test/

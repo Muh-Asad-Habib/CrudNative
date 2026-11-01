@@ -1,0 +1,543 @@
+## Pengantar
+
+Di pelajaran [Core Components](/belajar/react-native/core-components) kamu sudah bisa menampilkan teks, gambar, input, dan tombol. Kalau semuanya hanya ditumpuk, layar tugas kuliah akan mirip daftar belanja. Semua rata kiri, saling menempel, dan sulit dibaca.
+
+Aplikasi yang enak dipakai punya **layout** (tata letak: siapa di kiri, siapa di kanan, berapa jaraknya) yang rapi. Judul tugas ada di kiri dan label prioritas di kanan. Jarak antarelemen sama di semua tempat. Tampilannya tetap pas di HP kecil maupun tablet, dan warnanya nyaman saat mode gelap.
+
+<Callout type="analogi" title="Seperti menata kamar kos">
+
+Dua kamar kos bisa berisi barang yang sama: kasur, meja, dan lemari. Yang satu terasa lega, yang lain sumpek. Bedanya ada di dua hal. Pertama, dekorasinya: warna cat, ukuran karpet, tebal tirai. Kedua, denahnya: kasur di pojok mana, meja menempel ke dinding mana. Di React Native, dekorasi diatur dengan **StyleSheet** dan denah diatur dengan **Flexbox**.
+
+</Callout>
+
+Jadi kamu akan memakai dua alat:
+
+- **StyleSheet** untuk menulis gaya, misalnya warna, ukuran huruf, dan jarak.
+- **Flexbox** untuk menyusun posisi elemen di layar.
+
+Di akhir pelajaran kamu akan membuat komponen `TaskCard`, yaitu kartu tugas yang nanti dipakai di aplikasi capstone.
+
+## StyleSheet: menulis style tanpa CSS
+
+<Callout type="analogi" title="Seperti kode warna stabilo di buku catatan">
+
+Di halaman depan buku catatan kamu menulis aturan: stabilo kuning untuk definisi, stabilo merah untuk deadline. Setelah itu kamu cukup bilang "pakai yang kuning" tanpa menjelaskan ulang. `StyleSheet.create` adalah halaman aturan itu. Nama seperti `styles.title` adalah "stabilo kuning", dan prop `style` adalah gerakan menyapukan stabilo ke tulisan.
+
+</Callout>
+
+Di web, gaya ditulis di file CSS (bahasa khusus untuk mengatur tampilan halaman web). React Native tidak punya file `.css` maupun `className`. Gaya ditulis sebagai **objek JavaScript**, yaitu kumpulan pasangan `nama: nilai` di dalam kurung kurawal. Objek itu dipasang lewat prop `style` (atribut yang kamu tulis di tag komponen). Cara yang dianjurkan: kumpulkan semua gaya sekaligus dengan `StyleSheet.create`.
+
+```jsx
+import { StyleSheet, Text, View } from "react-native";
+
+export default function Header() {
+  return (
+    <View style={styles.header}>
+      <Text style={styles.title}>Basis Data</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  header: {
+    padding: 16,
+    backgroundColor: "#2563eb",
+    borderRadius: 12,
+  },
+  title: {
+    color: "#ffffff",
+    fontSize: 20,
+    fontWeight: "bold",
+  },
+});
+```
+
+Cara membaca kode di atas:
+
+- Di bagian bawah, `StyleSheet.create` membuat dua gaya bernama `header` dan `title`.
+- `style={styles.header}` memasang gaya `header` ke `View`: latar biru, jarak dalam 16, sudut membulat.
+- `style={styles.title}` memasang gaya `title` ke `Text`: huruf putih, besar, dan tebal.
+
+Aturan penulisannya:
+
+- Nama properti memakai **camelCase**, yaitu tanpa tanda hubung dan kata berikutnya diawali huruf besar. `background-color` menjadi `backgroundColor`, `font-size` menjadi `fontSize`.
+- Angka ditulis **tanpa satuan**. `padding: 16` berarti 16 **dp** (*density-independent pixel*). dp adalah satuan yang menyesuaikan kepadatan layar. Jadi 16 dp terlihat kurang lebih sama besar di HP murah maupun HP flagship. Tidak ada `px`, `rem`, atau `em`.
+- Nilai berupa teks ditulis sebagai string (diapit tanda kutip), misalnya `fontWeight: "bold"` atau `width: "50%"`.
+
+### Menggabungkan dan mengondisikan style
+
+Prop `style` juga menerima **array**, yaitu daftar beberapa gaya di dalam kurung siku. Bayangkan menempel stiker di sampul laptop. Stiker yang ditempel belakangan menutupi stiker di bawahnya. Di sini juga begitu: gaya di posisi belakang menimpa gaya sebelumnya. Nilai `false`, `null`, atau `undefined` dilewati, seperti slot stiker yang dibiarkan kosong. Dengan sifat ini kamu bisa membuat gaya bersyarat (gaya yang hanya dipakai kalau suatu kondisi benar):
+
+```jsx
+<Text style={[styles.title, task.done && styles.titleDone, { marginTop: 4 }]}>
+  {task.title}
+</Text>
+```
+
+Isi array dibaca dari kiri ke kanan:
+
+1. `styles.title` selalu dipakai.
+2. `task.done && styles.titleDone` menghasilkan gaya `titleDone` hanya kalau tugas sudah selesai. Kalau belum, hasilnya `false` dan dilewati.
+3. `{ marginTop: 4 }` adalah gaya kecil yang ditulis langsung di tempat (inline). Karena paling belakang, ia menang kalau ada yang bentrok.
+
+### Style tidak menurun (no cascade)
+
+<Callout type="analogi" title="Seperti cat dinding dan tinta pulpen">
+
+Kamu mengecat dinding kamar kos jadi merah. Tulisan di buku catatan di atas meja tetap hitam, karena cat dinding tidak menular ke tinta. Kalau ingin tulisannya merah, kamu harus menulis dengan pulpen merah di buku itu sendiri. Di sini dinding = `View`, tulisan = `Text`. Pengecualiannya: kata yang kamu tebalkan di tengah kalimat tetap memakai warna tinta kalimat itu. Itu sama dengan `Text` di dalam `Text`.
+
+</Callout>
+
+Di web ada **cascade** (gaya menurun dari induk ke anak). `color` yang dipasang di `<body>` diwarisi semua elemen di dalamnya. React Native tidak punya cascade maupun selector (aturan CSS untuk memilih banyak elemen sekaligus, misalnya "semua paragraf"). Setiap komponen hanya memakai gaya yang dipasang langsung padanya.
+
+<Compare>
+<CompareItem title="Tidak berefek" tone="bad">
+
+```jsx
+<View style={{ color: "red", fontSize: 18 }}>
+  <Text>Deadline besok</Text>
+</View>
+```
+
+`View` tidak meneruskan gaya teks ke anaknya. Teks tetap hitam dengan ukuran default.
+
+</CompareItem>
+<CompareItem title="Benar" tone="good">
+
+```jsx
+<Text style={{ color: "red", fontSize: 18 }}>
+  Deadline <Text style={{ fontWeight: "bold" }}>besok</Text>
+</Text>
+```
+
+Satu-satunya pewarisan: `Text` di dalam `Text` mewarisi gaya teks induknya. Kata "besok" jadi merah, besar, sekaligus tebal.
+
+</CompareItem>
+</Compare>
+
+Untuk gaya yang dipakai berulang, buat **komponen** sendiri (misalnya `<Judul>`) atau objek warna bersama di `src/constants`. Jangan berharap gayanya diwarisi otomatis.
+
+## Flexbox di React Native
+
+<Callout type="analogi" title="Seperti barisan upacara di lapangan kampus">
+
+Peserta upacara bisa berbaris ke belakang (satu kolom) atau berjajar ke samping (satu baris). Arah barisan ini disebut **sumbu utama**. Komandan lalu mengatur dua hal:
+
+- Sebaran di sepanjang barisan: rapat di depan, berkumpul di tengah, atau merenggang sampai ujung lapangan. Ini tugas `justifyContent`.
+- Posisi tiap orang ke arah samping barisan: geser ke kiri, di tengah, atau ke kanan. Ini tugas `alignItems`, yang bekerja di **sumbu silang**.
+
+Kalau barisan diputar dari kolom menjadi baris, "sepanjang barisan" dan "ke samping" ikut bertukar arah.
+
+</Callout>
+
+**Flexbox** adalah sistem tata letak yang menyusun anak-anak sebuah container (wadah, yaitu `View` yang membungkus elemen lain) dalam satu arah. Setiap `View` di React Native sudah memakai flexbox, jadi kamu tidak perlu menulis `display: "flex"`. Ada dua sumbu (garis arah) yang perlu kamu pahami:
+
+- **Sumbu utama** (*main axis*) mengikuti `flexDirection`. Defaultnya **`column`**, jadi anak-anak tersusun dari **atas ke bawah**. Ini berbeda dengan web yang default-nya `row`.
+- **Sumbu silang** (*cross axis*) tegak lurus terhadap sumbu utama. Kalau sumbu utama vertikal, sumbu silangnya horizontal.
+
+| Properti | Mengatur | Nilai yang sering dipakai |
+| --- | --- | --- |
+| `flexDirection` | Arah sumbu utama | `"column"` (default), `"row"` |
+| `justifyContent` | Posisi anak di **sumbu utama** | `"flex-start"`, `"center"`, `"space-between"` |
+| `alignItems` | Posisi anak di **sumbu silang** | `"stretch"` (default), `"center"`, `"flex-start"` |
+| `alignSelf` | Menimpa `alignItems` untuk satu anak | `"flex-end"`, `"center"` |
+| `gap`, `rowGap`, `columnGap` | Jarak antaranak | `8`, `12`, `16` |
+| `flexWrap` | Boleh pindah baris atau tidak | `"nowrap"` (default), `"wrap"` |
+| `flex` | Porsi ruang kosong yang diambil | `1` |
+
+Contoh yang paling sering: menaruh sesuatu tepat di tengah. Di layout default (kolom), tengah secara **vertikal** diatur oleh `justifyContent: "center"`. Tengah secara **horizontal** diatur oleh `alignItems: "center"`. Begitu `flexDirection` diubah menjadi `"row"`, peran keduanya bertukar.
+
+### `flex: 1` dan perbedaan lain dengan web
+
+<Callout type="analogi" title="Seperti membagi martabak dan naik angkot">
+
+Ruang kosong di dalam container itu seperti martabak yang belum dibagi. `flex: 1` artinya "aku minta bagian dari martabak sisa". Kalau dua teman sama-sama `flex: 1`, martabak dibagi dua sama rata. Kalau yang satu `flex: 2` dan yang lain `flex: 1`, pembagiannya dua potong banding satu potong.
+
+`flexShrink: 0` mirip penumpang angkot yang tidak mau bergeser saat kursi penuh. Penumpang terakhir terpaksa bergelantungan di pintu, sama seperti kotak yang keluar dari layar. `flexWrap: "wrap"` artinya yang tidak kebagian kursi naik angkot berikutnya, yaitu pindah ke baris baru.
+
+</Callout>
+
+`flex: 1` artinya "ambil semua ruang kosong yang tersisa". Pola ini dipakai untuk membuat layar penuh (`container: { flex: 1 }`). Pola yang sama membuat judul tugas mengisi ruang di antara checkbox dan label prioritas. Satu beda dengan web: di React Native `flex` hanya menerima **satu angka**, bukan bentuk singkat seperti `"1 1 auto"` di CSS.
+
+Ada dua default lain yang berbeda dengan web:
+
+- `flexShrink` (boleh mengecil atau tidak) bernilai `0`, sedangkan di web `1`. Akibatnya anak **tidak mengecil** otomatis dan bisa keluar dari layar.
+- `alignContent` default-nya `"flex-start"`. Properti ini mengatur posisi baris-baris anak saat `flexWrap` aktif.
+
+Kalau deretan kotak terpotong di tepi layar, tambahkan `flexWrap: "wrap"` atau beri `flex: 1` pada anak yang boleh menyusut.
+
+### Coba di lab Flexbox
+
+Cara tercepat memahami flexbox adalah mencobanya sendiri. Lab di bawah memakai default yang sama dengan React Native (kolom, `flexShrink: 0`). Kalau layarmu sempit, buka versi halaman penuhnya: [Flexbox Playground](/lab/flexbox).
+
+<FlexboxPlayground />
+
+Lakukan percobaan berikut secara berurutan:
+
+1. Lihat keadaan awal. `flexDirection` bernilai `column`, tiga kotak bertumpuk ke bawah, dan teks di bawah HP menunjukkan **Sumbu utama: vertikal**. Kotak melebar penuh karena `alignItems` bernilai `stretch` (meregang).
+2. Pilih `alignItems` = `center`. Kotak menyempit menjadi 56 dp dan pindah ke tengah secara horizontal. Arah horizontal ini adalah sumbu silang.
+3. Pilih `justifyContent` = `space-between`. Kotak menyebar dari atas ke bawah, yaitu di sumbu utama.
+4. Ubah `flexDirection` menjadi `row`. Sumbu utama menjadi **horizontal**. Dua pengaturan tadi sekarang bekerja di arah sebaliknya.
+5. Centang **Kotak pertama `flex: 1`**. Kotak nomor 1 melebar mengisi sisa ruang, sedangkan yang lain tetap 56 dp.
+6. Hapus centangnya, lalu geser slider **jumlah kotak** ke 8. Kotak keluar dari layar karena tidak bisa mengecil. Pilih `flexWrap` = `wrap`, dan kotak pindah ke baris baru. Geser slider **gap** untuk mengubah jaraknya.
+7. Lihat panel **Kode StyleSheet**. Kode di sana bisa kamu salin ke proyekmu. Tekan **Reset** untuk kembali ke awal.
+
+## Ukuran dan persentase
+
+Lebar dan tinggi bisa ditulis dalam dp (`width: 120`) atau dalam **persentase** dari induknya (`width: "48%"`). Induk adalah `View` yang membungkus elemen tersebut.
+
+Persentase cocok untuk grid dua kolom, yaitu kartu yang tersusun dua-dua seperti ubin lantai. Caranya:
+
+- Container diberi `flexDirection: "row"`, `flexWrap: "wrap"`, dan `justifyContent: "space-between"`.
+- Tiap kartu diberi `width: "48%"`. Dua kartu memakai 96% lebar, dan sisa 4% menjadi celah di tengah.
+
+Dua properti lain yang berguna:
+
+- `maxWidth` membatasi lebar konten supaya tidak terlalu melebar di tablet.
+- `aspectRatio` menjaga perbandingan lebar dan tinggi. Mirip pas foto 3x4: kalau lebarnya diperbesar, tingginya ikut membesar. `aspectRatio: 16 / 9` cocok untuk gambar sampul.
+
+## Layout responsif dengan useWindowDimensions
+
+<Callout type="analogi" title="Seperti menata kursi untuk kelas pengganti">
+
+Asisten dosen menata kursi sesuai ruangan. Di ruang kelas yang sempit, kursi disusun ke belakang. Di aula yang lebar, kursi dijajarkan ke samping. Setiap kali kelas pindah ruangan, ia mengukur ulang. `useWindowDimensions` adalah asisten yang selalu mengukur ulang itu. `Dimensions.get("window")` seperti mengukur ruangan sekali di pagi hari, lalu tidak pernah mengecek lagi walau kelas sudah pindah ke aula.
+
+</Callout>
+
+Layout **responsif** artinya tampilan menyesuaikan ukuran layar. HP 5 inci, HP lipat, dan tablet punya lebar yang jauh berbeda. Hook `useWindowDimensions` memberi `width` dan `height` jendela saat ini. (Hook adalah fungsi khusus React yang namanya diawali `use` dan hanya boleh dipanggil di dalam komponen.) Hook ini juga **otomatis memicu render ulang**, artinya komponen digambar ulang dengan nilai baru saat layar diputar atau ukuran jendela berubah. Pakai hook ini, bukan `Dimensions.get("window")` yang hanya membaca nilai sekali.
+
+```jsx
+import { Text, useWindowDimensions, View } from "react-native";
+
+export default function Statistik() {
+  const { width } = useWindowDimensions();
+  const lebar = width >= 768; // tablet atau HP dalam posisi landscape
+
+  return (
+    <View style={{ flexDirection: lebar ? "row" : "column", gap: 12, padding: 16 }}>
+      <Text>Total: 8 tugas</Text>
+      <Text>Selesai: 3 tugas</Text>
+    </View>
+  );
+}
+```
+
+Baris `const lebar = width >= 768` bernilai `true` kalau layar selebar tablet (768 dp atau lebih). Nilai itu memilih arah susunan: berjajar (`"row"`) di layar lebar, bertumpuk (`"column"`) di layar sempit. Saat HP diputar, `width` berubah, komponen digambar ulang, dan arahnya ikut berganti.
+
+## Platform.select dan dark mode
+
+### Platform.select
+
+Satu aplikasi React Native berjalan di Android dan iOS. Kadang kamu ingin nilai yang sedikit berbeda di tiap sistem operasi (OS). Mirip aturan pakaian acara kampus: fakultas A pakai batik, fakultas B pakai kemeja putih, dan yang tidak disebut pakai pakaian rapi bebas.
+
+`Platform.select` memilih nilai sesuai OS yang sedang menjalankan aplikasi. Kunci yang tersedia antara lain `ios`, `android`, `web`, `native` (Android + iOS), dan `default` sebagai cadangan. Pola yang umum adalah menyebar hasilnya ke dalam style:
+
+```jsx
+import { Platform, StyleSheet } from "react-native";
+
+const styles = StyleSheet.create({
+  heading: {
+    fontWeight: "bold",
+    ...Platform.select({
+      ios: { fontSize: 28 },
+      android: { fontSize: 22 },
+      default: { fontSize: 24 },
+    }),
+  },
+});
+```
+
+Hasilnya, judul berukuran 28 di iPhone, 22 di Android, dan 24 di tempat lain seperti web. Tanda `...` (spread) menuang isi objek yang terpilih ke dalam gaya `heading`.
+
+### Dark mode dengan useColorScheme
+
+**Dark mode** (mode gelap) adalah tampilan berlatar gelap dengan teks terang, enak dipakai malam hari. Hook `useColorScheme()` mengembalikan `"light"` atau `"dark"` sesuai pengaturan HP. Nilainya bisa juga `null` kalau informasinya tidak tersedia. Template SDK 58 sudah mengisi `"userInterfaceStyle": "automatic"` di `app.json`, jadi aplikasimu mengikuti tema sistem.
+
+```jsx
+import { useColorScheme } from "react-native";
+
+const scheme = useColorScheme();
+const dark = scheme === "dark";
+// lalu: style={[styles.card, dark && styles.cardDark]}
+```
+
+Variabel `dark` bernilai `true` kalau HP sedang memakai mode gelap. Lalu `dark && styles.cardDark` memakai trik array style tadi: gaya gelap hanya ditempel saat `dark` bernilai `true`.
+
+Untuk aplikasi besar, warna biasanya dikumpulkan dalam satu objek tema. Topik ini, bersama status bar dan ikon, dibahas lebih dalam di [UI Native](/belajar/react-native/ui-native).
+
+## Praktik: membuat TaskCard
+
+Sekarang gabungkan semuanya. Kartu tugas di bawah memakai:
+
+- **Baris** (`flexDirection: "row"`) dengan `alignItems: "center"` dan `gap: 12`. Isinya dari kiri: checkbox, teks tugas, lalu label prioritas.
+- **`flex: 1`** pada bagian teks, sehingga teks mengisi ruang tengah dan mendorong label ke kanan. Judul yang panjang dipotong dengan `numberOfLines={1}`.
+- **Style bersyarat** untuk tugas selesai (judul dicoret) dan untuk mode gelap.
+- `boxShadow` untuk bayangan kartu. Properti ini tersedia di New Architecture (mesin baru React Native yang aktif di proyek Expo terbaru) dan bekerja di Android maupun iOS.
+- `useWindowDimensions` untuk mengubah daftar menjadi grid dua kolom (`width: "48%"`) di layar lebar, serta `Platform.select` untuk ukuran judul.
+
+Tekan kotak centang untuk menandai tugas selesai. Coba juga ubah tema perangkat atau browser menjadi gelap.
+
+<SnackEmbed name="TaskCard" code={`import { useState } from "react";
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useColorScheme,
+  useWindowDimensions,
+  View,
+} from "react-native";
+
+const PRIORITAS = {
+  rendah: { label: "Rendah", bg: "#dcfce7", fg: "#166534" },
+  sedang: { label: "Sedang", bg: "#fef9c3", fg: "#854d0e" },
+  tinggi: { label: "Tinggi", bg: "#fee2e2", fg: "#991b1b" },
+};
+
+const DATA = [
+  { id: 1, title: "Rangkum bab normalisasi", course: "Basis Data", priority: "tinggi", due: "Senin, 10.00", done: false },
+  { id: 2, title: "Desain layar login", course: "Pemrograman Mobile", priority: "sedang", due: "Rabu, 13.00", done: true },
+  { id: 3, title: "Baca materi REST API", course: "Pemrograman Mobile", priority: "rendah", due: "Jumat, 08.00", done: false },
+];
+
+function TaskCard({ task, dark, onToggle }) {
+  const p = PRIORITAS[task.priority];
+  return (
+    <View style={[styles.card, dark && styles.cardDark]}>
+      <Pressable
+        onPress={onToggle}
+        role="checkbox"
+        aria-checked={task.done}
+        aria-label={"Tandai selesai: " + task.title}
+        hitSlop={8}
+        style={[styles.check, task.done && styles.checkDone]}
+      >
+        {task.done && <Text style={styles.checkMark}>✓</Text>}
+      </Pressable>
+
+      <View style={styles.body}>
+        <Text
+          style={[styles.title, dark && styles.textLight, task.done && styles.titleDone]}
+          numberOfLines={1}
+        >
+          {task.title}
+        </Text>
+        <Text style={styles.meta}>
+          {task.course} · {task.due}
+        </Text>
+      </View>
+
+      <View style={[styles.badge, { backgroundColor: p.bg }]}>
+        <Text style={[styles.badgeText, { color: p.fg }]}>{p.label}</Text>
+      </View>
+    </View>
+  );
+}
+
+export default function App() {
+  const { width } = useWindowDimensions();
+  const dark = useColorScheme() === "dark";
+  const lebar = width >= 768;
+  const [tugas, setTugas] = useState(DATA);
+
+  function toggle(id) {
+    setTugas((lama) => lama.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
+  }
+
+  return (
+    <ScrollView
+      style={[styles.screen, dark && styles.screenDark]}
+      contentContainerStyle={styles.content}
+    >
+      <Text style={[styles.heading, dark && styles.textLight]}>Tugas Minggu Ini</Text>
+      <View style={[styles.list, lebar && styles.grid]}>
+        {tugas.map((t) => (
+          <View key={t.id} style={lebar ? styles.gridItem : null}>
+            <TaskCard task={t} dark={dark} onToggle={() => toggle(t.id)} />
+          </View>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: "#f1f5f9" },
+  screenDark: { backgroundColor: "#0f172a" },
+  content: { padding: 16, gap: 12 },
+  heading: {
+    fontWeight: "bold",
+    color: "#0f172a",
+    ...Platform.select({
+      ios: { fontSize: 28 },
+      android: { fontSize: 22 },
+      default: { fontSize: 24 },
+    }),
+  },
+  textLight: { color: "#f8fafc" },
+  list: { gap: 12 },
+  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
+  gridItem: { width: "48%" },
+  card: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+    boxShadow: "0 2px 8px rgba(15, 23, 42, 0.08)",
+  },
+  cardDark: { backgroundColor: "#1e293b" },
+  check: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#2563eb",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkDone: { backgroundColor: "#2563eb" },
+  checkMark: { color: "#ffffff", fontWeight: "bold" },
+  body: { flex: 1, gap: 4 },
+  title: { fontSize: 16, fontWeight: "600", color: "#0f172a" },
+  titleDone: { textDecorationLine: "line-through", color: "#94a3b8" },
+  meta: { fontSize: 13, color: "#64748b" },
+  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  badgeText: { fontSize: 12, fontWeight: "bold" },
+});
+`} />
+
+Dua percobaan kecil di pratinjau Snack (editor React Native online yang tertanam di halaman ini):
+
+1. Ubah `width >= 768` menjadi `width >= 300`. Grid dua kolom akan terlihat walau pratinjaunya sempit.
+2. Hapus `flex: 1` dari `styles.body`. Label prioritas tidak lagi terdorong ke kanan, karena teks berhenti mengambil ruang kosong.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Layout tidak sesuai harapan?">
+
+- **Konten hanya setinggi isinya, tidak bisa ditengahkan**: `View` terluar belum diberi `flex: 1`. Tanpa itu, `justifyContent: "center"` tidak punya ruang untuk menengahkan. Tambahkan `flex: 1` pada container layar.
+- **Kotak menumpuk ke bawah padahal ingin berjajar**: kamu lupa bahwa default-nya `column`. Tambahkan `flexDirection: "row"`.
+- **Warna atau ukuran font di `View` tidak berefek pada teks**: style tidak menurun. Pasang `color` dan `fontSize` langsung di `Text`.
+- **Teks panjang mendorong label keluar layar**: beri `flex: 1` pada pembungkus teks dan `numberOfLines={1}` pada `Text`.
+- **Menulis `padding: "16px"`**: React Native tidak mengenal satuan `px`, `rem`, atau `em`, jadi gaya itu tidak bekerja. Tulis angka saja: `padding: 16`.
+- **`Invalid hook call. Hooks can only be called inside of the body of a function component.`**: artinya hook dipanggil di luar komponen. Misalnya kamu memanggil `useWindowDimensions` atau `useColorScheme` di atas `StyleSheet.create`. Pindahkan pemanggilan hook ke dalam fungsi komponen, lalu terapkan nilainya lewat array style (`[styles.row, { flexDirection: baris ? "row" : "column" }]`).
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Baris statistik responsif" difficulty="sedang" hints={["Setiap kotak diberi `flex: 1` agar lebarnya sama.", "Gunakan `useWindowDimensions` lalu ubah `flexDirection` berdasarkan `width`.", "Jarak antarkotak cukup dengan `gap` pada container."]}>
+
+Buat layar `src/app/index.js` berisi tiga kotak statistik tugas Andi: **Total 8**, **Selesai 3**, dan **Belum 5**.
+
+1. Di layar yang lebarnya minimal 360 dp, susun ketiga kotak dalam satu baris. Lebarnya sama dan jaraknya 12 dp.
+2. Di layar yang lebih sempit, tumpuk kotak ke bawah.
+3. Tulis angka besar dan tebal, label kecil berwarna abu-abu. Semuanya rata tengah di dalam kotak.
+4. Bonus: buat latar layar gelap kalau `useColorScheme()` bernilai `"dark"`.
+
+<Solution>
+
+```jsx title="src/app/index.js"
+import { StyleSheet, Text, useColorScheme, useWindowDimensions, View } from "react-native";
+
+const STATISTIK = [
+  { label: "Total", value: 8 },
+  { label: "Selesai", value: 3 },
+  { label: "Belum", value: 5 },
+];
+
+export default function Index() {
+  const { width } = useWindowDimensions();
+  const dark = useColorScheme() === "dark";
+  const baris = width >= 360;
+
+  return (
+    <View style={[styles.screen, dark && styles.screenDark]}>
+      <View style={[styles.row, { flexDirection: baris ? "row" : "column" }]}>
+        {STATISTIK.map((s) => (
+          <View key={s.label} style={styles.box}>
+            <Text style={styles.value}>{s.value}</Text>
+            <Text style={styles.label}>{s.label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, justifyContent: "center", padding: 16, backgroundColor: "#f1f5f9" },
+  screenDark: { backgroundColor: "#0f172a" },
+  row: { gap: 12 },
+  box: {
+    flex: 1,
+    alignItems: "center",
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+  },
+  value: { fontSize: 28, fontWeight: "bold", color: "#2563eb" },
+  label: { fontSize: 13, color: "#64748b" },
+});
+```
+
+Cara kerjanya:
+
+- `flex: 1` pada setiap kotak membagi lebar baris sama rata, seperti martabak yang dibagi tiga. `gap` di container mengatur jaraknya.
+- `flexDirection` dihitung dari `width`, jadi layout langsung berganti saat HP diputar.
+- Pada mode kolom, `flex: 1` tidak membuat kotak meninggi, karena container hanya setinggi isinya.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Ada tiga `View` di dalam sebuah container tanpa style apa pun. Bagaimana susunannya?",
+    options: ["Berjajar dari kiri ke kanan", "Dari atas ke bawah", "Bertumpuk di posisi yang sama", "Berjajar lalu otomatis pindah baris"],
+    answer: 1,
+    explain: "Di React Native, `flexDirection` bawaannya `column`, jadi anak tersusun dari atas ke bawah. Di web bawaannya `row`. Pindah baris otomatis juga tidak terjadi, karena `flexWrap` bawaannya `nowrap`.",
+  },
+  {
+    q: "Container memakai `flexDirection: \"row\"`. Properti apa yang menaruh anak di tengah secara vertikal?",
+    options: ["`justifyContent: \"center\"`", "`textAlign: \"center\"`", "`alignItems: \"center\"`", "`flexWrap: \"wrap\"`"],
+    answer: 2,
+    explain: "Pada `row`, sumbu utama arahnya horizontal. Berarti arah vertikal adalah sumbu silang, dan sumbu silang diatur oleh `alignItems`. `justifyContent` hanya mengatur sumbu utama (horizontal).",
+  },
+  {
+    q: "`<View style={{ color: \"red\" }}><Text>Halo</Text></View>`. Apa warna teks \"Halo\"?",
+    options: ["Default (hitam), karena style tidak menurun dari `View`", "Merah", "Error, karena `View` tidak boleh punya style", "Tergantung tema perangkat"],
+    answer: 0,
+    explain: "React Native tidak punya cascade, seperti cat dinding yang tidak menular ke tinta pulpen. Warna harus dipasang langsung di `Text`. Pewarisan hanya terjadi dari `Text` ke `Text` di dalamnya.",
+  },
+  {
+    q: "Kenapa `useWindowDimensions` lebih baik daripada `Dimensions.get(\"window\")` untuk layout responsif?",
+    options: ["Karena satuannya px, bukan dp", "Karena hanya bekerja di tablet", "Karena otomatis menambahkan `flexWrap`", "Karena komponen otomatis render ulang saat ukuran layar berubah"],
+    answer: 3,
+    explain: "Hook ini terus memantau ukuran layar, misalnya saat HP diputar, lalu menggambar ulang komponen. `Dimensions.get` hanya membaca nilai sekali. Keduanya sama-sama memakai dp, bukan px.",
+  },
+  {
+    q: "Dalam satu baris ada dua kotak: kotak A `flex: 2` dan kotak B `flex: 1`. Ruang kosongnya 300 dp. Berapa lebar kotak A?",
+    options: ["100 dp", "150 dp", "200 dp", "300 dp"],
+    answer: 2,
+    explain: "Ruang dibagi 2 + 1 = 3 bagian, seperti martabak dipotong tiga. A mendapat 2 bagian (200 dp) dan B 1 bagian (100 dp). 150 dp terjadi kalau keduanya sama-sama `flex: 1`.",
+  },
+]} />
+
+## Ringkasan
+
+- Gaya ditulis dengan `StyleSheet.create`. Nama properti memakai camelCase dan angkanya tanpa satuan (dp). Array style dipakai untuk gaya bersyarat, dan yang paling belakang menang.
+- Style **tidak menurun**. Pasang gaya teks langsung di `Text`. Hanya `Text` di dalam `Text` yang mewarisi.
+- Setiap `View` sudah memakai Flexbox, dengan bawaan `flexDirection: "column"` dan `flexShrink: 0`. `justifyContent` mengatur sumbu utama, `alignItems` mengatur sumbu silang.
+- `flex: 1` mengambil ruang kosong, `gap` memberi jarak, dan `flexWrap: "wrap"` memindahkan anak ke baris baru.
+- Untuk layout responsif, pakai persentase dan `useWindowDimensions`. Pakai `Platform.select` untuk nilai yang beda per OS, dan `useColorScheme` untuk dark mode.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Simpan pola `TaskCard` ini. Di aplikasi `kuliah-app` (Track 3), kartu yang sama dipindah ke `src/components/task-card.js` dan diisi data dari API. Sebelum itu, pelajari cara menampilkan daftar panjang secara efisien di [FlatList](/belajar/react-native/flatlist).
+
+</Callout>

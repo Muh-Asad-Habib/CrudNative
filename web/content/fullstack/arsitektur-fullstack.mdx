@@ -1,0 +1,675 @@
+## Pengantar
+
+Di Track 1 kamu membuat `belajar-api` sampai rapi: ada route, validasi, Prisma, dan pagination. Di Track 2 kamu
+membuat layar React Native. Tapi data di layar itu masih array yang kamu ketik sendiri di kode.
+
+Mulai pelajaran ini, dua bagian itu disambung. Layar di HP meminta data ke **server** (komputer yang menjalankan API,
+di sini laptopmu). Server mengambil data dari **database** (tempat data disimpan permanen). Hasilnya dikirim balik dan
+muncul di layar. Aplikasi yang punya ketiga bagian ini disebut aplikasi **full-stack**.
+
+Sebelum menulis kode, kita lihat dulu peta besarnya supaya kamu tidak tersesat.
+
+<Callout type="analogi" title="Seperti memesan makanan di kantin kampus">
+
+Kamu memesan nasi goreng lewat pelayan. Pelayan membawa pesananmu ke kasir untuk dicatat. Sebelum masuk dapur,
+pesanan dicek dulu: menunya ada dan porsinya jelas. Koki memasak dengan bahan dari gudang. Pelayan lalu membawa nasi
+goreng kembali ke mejamu.
+
+- Kamu yang memesan = layar aplikasi di HP.
+- Pelayan = fungsi `apiFetch` yang mengirim permintaan.
+- Kasir = route Express yang menerima pesanan.
+- Petugas yang mengecek pesanan = validasi Zod.
+- Koki = service, tempat aturan aplikasi.
+- Gudang bahan = Prisma + SQLite (database).
+
+Kalau menu habis, pelayan kembali dan bilang "maaf, habis". Dia tidak menghilang begitu saja. Di aplikasi, kabar itu
+berupa pesan error. Bedanya dengan kantin sungguhan: semua "petugas" ini bekerja dalam hitungan milidetik.
+
+</Callout>
+
+Pelajaran ini memetakan setiap "petugas" itu ke file nyata di proyek.
+
+## Gambaran besar: perjalanan satu request
+
+Kita pakai contoh sederhana. Kamu mengetuk tugas nomor 5 untuk melihat detailnya. Aplikasi lalu mengirim **request**
+(permintaan dari aplikasi ke server) `GET /api/tasks/5`. Berikut perjalanan request itu dari layar sampai database.
+
+<Flow
+  nodes={["Layar Expo", "apiFetch", "Route Express", "Validasi Zod", "Service", "Prisma", "SQLite"]}
+  labels={["panggil fungsi", "HTTP + JSON", "req.params", "data bersih", "method JS", "SQL"]}
+  caption="GET /api/tasks/5: dari ketukan jari sampai query database"
+/>
+
+Tiap kotak di diagram adalah satu **lapisan**, yaitu bagian kode dengan satu tugas saja, seperti satu petugas di
+kantin tadi. Kalau kamu tahu siapa mengerjakan apa, mencari bug jadi lebih mudah. Cukup tanya: "kesalahan ini terjadi
+di lapisan mana?"
+
+| Lapisan | Lokasi | Tugasnya |
+| --- | --- | --- |
+| Layar | `kuliah-app/src/app/tasks/[id]/index.js` | Menampilkan data, loading, dan pesan error |
+| Klien HTTP | `kuliah-app/src/lib/api.js` | Menyusun URL, header, JSON, timeout; mengubah error jadi `ApiError` |
+| Route | `api/src/modules/tasks/tasks.routes.ts` | Mencocokkan method + path, memanggil service, mengirim respons |
+| Validasi | `api/src/middleware/validate.ts` + `tasks.schemas.ts` | Menolak input yang salah bentuk dengan 400 |
+| Service | `api/src/modules/tasks/tasks.service.ts` | Aturan bisnis: "tugas hanya milik pemiliknya" |
+| Data | `api/src/lib/prisma.ts` → `dev.db` | Prisma menerjemahkan method JS menjadi SQL untuk SQLite |
+
+Perjalanan pulangnya berkebalikan:
+
+1. SQLite mengembalikan baris data.
+2. Prisma mengubah baris itu menjadi objek JavaScript.
+3. Service menyerahkan objek itu ke route.
+4. Route mengirim **response** (jawaban server) lewat `res.json({ data: task })`. Isinya berformat **JSON**, yaitu
+   teks berisi data dengan kolom tetap, mirip nota belanja.
+5. `apiFetch` membaca JSON itu dan mengubahnya kembali menjadi objek.
+6. Layar menyimpan data itu di **state** (data yang kalau berubah membuat layar digambar ulang). React lalu
+   menampilkan tugasnya.
+
+### Jalur ketika terjadi error
+
+Bagaimana kalau tugas id 5 tidak ada, atau milik user lain? Service akan **melempar error** (menghentikan proses dan
+melaporkan masalahnya). Error ini juga menempuh perjalanan yang sudah diatur.
+
+<Callout type="analogi" title="Seperti paket yang gagal dikirim">
+
+Kurir JNE tidak menemukan alamat penerima. Paketnya tidak dibuang. Status di resi berubah menjadi "alamat tidak
+ditemukan", lalu kabar itu sampai ke pengirim. Pengirim membaca alasannya dan memutuskan langkah berikutnya.
+
+- Kurir yang gagal menemukan alamat = service yang tidak menemukan tugas.
+- Status di resi = status code 404 plus JSON error.
+- Pengirim yang membaca kabar = layar yang menampilkan pesan error.
+
+</Callout>
+
+<Flow
+  nodes={["Service: HttpError.notFound", "Error handler", "404 + JSON error", "apiFetch: throw ApiError", "Layar: pesan error"]}
+  labels={["throw", "res.status(404)", "HTTP", "catch"]}
+  caption="Error tidak hilang di tengah jalan, bentuknya diubah di setiap batas"
+/>
+
+Di Express 5, error yang dilempar dari handler `async` otomatis diteruskan ke **error handler** pusat. Error handler
+adalah satu fungsi yang mengubah semua error menjadi response JSON yang rapi, mirip meja customer service. Kamu sudah
+mempelajarinya di [Validasi & Error Handling](/belajar/crud-backend/validasi-error-handling).
+
+Di sisi aplikasi, `apiFetch` (kamu tulis di pelajaran berikutnya) mengubah response error menjadi objek `ApiError`.
+Objek ini punya tiga isi: `status`, `code`, dan `message`. Jadi layar cukup menampilkan `error.message` ke user.
+
+## Kontrak API: "perjanjian" antara aplikasi dan server
+
+<Callout type="analogi" title="Seperti formulir KRS dari bagian akademik">
+
+Bagian akademik dan mahasiswa sepakat soal isi formulir KRS: kolom NIM, nama, dan kode mata kuliah. Karena formatnya
+tetap, mahasiswa bisa mengisi formulir di kos. Petugas akademik bisa menyiapkan sistem input di kantornya. Mereka tidak
+perlu bertemu dulu.
+
+- Formulir dengan kolom tetap = kontrak API.
+- Mahasiswa yang mengisi = aplikasi yang mengirim request.
+- Petugas akademik yang memproses = server.
+
+Kalau petugas tiba-tiba mengganti kolom "NIM" menjadi "Nomor Mahasiswa" tanpa pengumuman, formulir yang masuk jadi
+kacau. Hal yang sama terjadi kalau server mengganti nama field tanpa kabar.
+
+</Callout>
+
+Aplikasi dan server sering dikerjakan orang yang berbeda, bahkan tim yang berbeda. Mereka bisa bekerja bersamaan karena
+berpegang pada satu dokumen: **kontrak API** ([glosarium](/glosarium#api-contract)). Kontrak menjawab hal-hal ini:
+
+- **Endpoint** apa saja yang ada. Endpoint adalah alamat tujuan request, misalnya `/api/tasks`, mirip nomor loket di
+  kantor pos.
+- **Method** apa yang dipakai: `GET` untuk membaca, `POST` untuk membuat, `PATCH` untuk mengubah sebagian, dan
+  seterusnya.
+- Isi **body**, yaitu data yang ikut dikirim bersama request.
+- Bentuk response dan **status code**. Status code adalah angka hasil, mirip status di resi paket: 200 berhasil,
+  404 tidak ditemukan.
+- Kode error apa saja yang mungkin muncul.
+
+Contoh satu butir kontrak untuk daftar tugas:
+
+```http
+GET /api/tasks?status=TODO&limit=2 HTTP/1.1
+Host: localhost:3000
+Authorization: Bearer <access-token>
+```
+
+```json
+{
+  "data": [
+    {
+      "id": 10,
+      "title": "Daftar ulang semester dan isi KRS",
+      "description": "Jangan lupa minta tanda tangan dosen wali.",
+      "deadline": "2026-11-02T15:59:00.000Z",
+      "status": "TODO",
+      "priority": "HIGH",
+      "courseId": null,
+      "course": null,
+      "attachments": [],
+      "createdAt": "2026-10-30T14:14:42.256Z",
+      "updatedAt": "2026-10-30T14:14:42.256Z"
+    }
+  ],
+  "meta": { "page": 1, "limit": 2, "total": 6, "totalPages": 3 }
+}
+```
+
+Cara membaca contoh di atas:
+
+- Baris pertama meminta daftar tugas berstatus `TODO`, paling banyak 2 per halaman. Bagian setelah tanda `?` disebut
+  **query parameter**, yaitu pilihan tambahan di URL, seperti filter di aplikasi belanja online.
+- Baris `Authorization` berisi **token**, semacam kartu tanda masuk yang membuktikan kamu sudah login.
+- Response-nya punya dua bagian. `data` berisi daftar tugas. `meta` berisi info halaman: halaman ke berapa, berapa
+  item per halaman, dan total semuanya.
+
+Tanggal di atas hanya contoh. **Seed** (data contoh yang otomatis diisi ke database) membuat deadline berdasarkan hari
+kamu menjalankannya, jadi tanggal di laptopmu akan berbeda.
+
+Ini janji-janji utama API pendamping. Kamu akan memakainya terus sepanjang Track 3:
+
+| Situasi | Bentuk respons |
+| --- | --- |
+| Daftar (list) | `200` + `{ data: [...], meta: { page, limit, total, totalPages } }` |
+| Satu item | `200` (atau `201` saat dibuat) + `{ data: {...} }` |
+| Hapus berhasil | `204 No Content`, tanpa body |
+| Error apa pun | `{ error: { message, code, details? } }`, misalnya `VALIDATION_ERROR` 400, `UNAUTHORIZED` 401, `NOT_FOUND` 404 |
+| Endpoint terlindungi | Wajib header `Authorization: Bearer <access-token>` |
+
+<Compare>
+<CompareItem title="Tanpa kontrak" tone="bad">
+
+Backend diam-diam mengganti nama field `status` menjadi `state`. Aplikasi tidak error. Tapi semua badge status tampil
+kosong, karena `task.status` sekarang `undefined`. Bug ini baru ketahuan setelah user mengeluh.
+
+</CompareItem>
+<CompareItem title="Dengan kontrak" tone="good">
+
+Mengganti nama field dianggap **breaking change**, yaitu perubahan yang membuat kode lama rusak. Perubahan seperti ini
+dibahas dulu dan kontraknya diperbarui. Setelah itu aplikasi disesuaikan pada waktu yang sama. Kedua sisi juga bisa
+menulis kode bersamaan karena sudah tahu bentuk datanya.
+
+</CompareItem>
+</Compare>
+
+<Callout type="tip" title="Kontrak jadi acuan saat ada yang tidak cocok">
+
+Kalau aplikasi dan server tidak cocok, jangan langsung menyalahkan salah satunya. Buka kontraknya. Pihak yang
+menyimpang dari kontrak, itulah yang diperbaiki. Di kursus ini, kontraknya adalah tabel-tabel di pelajaran ini plus
+kode route di `api/src/modules/*/*.routes.ts`.
+
+</Callout>
+
+## Dari belajar-api ke API pendamping
+
+<Callout type="analogi" title="Seperti pindah dari dapur kos ke dapur kantin">
+
+Di Track 1 kamu belajar memasak di dapur kos sendiri. Sekarang kamu bekerja sebagai pelayan di kantin yang dapurnya
+sudah lengkap dan dikelola orang lain. Kamu tidak perlu membangun dapur lagi. Kamu cukup tahu menu apa saja yang ada
+dan cara memesannya.
+
+- Dapur kos = `belajar-api` buatanmu.
+- Dapur kantin yang sudah jadi = API pendamping di folder `api/`.
+- Daftar menu = kontrak API.
+
+</Callout>
+
+Di Track 3 kita tidak memakai `belajar-api` buatanmu. Kita memakai **API pendamping** di folder `api/`. Alasannya
+praktis. Aplikasi kuliah butuh login, warna untuk tiap mata kuliah, tenggat, dan upload lampiran. Semua itu sudah
+disiapkan dan dites di `api/`, jadi kamu bisa fokus ke sisi aplikasi. Strukturnya mirip dengan yang kamu bangun di
+[Struktur Proyek Backend](/belajar/crud-backend/struktur-proyek-backend), jadi isinya tidak akan terasa asing.
+
+| Aspek | `belajar-api` (Track 1) | API pendamping `api/` |
+| --- | --- | --- |
+| Bahasa | JavaScript (ESM) | TypeScript, dijalankan dengan `tsx` |
+| Status tugas | `done: true/false` | `status`: `TODO`, `IN_PROGRESS`, `DONE` |
+| Prioritas | `rendah`, `sedang`, `tinggi` | `LOW`, `MEDIUM`, `HIGH` |
+| Tenggat | tidak ada | `deadline` (string ISO atau `null`) |
+| Mata kuliah | `courseId` | `courseId` + objek `course` berisi `id`, `name`, `color` |
+| Lampiran | tidak ada | `attachments` (array gambar) |
+| Login | tidak ada | JWT: access token 15 menit + refresh token |
+| Health check | `{ data: { status: "ok" } }` | `{ status: "ok" }` |
+| Format list, item, error | `{ data, meta }`, `{ data }`, `{ error }` | sama persis |
+
+Beberapa istilah di tabel perlu dijelaskan:
+
+- **TypeScript** adalah JavaScript plus label tipe data, mirip label nama di toples bumbu. `tsx` adalah alat untuk
+  menjalankan file TypeScript secara langsung.
+- **JWT** (JSON Web Token) adalah tiket digital yang kamu dapat setelah login, mirip gelang tiket konser. Access token
+  berlaku 15 menit. Refresh token dipakai untuk meminta access token baru tanpa login ulang.
+- **Enum** adalah daftar nilai yang sudah ditentukan. Contohnya, status hanya boleh `TODO`, `IN_PROGRESS`, atau `DONE`.
+
+Nilai enum sengaja ditulis dalam bahasa Inggris dan huruf besar. Nilai seperti ini tidak berubah-ubah dan mudah
+dibandingkan di kode. Label berbahasa Indonesia seperti "Belum mulai" atau "Prioritas tinggi" adalah urusan tampilan.
+Label itu dibuat di aplikasi pada pelajaran [Menampilkan Data](/belajar/fullstack/read-data).
+
+## Tur folder api/
+
+<Callout type="analogi" title="Seperti denah gedung kampus">
+
+Kamu tidak perlu merenovasi gedung rektorat. Tapi kamu perlu tahu letak BAAK, perpustakaan, dan ruang dosen supaya
+tidak bingung saat ada urusan. Folder `api/` adalah gedungnya. Tiap folder di dalamnya adalah ruangan dengan fungsi
+masing-masing. Diagram di bawah adalah denahnya.
+
+</Callout>
+
+Kamu tidak perlu mengubah kode backend. Tapi kamu perlu tahu di mana mencari sesuatu saat debugging (mencari penyebab
+bug lalu memperbaikinya).
+
+<FileTree title="api" tree={`
+prisma/
+  schema.prisma # model User, Course, Task, Attachment, RefreshToken
+  migrations/ # riwayat perubahan skema
+  seed.ts # akun demo + 3 mata kuliah + 10 tugas
+src/
+  * server.ts # menjalankan createApp() di port .env
+  * app.ts # middleware, route /api/*, 404, error handler
+  config/
+    env.ts # membaca & memvalidasi .env dengan Zod
+  lib/
+    prisma.ts # PrismaClient + adapter better-sqlite3
+    http-error.ts # HttpError.notFound(), .validation(), ...
+    pagination.ts
+  middleware/
+    auth.ts # requireAuth: cek header Bearer
+    validate.ts # validasi params/query/body dengan Zod
+    error-handler.ts
+  modules/
+    auth/ # register, login, refresh, logout, me
+    courses/ # CRUD mata kuliah
+    tasks/
+      * tasks.routes.ts
+      tasks.schemas.ts
+      * tasks.service.ts
+  generated/
+    prisma/ # hasil prisma generate, jangan diedit
+tests/ # Vitest + Supertest (dibahas di Track 4)
+.env.example
+package.json
+`} />
+
+Folder yang paling sering kamu buka:
+
+- `prisma/schema.prisma` berisi bentuk tabel-tabel database.
+- `src/app.ts` adalah tempat semua route dan **middleware** dipasang. Middleware adalah kode yang memeriksa request
+  sebelum sampai ke route, seperti satpam di gerbang kampus.
+- `src/modules/tasks/` berisi semua kode tentang tugas: route, skema validasi, dan service.
+
+Sekarang lihat route untuk detail tugas. Kodenya TypeScript, tapi polanya sama dengan versi JavaScript-mu:
+
+```ts title="api/src/modules/tasks/tasks.routes.ts"
+// Semua endpoint tugas wajib login.
+tasksRouter.use(requireAuth);
+
+tasksRouter.get("/:id", validate({ params: taskIdParamsSchema }), async (req, res) => {
+  const task = await tasksService.getTask(getUserId(req), req.params.id);
+  res.json({ data: task });
+});
+```
+
+Artinya dalam bahasa sehari-hari:
+
+- `tasksRouter.use(requireAuth)`: semua route tugas harus lolos cek login dulu.
+- `tasksRouter.get("/:id", ...)`: route ini menangani `GET /api/tasks/5`, `GET /api/tasks/7`, dan seterusnya. `:id`
+  adalah bagian path yang berubah-ubah.
+- `validate(...)` memastikan `id` adalah bilangan bulat positif sebelum handler dijalankan.
+- Handler memanggil service, lalu mengirim hasilnya sebagai `{ data: task }`.
+
+Ini service-nya. **Aturan bisnis** (aturan khas aplikasimu, misalnya "user hanya boleh melihat tugasnya sendiri")
+disimpan di sini:
+
+```ts title="api/src/modules/tasks/tasks.service.ts"
+export async function getTask(userId: number, id: number) {
+  // Tugas milik user lain diperlakukan seperti tidak ada (404), bukan 403.
+  const task = await prisma.task.findFirst({ ...taskQueryArgs, where: { id, userId } });
+  if (!task) {
+    throw HttpError.notFound("Tugas tidak ditemukan");
+  }
+  return task;
+}
+```
+
+Baca kodenya begini: "cari satu tugas yang id-nya cocok **dan** pemiliknya adalah user yang sedang login". Kalau tidak
+ketemu, service melempar error 404. Karena service butuh `userId`, kamu harus login dulu sebelum bisa membaca tugas
+apa pun.
+
+Kenapa 404 (tidak ditemukan), bukan 403 (dilarang)? Dengan 404, orang lain bahkan tidak tahu bahwa tugas dengan id itu
+ada. Jadi data user lain lebih terlindungi.
+
+### Arah struktur kuliah-app
+
+`api/` sudah ditulis dengan TypeScript dan dibagi per modul. `kuliah-app` milikmu akan menyusul pelan-pelan. Sepanjang
+Track 3 aplikasinya ditulis dengan JavaScript. Di Track Expert, aplikasinya dipindah ke TypeScript dan dirapikan per
+fitur. Struktur akhirnya seperti ini:
+
+- `src/app/`: layar-layar Expo Router.
+- `src/features/<fitur>/`: kode per fitur, misalnya auth, courses, dan tasks.
+- `src/lib/`: klien API dan penyimpanan token.
+- `src/components/ui/`: komponen umum seperti tombol, input, dan tampilan saat data kosong.
+- `src/theme/`: warna.
+
+Gambaran lengkapnya ada di bagian akhir [Capstone](/belajar/fullstack/capstone).
+
+## Rencana proyek kuliah-app
+
+Aplikasi yang kamu bangun bernama `kuliah-app` dan ditulis dengan JavaScript. Di bawah ini peta file yang akan
+terbentuk sepanjang Track 3. Anggap saja ini daftar isi proyekmu. Kamu belum perlu membuat apa-apa sekarang.
+
+<FileTree title="kuliah-app" tree={`
+.env # EXPO_PUBLIC_API_URL
+src/
+  app/
+    * _layout.js # Stack navigator
+    * index.js # daftar tugas
+    tasks/
+      new.js # tambah tugas
+      [id]/
+        * index.js # detail tugas
+        edit.js # ubah tugas
+    (auth)/
+      login.js
+      register.js
+  components/
+    * task-card.js
+    task-form.js
+  lib/
+    * api.js # apiFetch + ApiError
+    * dev-auth.js # sementara, dihapus saat autentikasi
+    * labels.js # label & warna status/prioritas
+    query-client.js
+    token-storage.js
+  features/
+    tasks/
+      queries.js # hook TanStack Query
+    auth/
+      auth-context.js
+`} />
+
+| File | Dibuat di pelajaran |
+| --- | --- |
+| `src/lib/api.js`, `src/lib/dev-auth.js` | [Menghubungkan Expo ke API](/belajar/fullstack/menghubungkan-expo-api) |
+| `labels.js`, `task-card.js`, `_layout.js`, `index.js`, `tasks/[id]/index.js` | [Menampilkan Data](/belajar/fullstack/read-data) |
+| `task-form.js`, `tasks/new.js`, `tasks/[id]/edit.js` | [Create & Update](/belajar/fullstack/create-update) |
+| `query-client.js`, `features/tasks/queries.js` | [TanStack Query](/belajar/fullstack/tanstack-query) |
+| `token-storage.js`, `auth-context.js`, `(auth)/*` | [Autentikasi](/belajar/fullstack/autentikasi) |
+
+## Menjalankan API pendamping
+
+Pastikan Node.js versi 22.12 atau lebih baru (`node -v`). Lalu jalankan langkah berikut dari folder proyek kursus.
+
+<Steps>
+<Step title="Masuk ke folder api dan instal dependency">
+
+```bash
+cd api
+npm install
+```
+
+Script `postinstall` otomatis menjalankan `prisma generate`, jadi folder `src/generated/prisma` ikut terbentuk.
+
+</Step>
+<Step title="Buat file .env dari contoh">
+
+File `.env` tidak ikut disimpan di repo, jadi salin dari `.env.example`:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+Copy-Item .env.example .env
+```
+
+</Tab>
+<Tab>
+
+```bash
+cp .env.example .env
+```
+
+</Tab>
+</Tabs>
+
+Isinya sudah siap pakai untuk development. `JWT_ACCESS_SECRET` minimal 32 karakter; untuk latihan nilai contohnya
+cukup, tapi kamu boleh menggantinya dengan string acak dari
+`node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`.
+
+```dotenv title="api/.env"
+NODE_ENV=development
+PORT=3000
+DATABASE_URL="file:./dev.db"
+JWT_ACCESS_SECRET="ganti-dengan-string-acak-yang-panjang-minimal-32-karakter"
+CORS_ORIGIN="*"
+UPLOAD_DIR="uploads"
+```
+
+</Step>
+<Step title="Siapkan database dan data contoh">
+
+```bash
+npm run db:reset
+```
+
+Perintah ini menjalankan migrasi dari nol, generate Prisma Client, lalu seed. Di akhir kamu akan melihat:
+
+```txt
+Seed selesai:
+  User   : demo@kampus.ac.id / password123
+  Course : 3 mata kuliah
+  Task   : 10 tugas
+```
+
+</Step>
+<Step title="Jalankan server development">
+
+```bash
+npm run dev
+```
+
+```txt
+API berjalan di http://localhost:3000/api
+  Dari HP di Wi-Fi yang sama: http://192.168.1.10:3000/api
+  Dari emulator Android:      http://10.0.2.2:3000/api
+```
+
+Alamat IP di baris kedua akan berbeda di laptopmu. Catat baris itu, karena pelajaran berikutnya memakainya.
+Biarkan terminal ini tetap terbuka selama kamu mengerjakan aplikasi.
+
+</Step>
+</Steps>
+
+<Callout type="danger" title="db:reset menghapus semua data">
+
+`npm run db:reset` mengosongkan database lalu mengisinya ulang dengan data seed. Semua tugas yang kamu buat sendiri
+akan hilang. Pakai hanya saat setup awal atau ketika data latihanmu sudah berantakan dan ingin mulai bersih.
+
+</Callout>
+
+## Mencoba API dari terminal
+
+Sebelum menyentuh aplikasi, buktikan dulu bahwa API-nya sehat. Ini kebiasaan penting: kalau API sudah benar di
+terminal tapi aplikasi gagal, masalahnya pasti di sisi aplikasi (atau jaringan). Buka terminal **kedua**.
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+Invoke-RestMethod http://localhost:3000/api/health
+
+$login = Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/auth/login -ContentType "application/json" -Body '{"email":"demo@kampus.ac.id","password":"password123"}'
+$token = $login.data.accessToken
+
+$hasil = Invoke-RestMethod "http://localhost:3000/api/tasks?limit=2" -Headers @{ Authorization = "Bearer $token" }
+$hasil.data | Select-Object id, title, status, priority
+$hasil.meta
+```
+
+```txt
+status
+------
+ok
+
+id title                             status priority
+-- -----                             ------ --------
+10 Daftar ulang semester dan isi KRS TODO   HIGH
+ 9 Baca materi model OSI vs TCP/IP   TODO   LOW
+
+page limit total totalPages
+---- ----- ----- ----------
+   1     2    10          5
+```
+
+</Tab>
+<Tab>
+
+```bash
+curl http://localhost:3000/api/health
+
+TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"demo@kampus.ac.id","password":"password123"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.accessToken')
+
+curl "http://localhost:3000/api/tasks?limit=2" -H "Authorization: Bearer $TOKEN"
+```
+
+```txt
+{"status":"ok"}
+{"data":[{"id":10,"title":"Daftar ulang semester dan isi KRS",...},{"id":9,"title":"Baca materi model OSI vs TCP/IP",...}],"meta":{"page":1,"limit":2,"total":10,"totalPages":5}}
+```
+
+</Tab>
+</Tabs>
+
+Urutan default-nya `-createdAt` (terbaru dulu), jadi tugas yang terakhir di-seed muncul paling atas. Coba juga tanpa
+header `Authorization`. Kamu akan mendapat `401` dengan pesan `Token akses tidak ditemukan`.
+
+Kalau ingin bermain tanpa terminal, lab di bawah ini adalah **simulasi** API versi `belajar-api` (field `done`,
+prioritas `rendah`/`sedang`/`tinggi`, tanpa login). Bentuk respons `{ data, meta }` dan error-nya sama dengan API
+pendamping, jadi cocok untuk melatih intuisi membaca respons.
+
+<HttpExplorer initialMethod="GET" initialPath="/api/tasks?page=1&limit=2" />
+
+## Kesalahan umum
+
+| Pesan yang muncul | Artinya | Solusi |
+| --- | --- | --- |
+| `Konfigurasi environment tidak valid:` diikuti daftar field | File `.env` belum ada atau isinya salah | Salin `.env.example` ke `.env`, cek `JWT_ACCESS_SECRET` minimal 32 karakter |
+| `Gagal menjalankan server di port 3000: listen EADDRINUSE` | Port 3000 masih dipakai proses lain, sering kali `belajar-api` | Hentikan server lama dengan Ctrl+C di terminalnya, atau ganti `PORT` di `.env` |
+| `401` `Token akses tidak ditemukan` | Lupa header `Authorization` | Login dulu, kirim `Bearer <token>` |
+| `401` `TOKEN_EXPIRED` | Access token berumur lebih dari 15 menit | Login ulang untuk token baru |
+| `429` `RATE_LIMITED` | Lebih dari 20 request login/register dalam 15 menit | Tunggu, atau restart server dev (batasnya disimpan di memori) |
+| `404` `ROUTE_NOT_FOUND` | Salah ketik path, misalnya `/api/tugas` | Cocokkan dengan tabel kontrak di atas |
+
+<Callout type="warning" title="Jangan jalankan dua API di port yang sama">
+
+`belajar-api` dan API pendamping sama-sama memakai port 3000. Selama Track 3, matikan `belajar-api`. Kalau
+aplikasi menampilkan data aneh (field `done` muncul), kemungkinan besar kamu masih terhubung ke API yang salah.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Telusuri perjalanan PATCH" difficulty="mudah" hints={["Mulai dari `tasks.routes.ts`: cari `tasksRouter.patch`.", "Status yang valid hanya `TODO`, `IN_PROGRESS`, `DONE`."]}>
+
+Andi menandai tugas "Konfigurasi subnetting kelas C" (id 7) sebagai selesai, sehingga aplikasi mengirim
+`PATCH /api/tasks/7` dengan body `{ "status": "DONE" }`. Sebutkan lapisan-lapisan yang dilewati request ini secara
+berurutan beserta file-nya. Lalu tebak: apa respons server kalau body-nya `{ "status": "SELESAI" }`?
+
+<Solution>
+
+1. Layar memanggil `apiFetch("/api/tasks/7", { method: "PATCH", body: { status: "DONE" } })`.
+2. `requireAuth` (`middleware/auth.ts`) memeriksa token.
+3. `validate` (`middleware/validate.ts`) mengecek `params` dan `body` dengan skema di `tasks.schemas.ts`.
+4. Route `tasksRouter.patch("/:id", ...)` memanggil `tasksService.updateTask`.
+5. Service memastikan tugas milik user, lalu `prisma.task.update(...)` menulis ke SQLite.
+6. Route membalas `200` + `{ data: task }` dengan `status: "DONE"`.
+
+Dengan `"SELESAI"`, request berhenti di lapisan validasi dan service tidak pernah dipanggil:
+
+```json
+{
+  "error": {
+    "message": "Data yang dikirim tidak valid",
+    "code": "VALIDATION_ERROR",
+    "details": [{ "field": "status", "message": "Status harus TODO, IN_PROGRESS, atau DONE" }]
+  }
+}
+```
+
+</Solution>
+</Exercise>
+
+<Exercise title="Susun query daftar tugas" difficulty="sedang" hints={["Parameter `sort` menerima `deadline` atau `-deadline`.", "Seed berisi 6 tugas berstatus `TODO`."]}>
+
+Sari ingin melihat tugas yang **belum dimulai**, diurutkan dari **tenggat terdekat**, **3 per halaman**. Tulis URL
+request-nya, jalankan dengan token demo, lalu tebak isi `meta` sebelum melihat hasilnya.
+
+<Solution>
+
+```http
+GET /api/tasks?status=TODO&sort=deadline&limit=3
+Authorization: Bearer <access-token>
+```
+
+Dengan data seed yang baru di-reset, hasilnya tiga tugas: "Konfigurasi subnetting kelas C", "Daftar ulang semester
+dan isi KRS", lalu "Integrasi aplikasi dengan REST API". `meta`-nya:
+
+```json
+{ "page": 1, "limit": 3, "total": 6, "totalPages": 2 }
+```
+
+`total` adalah jumlah semua tugas yang cocok dengan filter (6), bukan jumlah item di halaman ini. Tugas tanpa
+deadline selalu ditaruh paling akhir, sehingga baru muncul di halaman 2.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Aplikasi mengirim `status: \"SELESAI\"` saat mengubah tugas. Di lapisan mana request ini ditolak?",
+    options: ["Di layar Expo", "Di middleware validasi (Zod)", "Di Prisma saat menulis ke database", "Di SQLite"],
+    answer: 1,
+    explain: "Middleware `validate` memeriksa body dengan skema Zod sebelum service dipanggil, lalu membalas 400 `VALIDATION_ERROR`. Prisma dan SQLite tidak pernah tersentuh.",
+  },
+  {
+    q: "Bentuk respons `GET /api/tasks` dari API pendamping adalah…",
+    options: ["Array tugas langsung", "`{ tasks: [...] }`", "`{ data: { tasks: [...] } }`", "`{ data: [...], meta: { page, limit, total, totalPages } }`"],
+    answer: 3,
+    explain: "Daftar selalu dibungkus `data` plus `meta` pagination. Kontrak inilah yang membuat aplikasi tahu harus membaca `json.data`.",
+  },
+  {
+    q: "Saat `npm run dev` di folder `api/`, muncul `listen EADDRINUSE: address already in use`. Penyebab paling mungkin?",
+    options: ["Port 3000 masih dipakai proses lain, misalnya `belajar-api`", "File `.env` belum dibuat", "Database belum di-seed", "Access token sudah kedaluwarsa"],
+    answer: 0,
+    explain: "EADDRINUSE berarti port sudah terpakai. `.env` yang hilang memunculkan pesan konfigurasi tidak valid, dan masalah seed atau token baru terlihat saat request.",
+  },
+  {
+    q: "User demo meminta `GET /api/tasks/42`, padahal tugas 42 milik user lain. Apa respons API pendamping?",
+    options: ["200 dengan data tugas", "401 `UNAUTHORIZED`", "404 `NOT_FOUND` \"Tugas tidak ditemukan\"", "403 `FORBIDDEN`"],
+    answer: 2,
+    explain: "Service menyaring `where: { id, userId }`, jadi tugas milik orang lain diperlakukan seolah tidak ada. Ini menyembunyikan fakta bahwa id tersebut ada.",
+  },
+  {
+    q: "Pernyataan yang BENAR tentang perbedaan `belajar-api` dan API pendamping?",
+    options: ["API pendamping memakai `done: true` seperti `belajar-api`", "API pendamping memakai `status: \"DONE\"` dan prioritas `LOW`/`MEDIUM`/`HIGH`", "Format error keduanya berbeda total", "API pendamping tidak memerlukan login"],
+    answer: 1,
+    explain: "Model tugas berubah (status tiga tahap, prioritas berbahasa Inggris, deadline, lampiran) dan endpoint tugas wajib login, tetapi format `{ data }`, `{ data, meta }`, dan `{ error }` tetap sama.",
+  },
+]} />
+
+## Ringkasan
+
+- Satu request melewati lapisan berurutan: layar → `apiFetch` → route → validasi → service → Prisma → SQLite, lalu
+  kembali dengan urutan terbalik.
+- Error juga punya jalur resmi: `HttpError` → error handler → JSON `{ error }` → `ApiError` → pesan di layar.
+- Kontrak API adalah perjanjian bentuk request/response; perubahan nama field adalah breaking change.
+- Track 3 memakai API pendamping `api/` (TypeScript, JWT, status `TODO|IN_PROGRESS|DONE`), dengan format respons
+  yang sama seperti `belajar-api`.
+- Jalankan API dengan `npm install`, salin `.env`, `npm run db:reset`, lalu `npm run dev` di port 3000.
+- Selalu uji API dari terminal dulu sebelum menyalahkan aplikasi.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Jalankan API pendamping sampai `npm run dev` menampilkan alamat LAN-mu, lalu catat alamat itu. Login dengan akun
+`demo@kampus.ac.id` dari terminal dan pastikan `GET /api/tasks` mengembalikan 10 tugas. Fondasi
+"Aplikasi Tugas & Catatan Kuliah" siap disambungkan ke HP di pelajaran berikutnya.
+
+</Callout>

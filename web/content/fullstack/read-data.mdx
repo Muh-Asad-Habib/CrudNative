@@ -1,0 +1,877 @@
+## Pengantar
+
+<Callout type="analogi" title="Seperti membuka daftar kontak di HP">
+
+Saat kamu membuka aplikasi Kontak, HP menampilkan semua nama. Mengetuk satu nama membuka detailnya: nomor, email, dan foto. Kamu hanya melihat, tidak mengubah apa pun. Itulah **Read**.
+
+Di pelajaran ini, daftar kontak = daftar tugas kuliah, dan detail kontak = layar detail satu tugas. Bedanya, datanya tidak tersimpan di HP. Datanya diambil dari API yang berjalan di laptopmu.
+
+</Callout>
+
+Di pelajaran [Menghubungkan Expo ke API](/belajar/fullstack/menghubungkan-expo-api) kamu sudah membuat `apiFetch` di `src/lib/api.js`. Fungsi ini sudah mengurus tiga hal:
+
+- membaca alamat server dari `EXPO_PUBLIC_API_URL`;
+- mengirim token demo lewat `src/lib/dev-auth.js`;
+- melempar `ApiError` kalau server membalas dengan status gagal.
+
+Sekarang kita pakai `apiFetch` untuk huruf **R** di [CRUD](/glosarium#crud), yaitu **Read** (membaca data). Aplikasi `kuliah-app` akan menampilkan daftar tugas kuliah yang benar-benar datang dari database, bukan array tiruan lagi.
+
+Di akhir pelajaran ini kamu akan punya:
+
+- layar **daftar tugas** memakai [FlatList](/belajar/react-native/flatlist). Layar ini punya tampilan untuk tiga keadaan: sedang memuat (*loading*), gagal (*error*, dengan tombol "Coba lagi"), dan kosong;
+- **tarik untuk menyegarkan** (*pull-to-refresh*): tarik daftar ke bawah untuk mengambil data terbaru. Data juga diambil ulang otomatis setiap kali kamu kembali ke layar daftar;
+- layar **detail tugas** yang membaca `id` dari URL, termasuk tampilan khusus kalau tugasnya tidak ditemukan (404).
+
+Sebelum mulai, nyalakan API pendamping dengan `npm run dev` di folder `api` (port 3000). Pastikan database sudah diisi data contoh (*seed*) lewat `npm run db:reset`. Data seed berisi 10 tugas milik akun demo, jadi daftarmu langsung terisi.
+
+## Peta file dan alur data
+
+Kita akan menyentuh lima file. Dua file adalah file bantu: `labels.js` di folder `lib` dan `task-card.js` di folder `components`. Tiga file lainnya ada di `src/app/`. Expo Router membaca folder itu untuk membuat layar: satu file = satu layar. Pengecualiannya `_layout.js`, yaitu *layout* (bingkai yang membungkus semua layar, termasuk header di bagian atas).
+
+<FileTree title="kuliah-app" tree={`
+src/
+  app/
+    * _layout.js # Stack: judul header semua layar
+    * index.js # layar daftar tugas
+    tasks/
+      [id]/
+        * index.js # layar detail tugas
+  components/
+    * task-card.js # satu kartu tugas di daftar
+  lib/
+    api.js # apiFetch + ApiError (pelajaran sebelumnya)
+    dev-auth.js # token demo sementara (pelajaran sebelumnya)
+    * labels.js # label & warna status/prioritas
+.env # EXPO_PUBLIC_API_URL
+`} />
+
+Satu kali "baca data" di layar daftar berjalan seperti ini:
+
+<Flow nodes={["Layar daftar fokus", "apiFetch", "GET /api/tasks", "FlatList + TaskCard"]} labels={["useFocusEffect", "Authorization: Bearer", "{ data, meta }"]} caption="Alur membaca daftar tugas dari API" />
+
+Urutannya begini. Layar daftar tampil di depan (istilahnya: mendapat **fokus**), lalu memanggil `apiFetch`. `apiFetch` mengirim `GET /api/tasks` beserta token di header `Authorization`. **Header** adalah keterangan tambahan yang ikut dikirim di luar isi request. Server membalas JSON `{ data, meta }`, lalu FlatList menggambar satu `TaskCard` untuk tiap tugas. Hook `useFocusEffect` di awal alur dibahas di bagian [Refetch saat layar kembali fokus](#refetch-saat-layar-kembali-fokus).
+
+<Callout type="analogi" title="Seperti struk belanja minimarket">
+
+Struk minimarket punya dua bagian. Bagian atas berisi daftar barang yang kamu beli. Bagian bawah berisi ringkasan, misalnya jumlah barang dan total harga.
+
+Respons daftar dari API juga dibagi dua. `data` = daftar barang, yaitu array tugas. `meta` = ringkasan di bagian bawah: total semua tugas, ditambah info halaman. Bagian halaman ini tidak ada di struk. API mencatatnya karena data bisa dibagi per halaman, seperti katalog.
+
+</Callout>
+
+Bentuk ini sudah disepakati di kontrak API. Contohnya seperti ini (dipersingkat, hanya satu tugas):
+
+```json title="GET /api/tasks?limit=50 → 200 OK (dipersingkat)"
+{
+  "data": [
+    {
+      "id": 10,
+      "title": "Daftar ulang semester dan isi KRS",
+      "description": null,
+      "deadline": "2025-05-12T16:59:00.000Z",
+      "status": "TODO",
+      "priority": "HIGH",
+      "courseId": null,
+      "course": null,
+      "attachments": [],
+      "createdAt": "2025-05-08T02:00:00.000Z",
+      "updatedAt": "2025-05-08T02:00:00.000Z"
+    }
+  ],
+  "meta": { "page": 1, "limit": 50, "total": 10, "totalPages": 1 }
+}
+```
+
+Ada tiga detail kecil yang nanti memengaruhi kode:
+
+- `id` berupa **angka**, bukan teks.
+- `deadline` berupa teks tanggal berformat ISO, misalnya `2025-05-12T16:59:00.000Z`. Huruf `Z` di akhir berarti zona waktu UTC (waktu standar dunia, 7 jam di belakang WIB). Kalau tugas tidak punya tenggat, nilainya `null`.
+- `course` bisa `null` untuk tugas yang tidak terkait mata kuliah.
+
+## Label dan kartu tugas
+
+<Callout type="analogi" title="Seperti kode mata kuliah di KRS">
+
+Sistem akademik menyimpan mata kuliah dengan kode, misalnya `IF2201`. Kode itu praktis untuk komputer, tetapi kamu lebih mudah membaca "Basis Data". Jadi sistem punya daftar terjemahan dari kode ke nama.
+
+Server kita juga mengirim kode, misalnya `IN_PROGRESS` dan `HIGH`. File `labels.js` adalah daftar terjemahannya: `IN_PROGRESS` jadi "Sedang dikerjakan", lengkap dengan warnanya. Karena daftarnya ada di satu file, layar daftar, layar detail, dan form di pelajaran berikutnya menampilkan teks dan warna yang sama.
+
+</Callout>
+
+Isi file-nya:
+
+```js title="src/lib/labels.js"
+export const STATUS_LABELS = {
+  TODO: { label: "Belum mulai", color: "#475569", bg: "#F1F5F9" },
+  IN_PROGRESS: { label: "Sedang dikerjakan", color: "#B45309", bg: "#FEF3C7" },
+  DONE: { label: "Selesai", color: "#15803D", bg: "#DCFCE7" },
+};
+
+export const PRIORITY_LABELS = {
+  LOW: { label: "Prioritas rendah", color: "#0369A1", bg: "#E0F2FE" },
+  MEDIUM: { label: "Prioritas sedang", color: "#7C3AED", bg: "#EDE9FE" },
+  HIGH: { label: "Prioritas tinggi", color: "#B91C1C", bg: "#FEE2E2" },
+};
+
+const UNKNOWN = { label: "Tidak dikenal", color: "#475569", bg: "#F1F5F9" };
+
+export function getStatusInfo(status) {
+  return STATUS_LABELS[status] ?? UNKNOWN;
+}
+
+export function getPriorityInfo(priority) {
+  return PRIORITY_LABELS[priority] ?? UNKNOWN;
+}
+
+// Dibuat sekali di level modul: membuat Intl.DateTimeFormat itu relatif mahal.
+const shortFormatter = new Intl.DateTimeFormat("id-ID", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+const longFormatter = new Intl.DateTimeFormat("id-ID", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function formatWith(formatter, iso) {
+  if (!iso) return "Tanpa tenggat";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "Tanggal tidak valid";
+  return formatter.format(date);
+}
+
+export function formatDeadline(iso) {
+  return formatWith(shortFormatter, iso);
+}
+
+export function formatDeadlineLong(iso) {
+  return formatWith(longFormatter, iso);
+}
+```
+
+Baca per bagian:
+
+- `STATUS_LABELS` dan `PRIORITY_LABELS` adalah objek "kamus". Kuncinya kode dari server. Isinya teks (`label`), warna tulisan (`color`), dan warna latar (`bg`).
+- `getStatusInfo` dan `getPriorityInfo` mengambil isi kamus. Operator `??` artinya "kalau nilai di kiri kosong (`null` atau `undefined`), pakai nilai di kanan". Jadi kalau suatu hari server mengirim status baru yang belum ada di kamus, aplikasi menampilkan "Tidak dikenal". Tanpa `??`, kode membaca `.label` dari `undefined`, dan aplikasi *crash* (berhenti mendadak).
+- `Intl.DateTimeFormat` adalah alat bawaan JavaScript untuk menulis tanggal sesuai bahasa tertentu. `"id-ID"` berarti bahasa Indonesia. Alat ini dibuat sekali saja di luar fungsi, karena membuatnya berulang kali cukup berat.
+- `formatWith` menangani dua kasus aneh lebih dulu: tanggal kosong ("Tanpa tenggat") dan teks yang bukan tanggal ("Tanggal tidak valid"). Setelah itu baru ia memformat tanggalnya.
+
+Hasilnya, teks UTC dari server berubah menjadi tanggal dalam **zona waktu HP** dan bahasa Indonesia:
+
+```js
+formatDeadline("2025-05-12T16:59:00.000Z");
+// → "Sen, 12 Mei 2025, 23.59"          (HP dengan zona WIB)
+formatDeadlineLong("2025-05-12T16:59:00.000Z");
+// → "Senin, 12 Mei 2025 pukul 23.59"
+formatDeadline(null);
+// → "Tanpa tenggat"
+```
+
+<Callout type="tip" title="Output bisa sedikit berbeda">
+
+Contoh di atas dicek dengan Node.js. Di HP, kode JavaScript dijalankan oleh Hermes, mesin JavaScript bawaan React Native. Hermes memakai data bahasa dari sistem operasi HP, jadi hasilnya bisa sedikit berbeda, misalnya ada atau tidaknya kata "pukul". Karena itu, jangan memakai teks tanggal hasil format untuk logika program. Kalau perlu membandingkan tanggal, bandingkan objek `Date`-nya.
+
+</Callout>
+
+Berikutnya, kartu tugas. Kartu ini versi lengkap dari `TaskItem` di pelajaran FlatList.
+
+Kartu dibungkus `Link` dari Expo Router. `Link` adalah komponen untuk pindah layar, mirip tautan di halaman web. Prop `asChild` artinya: jangan buat elemen baru, tempelkan fungsi tautan ke anak langsungnya, yaitu `Pressable`. Hasilnya, saat kartu diketuk, `Pressable` menerima ketukan dan langsung membuka layar detail, misalnya `/tasks/7`.
+
+```jsx title="src/components/task-card.js"
+import { memo } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Link } from "expo-router";
+import { formatDeadline, getPriorityInfo, getStatusInfo } from "../lib/labels";
+
+function Pill({ info }) {
+  return (
+    <View style={[styles.pill, { backgroundColor: info.bg }]}>
+      <Text style={[styles.pillText, { color: info.color }]}>{info.label}</Text>
+    </View>
+  );
+}
+
+function TaskCard({ task }) {
+  const status = getStatusInfo(task.status);
+  const priority = getPriorityInfo(task.priority);
+  const isDone = task.status === "DONE";
+
+  return (
+    <Link href={`/tasks/${task.id}`} asChild>
+      <Pressable
+        style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel={`Buka detail tugas ${task.title}`}
+      >
+        <Text style={[styles.title, isDone && styles.titleDone]} numberOfLines={2}>
+          {task.title}
+        </Text>
+
+        {task.course ? (
+          <View style={styles.courseRow}>
+            <View style={[styles.dot, { backgroundColor: task.course.color }]} />
+            <Text style={styles.course}>{task.course.name}</Text>
+          </View>
+        ) : null}
+
+        <View style={styles.pills}>
+          <Pill info={status} />
+          <Pill info={priority} />
+        </View>
+
+        <Text style={styles.deadline}>Tenggat: {formatDeadline(task.deadline)}</Text>
+      </Pressable>
+    </Link>
+  );
+}
+
+export default memo(TaskCard);
+
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    padding: 16,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  pressed: { opacity: 0.7 },
+  title: { fontSize: 16, fontWeight: "600", color: "#0F172A" },
+  titleDone: { textDecorationLine: "line-through", color: "#64748B" },
+  courseRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  dot: { width: 10, height: 10, borderRadius: 5 },
+  course: { fontSize: 13, color: "#334155" },
+  pills: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  pill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
+  pillText: { fontSize: 12, fontWeight: "600" },
+  deadline: { fontSize: 13, color: "#475569" },
+});
+```
+
+Beberapa keputusan kecil di sini:
+
+- `Pill` adalah komponen kecil untuk label berwarna berbentuk kapsul. Satu dipakai untuk status, satu lagi untuk prioritas.
+- `memo` membuat kartu tidak digambar ulang kalau objek `task`-nya tidak berubah. Ini membantu saat daftar panjang dan layar induk sering berganti state, misalnya saat menyegarkan.
+- Warna titik mata kuliah diambil dari `task.course.color` yang dikirim server. Jadi "Basis Data" selalu ungu di semua layar.
+- `task.course ? ... : null` mengecek dulu apakah tugas punya mata kuliah. Tugas seperti "Daftar ulang semester dan isi KRS" tidak punya. Tanpa pengecekan ini, kode membaca `.name` dari `null` lalu crash.
+- `accessibilityLabel` adalah teks yang dibacakan pembaca layar (*screen reader*) untuk pengguna tunanetra.
+
+## Stack dan layar daftar tugas
+
+Aplikasi ini memakai navigasi **Stack**. Di Stack, layar baru diletakkan di atas layar lama, dan tombol kembali mengangkatnya lagi.
+
+Di akhir pelajaran sebelumnya, `src/app/_layout.js` berisi import `dev-auth` dan `<Stack />` polos. Sekarang kita beri judul untuk tiap layar. Nama di `Stack.Screen` mengikuti path file di dalam `src/app/` tanpa ekstensi. Jadi `index` berarti `src/app/index.js`, dan `tasks/[id]/index` berarti `src/app/tasks/[id]/index.js`.
+
+```diff title="src/app/_layout.js"
+ import "../lib/dev-auth";
+ import { Stack } from "expo-router";
+
+ export default function RootLayout() {
+-  return <Stack />;
++  return (
++    <Stack screenOptions={{ headerTintColor: "#4F46E5" }}>
++      <Stack.Screen name="index" options={{ title: "Tugas Kuliah" }} />
++      <Stack.Screen name="tasks/[id]/index" options={{ title: "Detail Tugas" }} />
++    </Stack>
++  );
+ }
+```
+
+Baris yang diawali `-` dihapus, baris yang diawali `+` ditambahkan. Baris import `dev-auth` tetap dipertahankan, karena tanpa baris itu request tidak membawa token. `screenOptions` berlaku untuk semua layar. `headerTintColor` mengatur warna judul dan tombol kembali di header.
+
+<Callout type="analogi" title="Seperti layar pesanan GoFood">
+
+Setelah kamu memesan GoFood, aplikasinya tidak pernah diam saja. Ia selalu menunjukkan satu keadaan:
+
+- "Mencari driver..." = **memuat** (*loading*).
+- "Pesanan gagal, coba lagi" = **gagal** (*error*).
+- "Warung buka, tapi semua menu habis" = **kosong**. Permintaannya berhasil, hanya saja tidak ada isinya.
+- Makanan sampai di tanganmu = **ada data**.
+
+Layar daftar tugas juga harus punya tampilan untuk tiap keadaan itu. Kalau tidak, pengguna hanya melihat layar putih dan bingung apakah aplikasinya rusak.
+
+</Callout>
+
+Sekarang kita bangun layar utamanya secara bertahap. Kalau `src/app/index.js` masih berisi layar uji koneksi dari pelajaran sebelumnya, timpa saja isinya.
+
+<Steps>
+<Step title="Siapkan state dan fungsi pemuat">
+
+Layar daftar butuh lima potong **state**, yaitu data yang diingat komponen. Setiap kali state berubah, layar digambar ulang. Dari lima state ini, kita bisa menentukan layar sedang dalam keadaan apa: memuat, gagal, kosong, atau ada data.
+
+```jsx title="src/app/index.js (bagian atas)"
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { apiFetch } from "../lib/api";
+import TaskCard from "../components/task-card";
+
+export default function TaskListScreen() {
+  const [tasks, setTasks] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true); // muat pertama kali
+  const [refreshing, setRefreshing] = useState(false); // tarik untuk menyegarkan
+  const [error, setError] = useState(null);
+
+  const loadTasks = useCallback(async (signal) => {
+    try {
+      const json = await apiFetch("/api/tasks?limit=50", { signal });
+      setTasks(json.data);
+      setTotal(json.meta.total);
+      setError(null);
+    } catch (err) {
+      if (!signal?.aborted) setError(err);
+    } finally {
+      if (!signal?.aborted) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, []);
+```
+
+Isi kode di atas:
+
+- `tasks` dan `total` menyimpan hasil dari server.
+- `loading` dimulai dari `true`, karena saat layar pertama kali muncul datanya memang belum ada.
+- `refreshing` khusus untuk tarik-untuk-menyegarkan, terpisah dari `loading`.
+- `error` menyimpan `ApiError` kalau request gagal.
+- `loadTasks` dibungkus `useCallback` supaya fungsinya tidak dibuat baru di setiap render (setiap kali komponen digambar ulang). Ini perlu karena `loadTasks` dipakai sebagai dependensi efek di langkah berikutnya.
+- Blok `finally` selalu dijalankan, baik request sukses maupun gagal. Tanpa `finally`, satu error saja membuat *spinner* (ikon berputar tanda memuat) berputar selamanya.
+
+</Step>
+<Step title="Panggil saat layar muncul, batalkan saat ditinggal">
+
+Bayangkan kamu memesan makanan, lalu pergi dari warung sebelum pesanan jadi. Sebaiknya kamu membatalkan pesanan, supaya pelayan tidak mengantar piring ke meja yang sudah kosong. Request juga begitu: kalau layar sudah ditinggal, request yang belum selesai sebaiknya dibatalkan.
+
+```jsx title="src/app/index.js (lanjutan)"
+  useEffect(() => {
+    const controller = new AbortController();
+    loadTasks(controller.signal);
+    return () => controller.abort();
+  }, [loadTasks]);
+```
+
+Polanya sama dengan yang kamu pelajari di [useEffect untuk data](/belajar/react-native/effect-list-custom-hook):
+
+- `AbortController` adalah alat bawaan untuk membatalkan request. `controller.signal` adalah "tanda batal" yang kita titipkan ke `loadTasks`, lalu diteruskan ke `apiFetch`.
+- Fungsi yang di-`return` dari efek disebut *cleanup* (bersih-bersih). React menjalankannya saat layar ditutup. Di sini, cleanup membatalkan request yang masih berjalan.
+- Karena itu, `loadTasks` mengecek `signal?.aborted` (apakah request sudah dibatalkan?) sebelum mengubah state. Request yang sengaja dibatalkan bukan error untuk pengguna, apa pun bentuk error yang dilempar `apiFetch` saat dibatalkan.
+
+</Step>
+<Step title="Tampilkan loading dan error">
+
+```jsx title="src/app/index.js (lanjutan)"
+  function handleRefresh() {
+    setRefreshing(true);
+    loadTasks();
+  }
+
+  function handleRetry() {
+    setLoading(true);
+    setError(null);
+    loadTasks();
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" />
+        <Text style={styles.muted}>Memuat tugas…</Text>
+      </View>
+    );
+  }
+
+  if (error && tasks.length === 0) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.errorTitle}>Gagal memuat tugas</Text>
+        <Text style={styles.muted}>{error.message}</Text>
+        <Pressable style={styles.button} onPress={handleRetry}>
+          <Text style={styles.buttonText}>Coba lagi</Text>
+        </Pressable>
+      </View>
+    );
+  }
+```
+
+Isi langkah ini:
+
+- `handleRefresh` dipanggil saat pengguna menarik daftar ke bawah. Ia menyalakan `refreshing`, lalu memuat ulang.
+- `handleRetry` dipanggil tombol "Coba lagi". Ia kembali ke tampilan memuat penuh dan menghapus error lama.
+- `ActivityIndicator` adalah komponen spinner bawaan React Native.
+- Pesan di `error.message` berasal dari `ApiError`. Isinya bisa pesan server berbahasa Indonesia, misalnya "Token akses tidak ditemukan" untuk 401. Bisa juga pesan jaringan dari `apiFetch` sendiri.
+
+Layar error penuh hanya muncul kalau **belum ada data sama sekali** (`tasks.length === 0`). Kalau penyegaran gagal padahal daftar lama masih ada, menghapus semuanya terasa menyebalkan. Jadi kita cukup menampilkan **banner** (pita peringatan kecil) di atas daftar. Banner itu dibuat di langkah berikutnya.
+
+</Step>
+<Step title="Render FlatList dengan empty state dan pull-to-refresh">
+
+```jsx title="src/app/index.js (lanjutan)"
+  return (
+    <FlatList
+      data={tasks}
+      keyExtractor={(item) => String(item.id)}
+      renderItem={({ item }) => <TaskCard task={item} />}
+      contentContainerStyle={styles.list}
+      ItemSeparatorComponent={() => <View style={styles.separator} />}
+      ListHeaderComponent={
+        <View style={styles.header}>
+          <Text style={styles.muted}>{total} tugas</Text>
+          {error ? (
+            <Text style={styles.banner}>Gagal memperbarui: {error.message}</Text>
+          ) : null}
+        </View>
+      }
+      ListEmptyComponent={
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>Belum ada tugas</Text>
+          <Text style={styles.muted}>Tugas yang kamu buat akan muncul di sini.</Text>
+        </View>
+      }
+      refreshing={refreshing}
+      onRefresh={handleRefresh}
+    />
+  );
+}
+
+const styles = StyleSheet.create({
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, padding: 24 },
+  list: { padding: 16, flexGrow: 1 },
+  separator: { height: 12 },
+  header: { marginBottom: 12, gap: 8 },
+  muted: { color: "#64748B", textAlign: "center" },
+  errorTitle: { fontSize: 18, fontWeight: "700", color: "#B91C1C" },
+  banner: { backgroundColor: "#FEE2E2", color: "#B91C1C", padding: 8, borderRadius: 8 },
+  empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 4 },
+  emptyTitle: { fontSize: 16, fontWeight: "600" },
+  button: { backgroundColor: "#4F46E5", paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
+  buttonText: { color: "#FFFFFF", fontWeight: "600" },
+});
+```
+
+Bagian-bagian `FlatList` di atas:
+
+- `keyExtractor` memberi tiap baris kunci unik. Kunci ini wajib berupa **string**, padahal `id` dari server berupa angka. Karena itu kita bungkus dengan `String(...)`.
+- `ListHeaderComponent` tampil di atas daftar. Isinya jumlah tugas, ditambah banner merah kalau penyegaran gagal.
+- `ListEmptyComponent` tampil kalau `data` kosong. Ia tidak akan muncul sekilas saat data masih dimuat, karena saat `loading` kita sudah keluar lebih dulu lewat `if (loading)`.
+- `refreshing` dan `onRefresh`: begitu keduanya dipasang, FlatList otomatis mendukung gestur tarik ke bawah.
+- `flexGrow: 1` di `styles.list` membuat area daftar mengisi layar, sehingga pesan "Belum ada tugas" bisa berada di tengah.
+
+</Step>
+</Steps>
+
+Jadi, empat keadaan layar ditentukan oleh state seperti ini:
+
+| Keadaan | Syarat | Yang tampil |
+| --- | --- | --- |
+| Memuat | `loading` bernilai `true` | `ActivityIndicator` + "Memuat tugas…" |
+| Gagal | ada `error` dan `tasks` kosong | pesan error + tombol "Coba lagi" |
+| Kosong | request sukses, tetapi `tasks` kosong | `ListEmptyComponent` "Belum ada tugas" |
+| Ada data | request sukses dan `tasks` berisi | `FlatList` berisi `TaskCard` (+ banner kalau penyegaran gagal) |
+
+<Callout type="info" title="Kenapa limit=50 tanpa paginasi?">
+
+**Paginasi** artinya membagi data menjadi beberapa halaman, seperti katalog yang dibuka halaman demi halaman. Tanpa parameter `limit`, API hanya mengirim 10 tugas per halaman, dan batas maksimalnya 50. Untuk sekarang, 50 tugas dalam satu halaman sudah cukup untuk satu mahasiswa.
+
+Memuat halaman berikutnya saat daftar di-scroll sampai bawah (*infinite scroll*) jauh lebih rapi dikerjakan dengan [TanStack Query](/belajar/fullstack/tanstack-query). Sementara itu, `meta.total` cukup dipakai untuk menampilkan jumlah tugas.
+
+</Callout>
+
+## Refetch saat layar kembali fokus
+
+<Callout type="analogi" title="Seperti tumpukan kertas di meja">
+
+Bayangkan tiap layar aplikasi sebagai selembar kertas. Kertas daftar tugas ada di bawah. Saat kamu membuka detail, kertas detail ditaruh di atasnya. Kertas daftar tidak dibuang, hanya tertutup.
+
+Kalau kamu mencoret sesuatu di kertas detail lalu mengangkatnya, kertas daftar di bawah masih berisi tulisan lama. Harus ada yang mengecek ulang isinya setiap kali kertas itu terlihat lagi. Tugas itulah yang dikerjakan `useFocusEffect`.
+
+</Callout>
+
+**Refetch** artinya mengambil ulang data dari server. Masalahnya belum terasa sekarang, tetapi akan muncul di pelajaran berikutnya. Di Stack, layar daftar **tidak di-unmount** (tidak dibuang dari memori) saat kamu membuka detail. Akibatnya, `useEffect` dengan dependensi tetap tidak berjalan lagi saat kamu kembali. Setelah kamu mengedit atau menambah tugas, daftar masih menampilkan data lama.
+
+Expo Router menyediakan `useFocusEffect` untuk masalah ini. Cara kerjanya mirip `useEffect`, dengan dua perbedaan:
+
+- efeknya dijalankan **setiap kali layar mendapat fokus**, yaitu saat layar itu tampil paling atas;
+- *cleanup*-nya dijalankan saat layar kehilangan fokus, misalnya tertutup layar detail.
+
+Fungsi di dalamnya wajib dibungkus `useCallback`. Tanpa `useCallback`, fungsinya dianggap baru di setiap render, dan efek ikut berjalan ulang di setiap render.
+
+```diff title="src/app/index.js"
+-import { useCallback, useEffect, useState } from "react";
++import { useCallback, useState } from "react";
++import { useFocusEffect } from "expo-router";
+ import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+
+ // ...
+
+-  useEffect(() => {
+-    const controller = new AbortController();
+-    loadTasks(controller.signal);
+-    return () => controller.abort();
+-  }, [loadTasks]);
++  useFocusEffect(
++    useCallback(() => {
++      const controller = new AbortController();
++      loadTasks(controller.signal);
++      return () => controller.abort();
++    }, [loadTasks])
++  );
+```
+
+Arti diff di atas: hapus `useEffect` dari import, tambahkan import `useFocusEffect` dari `expo-router`, lalu ganti blok `useEffect` dengan `useFocusEffect`. Isi efeknya tetap sama persis.
+
+Saat layar pertama kali dibuka, ia juga mendapat fokus. Jadi `useFocusEffect` sekaligus menggantikan pemuatan awal. Saat kamu kembali dari detail, data diambil ulang **tanpa spinner penuh**, karena `loading` sudah `false`. Daftar lama tetap terlihat sampai data baru tiba.
+
+<Callout type="warning" title="Jangan pakai keduanya sekaligus">
+
+Kalau `useEffect` lama tidak dihapus, layar mengirim request **dua kali** setiap dibuka. Pilih satu saja. Untuk layar yang datanya bisa berubah di layar lain, pilih `useFocusEffect`.
+
+</Callout>
+
+## Layar detail berdasarkan id
+
+<Callout type="analogi" title="Seperti lacak resi paket JNE">
+
+Di situs JNE ada satu halaman "lacak paket". Halamannya sama untuk semua orang. Yang berbeda hanya nomor resi yang kamu masukkan. Dari nomor itu, halaman menampilkan paket yang tepat.
+
+Layar detail tugas bekerja dengan cara yang sama. Satu file layar melayani semua tugas, dan `id` di URL adalah nomor resinya. Kalau nomor resinya salah, sistem menjawab "tidak ditemukan", dan mencari ulang tidak akan menolong. Lain halnya kalau situsnya sedang gangguan, karena mencoba lagi nanti bisa berhasil. Perbedaan ini juga kita terapkan di layar detail.
+
+</Callout>
+
+File `src/app/tasks/[id]/index.js` adalah **route dinamis**, yaitu satu file layar untuk banyak URL. Tanda kurung siku `[id]` di nama folder berarti bagian URL itu boleh berisi apa saja. URL `/tasks/7` membuka layar ini dengan parameter `id` bernilai `"7"`. Nilainya selalu **string** (teks), karena URL memang teks. Kita membacanya dengan hook `useLocalSearchParams()`.
+
+```jsx title="src/app/tasks/[id]/index.js"
+import { useCallback, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { apiFetch } from "../../../lib/api";
+import { formatDeadlineLong, getPriorityInfo, getStatusInfo } from "../../../lib/labels";
+
+export default function TaskDetailScreen() {
+  const { id } = useLocalSearchParams();
+  const [task, setTask] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const loadTask = useCallback(
+    async (signal) => {
+      try {
+        const json = await apiFetch(`/api/tasks/${id}`, { signal });
+        setTask(json.data);
+        setError(null);
+      } catch (err) {
+        if (!signal?.aborted) setError(err);
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [id]
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      const controller = new AbortController();
+      loadTask(controller.signal);
+      return () => controller.abort();
+    }, [loadTask])
+  );
+
+  function handleBack() {
+    if (router.canGoBack()) router.back();
+    else router.replace("/");
+  }
+
+  function handleRetry() {
+    setLoading(true);
+    setError(null);
+    loadTask();
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+
+  if (error?.status === 404) {
+    return (
+      <View style={styles.center}>
+        <Stack.Screen options={{ title: "Tidak ditemukan" }} />
+        <Text style={styles.errorTitle}>Tugas tidak ditemukan</Text>
+        <Text style={styles.muted}>Tugas ini mungkin sudah dihapus atau bukan milik akunmu.</Text>
+        <Pressable style={styles.button} onPress={handleBack}>
+          <Text style={styles.buttonText}>Kembali ke daftar</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (error && !task) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.errorTitle}>Gagal memuat tugas</Text>
+        <Text style={styles.muted}>{error.message}</Text>
+        <Pressable style={styles.button} onPress={handleRetry}>
+          <Text style={styles.buttonText}>Coba lagi</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const status = getStatusInfo(task.status);
+  const priority = getPriorityInfo(task.priority);
+
+  return (
+    <ScrollView contentContainerStyle={styles.container}>
+      <Stack.Screen options={{ title: task.title }} />
+
+      <Text style={styles.title}>{task.title}</Text>
+      <Text style={[styles.value, { color: status.color }]}>{status.label}</Text>
+      <Text style={[styles.value, { color: priority.color }]}>{priority.label}</Text>
+
+      <Text style={styles.label}>Mata kuliah</Text>
+      <Text style={styles.value}>{task.course ? task.course.name : "Tidak terkait mata kuliah"}</Text>
+
+      <Text style={styles.label}>Tenggat</Text>
+      <Text style={styles.value}>{formatDeadlineLong(task.deadline)}</Text>
+
+      <Text style={styles.label}>Deskripsi</Text>
+      <Text style={styles.value}>{task.description || "Tidak ada deskripsi."}</Text>
+
+      <Text style={styles.label}>Lampiran</Text>
+      <Text style={styles.value}>{task.attachments.length} file</Text>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, padding: 24 },
+  container: { padding: 16, gap: 6 },
+  title: { fontSize: 22, fontWeight: "700", color: "#0F172A", marginBottom: 8 },
+  label: { marginTop: 12, fontSize: 12, fontWeight: "600", color: "#64748B", textTransform: "uppercase" },
+  value: { fontSize: 15, color: "#0F172A" },
+  muted: { color: "#64748B", textAlign: "center" },
+  errorTitle: { fontSize: 18, fontWeight: "700", color: "#B91C1C" },
+  button: { backgroundColor: "#4F46E5", paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
+  buttonText: { color: "#FFFFFF", fontWeight: "600" },
+});
+```
+
+Hal-hal yang perlu diperhatikan:
+
+- **Bagian atasnya mirip layar daftar.** Ada state `task`, `loading`, dan `error`, fungsi `loadTask`, dan `useFocusEffect`. Bedanya, `loadTask` memakai `id`, jadi `id` masuk daftar dependensi `useCallback`.
+- **404 dibedakan dari error lain.** API membalas `404` dengan kode `NOT_FOUND` dan pesan "Tugas tidak ditemukan". Balasan ini sama untuk tugas yang memang tidak ada dan tugas milik akun lain. Tombol "Coba lagi" tidak berguna di sini, jadi kita tawarkan "Kembali ke daftar". Error lain, misalnya server mati atau timeout, tetap mendapat tombol "Coba lagi".
+- **`router.canGoBack()`** mengecek apakah ada layar sebelumnya. Layar detail bisa dibuka langsung dari URL, misalnya lewat *deep link* (tautan yang langsung membuka layar tertentu di aplikasi). Saat itu tidak ada riwayat, jadi `router.back()` tidak punya tujuan. Sebagai cadangan, `router.replace("/")` mengganti layar ini dengan layar daftar.
+- **Judul header ikut berubah.** `Stack.Screen` boleh ditulis di dalam layar untuk mengubah pengaturan layar itu sendiri. Judul "Detail Tugas" dari `_layout.js` diganti judul tugas setelah data tiba.
+- **`useFocusEffect` juga dipakai di detail.** Setelah pelajaran [Create & Update](/belajar/fullstack/create-update), kamu akan kembali ke layar ini dari layar edit, dan datanya harus ikut segar.
+- **`task.description || "Tidak ada deskripsi."`** memakai `||`, jadi deskripsi kosong (`null` atau teks kosong) diganti teks pengganti.
+
+Saat kamu mengetuk kartu "Konfigurasi subnetting kelas C", request dan responsnya kira-kira seperti ini:
+
+```http
+GET /api/tasks/7 HTTP/1.1
+Authorization: Bearer eyJhbGciOi...
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{ "data": { "id": 7, "title": "Konfigurasi subnetting kelas C", "status": "TODO", "...": "..." } }
+```
+
+Baris `Authorization` membawa token demo. Server membalas `200 OK`, dan data tugasnya ada di dalam `data`.
+
+Cara termudah menguji layar 404 adalah lewat versi web. Tekan `w` di terminal Expo, lalu buka `http://localhost:8081/tasks/999` di browser. Untuk versi web, isi `EXPO_PUBLIC_API_URL` dengan `http://localhost:3000`, karena browser berjalan di laptop yang sama dengan API.
+
+## Kesalahan umum
+
+Kalau layarmu tidak tampil seperti harapan, cocokkan gejalanya dengan tabel ini.
+
+| Gejala | Penyebab | Perbaikan |
+| --- | --- | --- |
+| Peringatan `VirtualizedList: missing keys for items` | `keyExtractor` tidak ada, atau mengembalikan angka | Pakai `keyExtractor={(item) => String(item.id)}` |
+| `Cannot read property 'map' of undefined`, atau daftar kosong padahal data ada | Seluruh `json` dipakai sebagai array, padahal array-nya ada di `json.data` | `setTasks(json.data)` |
+| Spinner berputar terus setelah error | `setLoading(false)` hanya ditulis di blok sukses | Pindahkan ke `finally` |
+| Tulisan "Belum ada tugas" muncul sekilas sebelum data tampil | Tampilan kosong digambar saat data masih dimuat | Cek `loading` lebih dulu |
+| Error "Token akses tidak ditemukan" (401) | Token demo tidak terkirim, biasanya karena `import "../lib/dev-auth";` hilang dari `_layout.js` | Tambahkan lagi baris import itu (lihat pelajaran sebelumnya) |
+| Error koneksi atau timeout | `EXPO_PUBLIC_API_URL` salah, atau API mati | Cek IP laptop. Setelah mengubah `.env`, jalankan ulang Expo |
+| Request terkirim dua kali | `useEffect` dan `useFocusEffect` dipakai bersamaan | Sisakan `useFocusEffect` saja |
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+```js
+useEffect(() => {
+  apiFetch("/api/tasks").then((json) => {
+    setTasks(json);
+    setLoading(false);
+  });
+}, []);
+```
+
+Kode ini punya empat masalah. Tidak ada pembatalan request. Tidak ada penanganan error. `loading` tidak pernah `false` kalau request gagal. Yang disimpan pun seluruh objek `{ data, meta }`, bukan array tugas.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+```js
+useFocusEffect(
+  useCallback(() => {
+    const controller = new AbortController();
+    loadTasks(controller.signal);
+    return () => controller.abort();
+  }, [loadTasks])
+);
+```
+
+`loadTasks` mengambil `json.data`, menyimpan error, dan mematikan `loading` di `finally`. Request juga dibatalkan saat layar ditinggal.
+
+</CompareItem>
+</Compare>
+
+## Latihan
+
+<Exercise title="Tandai tugas yang terlambat" difficulty="mudah" hints={["Bandingkan `new Date(task.deadline)` dengan `new Date()`.", "Tugas tanpa tenggat (`deadline` bernilai `null`) dan tugas berstatus `DONE` tidak pernah terlambat."]}>
+
+Tugas yang tenggatnya sudah lewat sebaiknya mudah dikenali.
+
+1. Buka `src/components/task-card.js`.
+2. Tampilkan teks merah **"Terlambat"** di samping tenggat, kalau tenggat sudah lewat dan tugas belum selesai.
+3. Uji dengan data seed. Tugas "Rancang ERD sistem perpustakaan" (tenggat 5 hari lalu, status `DONE`) **tidak** boleh ditandai terlambat.
+
+<Solution>
+
+```jsx title="src/components/task-card.js (potongan)"
+const isOverdue =
+  task.deadline !== null && !isDone && new Date(task.deadline) < new Date();
+
+// ...di dalam JSX, ganti baris tenggat:
+<View style={styles.courseRow}>
+  <Text style={styles.deadline}>Tenggat: {formatDeadline(task.deadline)}</Text>
+  {isOverdue ? <Text style={styles.overdue}>Terlambat</Text> : null}
+</View>
+
+// ...di StyleSheet:
+overdue: { fontSize: 12, fontWeight: "700", color: "#B91C1C" },
+```
+
+`new Date(task.deadline) < new Date()` artinya "tenggat lebih awal dari saat ini". Kita membandingkan objek `Date`, bukan teks hasil `formatDeadline`, karena teks tampilan bisa berbeda di tiap HP. Variabel `isDone` sudah ada di komponen, jadi tinggal dipakai ulang.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Tolak id yang tidak valid sebelum request" difficulty="sedang" hints={["Server membalas 400 `VALIDATION_ERROR` untuk `/api/tasks/abc`, bukan 404.", "Ubah dulu dengan `Number(id)`, lalu cek `Number.isInteger(...)` dan lebih besar dari 0.", "Hook tetap harus dipanggil di setiap render. Taruh pengecekan di dalam fungsi pemuat dan di bagian render."]}>
+
+Coba buka `/tasks/abc` di versi web. Layar menampilkan "Gagal memuat tugas" dengan tombol "Coba lagi". Padahal mencoba lagi tidak akan pernah berhasil, karena `abc` bukan id.
+
+1. Di `src/app/tasks/[id]/index.js`, ubah `id` menjadi angka.
+2. Cek apakah hasilnya bilangan bulat yang lebih besar dari 0.
+3. Kalau tidak valid, langsung tampilkan layar "Tugas tidak ditemukan" **tanpa** mengirim request ke server.
+
+<Solution>
+
+```jsx title="src/app/tasks/[id]/index.js (potongan)"
+const { id } = useLocalSearchParams();
+const taskId = Number(id);
+const isValidId = Number.isInteger(taskId) && taskId > 0;
+
+const loadTask = useCallback(
+  async (signal) => {
+    if (!isValidId) {
+      setLoading(false);
+      return;
+    }
+    try {
+      const json = await apiFetch(`/api/tasks/${taskId}`, { signal });
+      setTask(json.data);
+      setError(null);
+    } catch (err) {
+      if (!signal?.aborted) setError(err);
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  },
+  [isValidId, taskId]
+);
+
+// ...di bagian render:
+if (!isValidId || error?.status === 404) {
+  // layar "Tugas tidak ditemukan" yang sama seperti sebelumnya
+}
+```
+
+`Number("abc")` menghasilkan `NaN`, sehingga `Number.isInteger` bernilai `false` dan `isValidId` ikut `false`. Semua hook tetap dipanggil dengan urutan yang sama di setiap render, sesuai aturan React. Yang berubah hanya isi fungsi `loadTask` dan cabang render.
+
+Validasi di aplikasi tidak menggantikan validasi di server. Gunanya hanya menghemat satu request dan memberi pesan yang lebih tepat.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Respons `GET /api/tasks` dari API pendamping disimpan di variabel `json`. Di mana array tugasnya?",
+    options: ["`json` itu sendiri", "`json.tasks`", "`json.data`", "`json.meta.items`"],
+    answer: 2,
+    explain: "Endpoint daftar membalas `{ data, meta }`, mirip struk belanja. Daftar tugas ada di `data`. Ringkasannya (`page`, `limit`, `total`, `totalPages`) ada di `meta`. Properti `tasks` atau `items` tidak ada.",
+  },
+  {
+    q: "Apa gunanya `return () => controller.abort()` di efek pemuat data?",
+    options: ["Membatalkan request yang masih berjalan saat layar ditinggal, supaya hasil lama tidak mengubah state", "Mengulang request otomatis kalau gagal", "Menghapus cache `apiFetch`", "Menghentikan spinner pull-to-refresh"],
+    answer: 0,
+    explain: "Fungsi cleanup berjalan saat layar kehilangan fokus atau saat efek dijalankan ulang. `abort()` membatalkan request lama, lalu cek `signal.aborted` mencegah hasil basi mengubah state. Fungsi ini tidak mengulang request dan tidak mengurus spinner.",
+  },
+  {
+    q: "Pengguna membuka `/tasks/999`, padahal tugas itu tidak ada. Bagaimana respons API dan reaksi layar yang tepat?",
+    options: ["200 dengan `data: null`, lalu layar kosong", "500, lalu tampilkan tombol \"Coba lagi\"", "401, lalu arahkan ke login", "404 `NOT_FOUND`, lalu tampilkan \"Tugas tidak ditemukan\" dengan tombol kembali"],
+    answer: 3,
+    explain: "API membalas 404 dengan kode `NOT_FOUND`. Seperti nomor resi yang salah, mencari ulang tidak mengubah hasil. Jadi layar menampilkan pesan khusus dan tombol kembali. Tombol \"Coba lagi\" cocok untuk gangguan sementara, misalnya jaringan putus.",
+  },
+  {
+    q: "Kenapa layar daftar memakai `useFocusEffect`, bukan `useEffect` dengan dependensi tetap?",
+    options: ["`useEffect` tidak bisa memakai `async`", "Layar daftar tetap ada di tumpukan Stack saat detail dibuka, jadi `useEffect` tidak berjalan lagi saat pengguna kembali", "`useFocusEffect` membuat request lebih cepat", "`FlatList` hanya mau menerima data dari `useFocusEffect`"],
+    answer: 1,
+    explain: "Di Stack, layar di bawah tidak di-unmount, hanya tertutup. `useFocusEffect` berjalan setiap kali layar tampil lagi, sehingga perubahan dari layar lain ikut terlihat. Kecepatan request tidak berubah, dan FlatList tidak peduli dari mana datanya.",
+  },
+  {
+    q: "Untuk URL `/tasks/7`, apa nilai `id` dari `useLocalSearchParams()` di `src/app/tasks/[id]/index.js`?",
+    options: ["Angka `7`", "Objek `{ id: 7 }`", "String `\"7\"`", "`undefined` sampai fetch selesai"],
+    answer: 2,
+    explain: "URL selalu berupa teks, jadi `id` bernilai string `\"7\"` sejak render pertama. Karena itu kamu perlu `Number(id)` kalau ingin memvalidasinya atau membandingkannya dengan `task.id` yang berupa angka.",
+  },
+]} />
+
+## Ringkasan
+
+- `src/lib/labels.js` adalah kamus kecil. Kode dari server (`IN_PROGRESS`, `HIGH`) diterjemahkan menjadi teks Indonesia dan warna. Tanggal diformat dengan `Intl.DateTimeFormat("id-ID")` yang dibuat sekali saja.
+- `TaskCard` dibungkus `Link` + `asChild`, jadi ketukan pada kartu membuka `/tasks/[id]`. `memo` mencegah kartu digambar ulang tanpa perlu.
+- Layar daftar punya empat keadaan: memuat, gagal, kosong, dan ada data. Keempatnya ditentukan dari state `loading`, `error`, dan `tasks`. `finally` memastikan spinner selalu berhenti.
+- `AbortController` membatalkan request saat layar ditinggal, dan cek `signal.aborted` mencegah hasil basi mengubah state. Pasangan `refreshing` + `onRefresh` langsung memberi fitur tarik untuk menyegarkan.
+- `useFocusEffect` (dibungkus `useCallback`) mengambil ulang data setiap kali layar tampil lagi. Jangan dipakai bersamaan dengan `useEffect` yang isinya sama.
+- Layar detail membaca `id` (selalu string) lewat `useLocalSearchParams()`, membedakan 404 dari error lain, dan mengganti judul header lewat `Stack.Screen`.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Di `kuliah-app`, pastikan lima file ini sudah ada dan berjalan: `src/lib/labels.js`, `src/components/task-card.js`, `src/app/_layout.js`, `src/app/index.js`, dan `src/app/tasks/[id]/index.js`. Lalu uji dengan urutan berikut:
+
+1. Buka aplikasi. Kamu harus melihat 10 tugas seed, lengkap dengan label status, prioritas, dan tenggat berbahasa Indonesia.
+2. Tarik daftar ke bawah. Indikator penyegaran harus muncul lalu hilang.
+3. Ketuk sebuah kartu. Detailnya muncul dengan judul tugas di header.
+4. Buka `/tasks/999`. Layar "Tugas tidak ditemukan" harus muncul.
+5. Matikan API, lalu tutup dan buka lagi aplikasi. Harus muncul layar error dengan tombol "Coba lagi". Nyalakan API, ketuk tombolnya, dan daftar harus tampil lagi.
+
+Berikutnya, di [Create & Update](/belajar/fullstack/create-update) kamu akan menambah `task-form.js`, layar `tasks/new.js`, dan `tasks/[id]/edit.js`. Karena layar daftar dan detail memakai `useFocusEffect`, keduanya langsung menampilkan data terbaru setelah kamu menyimpan.
+
+</Callout>

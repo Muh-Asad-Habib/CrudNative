@@ -1,0 +1,805 @@
+## Pengantar
+
+Di [JavaScript Modern 1](/belajar/fondasi/javascript-modern-1) kamu sudah bisa menyimpan tugas di array, menyaringnya dengan `filter`, dan membongkar object dengan destructuring. Itu cukup untuk satu file kecil. Proyek sungguhan berisi puluhan file, data yang kadang kosong, daftar yang harus diurutkan, dan input pengguna yang bisa salah.
+
+Pelajaran ini menambah alat untuk kebutuhan itu: destructuring yang lebih dalam, `?.` dan `??` untuk data yang mungkin kosong, `some`/`every`/`sort`, cara mengubah data tanpa merusak aslinya (*immutability*, aturan wajib di React), ES Modules untuk memecah kode ke banyak file, class, dan penanganan error.
+
+### Menyiapkan proyek latihan
+
+Kali ini kita membuat proyek Node kecil, karena ES Modules butuh file `package.json`. File itu semacam "kartu identitas" proyek: nama, daftar library, dan pengaturannya. Ketik perintah berikut di terminal:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+mkdir latihan-modul
+cd latihan-modul
+npm init -y
+npm pkg set type=module
+New-Item index.js
+code .
+```
+
+</Tab>
+<Tab>
+
+```bash
+mkdir latihan-modul
+cd latihan-modul
+npm init -y
+npm pkg set type=module
+touch index.js
+code .
+```
+
+</Tab>
+</Tabs>
+
+Perintah itu membuat folder `latihan-modul`, membuat `package.json` (`-y` artinya "jawab ya untuk semua pertanyaan"), menambahkan `"type": "module"` (dibahas di bagian ES Modules), lalu membuat `index.js` dan membuka foldernya di VS Code.
+
+Jalankan contoh dengan `node index.js`. Sebagian besar contoh memakai array `tasks` seperti pelajaran sebelumnya. Tempel ini di paling atas file:
+
+```js
+const tasks = [
+  { id: 1, title: "Laporan Basis Data", done: false, priority: "tinggi", course: "Basis Data" },
+  { id: 2, title: "Kuis Pemrograman Mobile", done: true, priority: "sedang", course: "Pemrograman Mobile" },
+  { id: 3, title: "Rangkuman Jaringan Komputer", done: false, priority: "rendah", course: "Jaringan Komputer" },
+  { id: 4, title: "Daftar ulang semester", done: false, priority: "tinggi", course: null },
+];
+```
+
+Perhatikan tugas ke-4: `course`-nya `null`, sengaja dikosongkan karena daftar ulang bukan mata kuliah. Tugas ini kita pakai untuk menguji data kosong.
+
+## Destructuring lebih dalam
+
+<Callout type="analogi" title="Seperti membongkar paket kiriman">
+
+Kamu menerima paket berisi charger, casing HP, dan kabel data. Kamu buka kardusnya, lalu memindahkan barang yang kamu butuhkan ke laci.
+
+- Kardus = object. Barang di dalamnya = property (isian object, seperti `title`).
+- Memindahkan barang ke laci berlabel = destructuring ke variabel, boleh dengan label (nama) baru.
+- Kabel data tidak ada, jadi kamu pakai kabel cadangan = nilai default.
+- Kardus kecil di dalam kardus besar = object bertingkat.
+
+Bedanya, kardus aslinya tidak menjadi kosong. Destructuring hanya membuat variabel baru.
+
+</Callout>
+
+Kamu sudah memakai bentuk dasarnya, `const { title } = task`. Sekarang kita tambah empat kemampuan: ganti nama, nilai default, object bertingkat, dan destructuring di parameter function.
+
+### Ganti nama dan nilai default
+
+Kadang nama property tidak cocok dengan nama variabel yang kamu mau. Pakai titik dua untuk mengganti nama, dan tanda `=` untuk nilai default:
+
+```js
+const { title: judul, priority } = tasks[0];
+console.log(judul, priority); // → Laporan Basis Data tinggi
+
+const { deadline = "belum ditentukan" } = tasks[0];
+console.log(deadline); // → belum ditentukan
+```
+
+Baca `title: judul` sebagai "ambil `title`, simpan di variabel `judul`". `tasks[0]` tidak punya `deadline`, jadi nilai default yang dipakai.
+
+### Object bertingkat
+
+Data dari API (layanan di server yang mengirim data ke aplikasimu) sering berisi object di dalam object. Destructuring bisa ikut masuk ke dalamnya:
+
+```js
+const detail = {
+  title: "Laporan Basis Data",
+  course: { name: "Basis Data", lecturer: { name: "Bu Rina" } },
+};
+
+const {
+  course: {
+    name: namaMk,
+    lecturer: { name: dosen },
+  },
+} = detail;
+
+console.log(namaMk, dosen); // → Basis Data Bu Rina
+```
+
+Bentuk destructuring-nya meniru bentuk datanya. `course: { ... }` artinya "masuk ke dalam `course`", lalu `lecturer: { name: dosen }` masuk satu tingkat lagi. Variabel yang tercipta hanya `namaMk` dan `dosen`. `course` dan `lecturer` cuma jalan masuk.
+
+Hati-hati: kalau `detail.course` tidak ada, baris itu langsung error `Cannot read properties of undefined (reading 'name')`. Untuk data yang mungkin kosong, `?.` di bawah lebih aman.
+
+### Destructuring di parameter
+
+Pola ini akan kamu tulis ratusan kali di React. **Komponen** React (potongan tampilan, misalnya satu baris tugas) menerima data titipan dalam satu object bernama **props**. Object itu bisa langsung dibongkar di parameter:
+
+```js
+function TaskItem({ title, done, course = "Umum" }) {
+  return `${done ? "✓" : "○"} ${title} (${course})`;
+}
+
+console.log(TaskItem(tasks[1])); // → ✓ Kuis Pemrograman Mobile (Pemrograman Mobile)
+console.log(TaskItem({ title: "Belajar Git", done: false })); // → ○ Belajar Git (Umum)
+console.log(TaskItem(tasks[3])); // → ○ Daftar ulang semester (null)
+```
+
+Kurung kurawal di parameter langsung mengambil `title`, `done`, dan `course` dari object yang dikirim. Potongan `done ? "✓" : "○"` artinya: kalau `done` true, tulis centang; kalau tidak, tulis lingkaran.
+
+Baris terakhir memperlihatkan jebakan. Nilai default hanya dipakai bila nilainya `undefined`. Bayangkan formulir: `undefined` berarti kolomnya tidak ada, sedangkan `null` berarti kolomnya ada tapi diisi tanda strip. Kolom tugas ke-4 "terisi" `null`, jadi default tidak dipakai.
+
+Data dari database sering berisi `null`. Untuk kasus ini, pakai `??`:
+
+```js
+function TaskItem({ title, done, course }) {
+  return `${done ? "✓" : "○"} ${title} (${course ?? "Umum"})`;
+}
+
+console.log(TaskItem(tasks[3])); // → ○ Daftar ulang semester (Umum)
+```
+
+`course ?? "Umum"` artinya: pakai isi `course`, kecuali isinya `null` atau `undefined`. Kalau begitu, pakai "Umum".
+
+### Destructuring array
+
+Array dibongkar berdasarkan **posisi**, bukan nama. Elemen pertama masuk ke variabel pertama, elemen kedua ke variabel kedua, dan seterusnya:
+
+```js
+const [pertama, kedua] = tasks;
+console.log(pertama.id, kedua.id); // → 1 2
+
+const [, , ketiga] = tasks; // koma kosong = lewati elemen
+console.log(ketiga.title); // → Rangkuman Jaringan Komputer
+
+function hitungProgres(list) {
+  const selesai = list.filter((t) => t.done).length;
+  return [selesai, list.length];
+}
+
+const [selesai, total] = hitungProgres(tasks);
+console.log(`${selesai}/${total} selesai`); // → 1/4 selesai
+```
+
+Pada `[, , ketiga]`, tiap koma melewati satu posisi. `hitungProgres` mengembalikan dua angka dalam satu array, lalu kita langsung membongkarnya menjadi `selesai` dan `total`.
+
+Karena yang menentukan posisi, namanya bebas. Itu sebabnya React memakai `const [tasks, setTasks] = useState([])`. `useState` (fungsi React untuk menyimpan data yang tampil di layar) mengembalikan dua elemen: nilainya dan fungsi pengubahnya.
+
+Destructuring array juga enak dipakai dengan `Object.entries`, yang mengubah object menjadi daftar pasangan `[key, value]` (nama kolom dan isinya):
+
+```js
+const jumlahPerPrioritas = { tinggi: 2, sedang: 1, rendah: 1 };
+
+for (const [prioritas, jumlah] of Object.entries(jumlahPerPrioritas)) {
+  console.log(`${prioritas}: ${jumlah} tugas`);
+}
+// → tinggi: 2 tugas
+// → sedang: 1 tugas
+// → rendah: 1 tugas
+```
+
+Di tiap putaran `for...of`, satu pasangan seperti `["tinggi", 2]` dibongkar menjadi `prioritas` dan `jumlah`.
+
+## Optional chaining dan nullish, lebih dalam
+
+<Callout type="analogi" title="Seperti mencari ruang dosen di gedung kampus">
+
+Kamu mencari "Gedung C, lantai 3, ruang 302". Ternyata Gedung C tidak ada. Kamu tidak memaksa naik tangga. Kamu berhenti, lalu memakai rencana cadangan: titip berkas ke bagian TU.
+
+- Gedung, lantai, ruang = object bertingkat.
+- Berhenti di titik pertama yang tidak ada = `?.` (hasilnya `undefined`, tanpa error).
+- Titip ke TU = `??` (nilai cadangan).
+
+Tanpa `?.`, JavaScript tetap mencoba naik ke lantai 3 dari gedung yang tidak ada, lalu program berhenti dengan `TypeError`.
+
+</Callout>
+
+Selain `obj?.prop`, ada dua bentuk lain: `?.[ ]` untuk mengambil index array (atau key yang disimpan di variabel), dan `?.( )` untuk memanggil function yang mungkin tidak ada.
+
+```js
+const respons = { data: [] };
+console.log(respons.data?.[0]?.title ?? "Belum ada tugas"); // → Belum ada tugas
+
+const opsi = {};
+opsi.onSelesai?.("Laporan Basis Data"); // tidak ada function-nya, tidak terjadi apa-apa
+
+const pengaturan = { tema: null };
+pengaturan.tema ??= "terang"; // isi hanya kalau masih null/undefined
+console.log(pengaturan.tema); // → terang
+```
+
+Pada baris pertama, array `data` kosong, jadi `[0]` menghasilkan `undefined`, `?.` berhenti di situ, dan `??` memberi teks cadangan. Operator `??=` mengisi `tema` hanya kalau isinya masih kosong.
+
+Pola `opsi.onSelesai?.()` sering muncul di React. Komponen kadang menerima **callback**, yaitu function titipan yang dipanggil nanti, misalnya "jalankan ini saat tugas selesai". Kalau callback itu tidak wajib dikirim, `?.()` mencegah error.
+
+<Callout type="warning" title="Default, ??, dan || bereaksi berbeda">
+
+Tiga cara memberi nilai cadangan ini mirip, tapi hasilnya berbeda untuk nilai "kosong":
+
+| Nilai asli | Default destructuring | `??` | `\|\|` |
+| --- | --- | --- | --- |
+| `undefined` | cadangan | cadangan | cadangan |
+| `null` | tetap `null` | cadangan | cadangan |
+| `0` atau `""` | tetap | tetap | cadangan |
+
+`||` menganggap `0` dan teks kosong sebagai "kosong", padahal sering itu nilai yang sah, misalnya progres 0%. Untuk data dari API atau database, `??` biasanya paling aman.
+
+</Callout>
+
+## some, every, dan sort
+
+`some` bertanya "adakah minimal satu yang cocok?", sedangkan `every` bertanya "apakah semuanya cocok?". Bayangkan bendahara kelas: "adakah yang belum bayar kas?" sudah terjawab begitu ia menemukan satu nama, sedangkan "semua sudah bayar?" baru terjawab "ya" setelah seluruh daftar dicek. Keduanya mengembalikan boolean, yaitu `true` atau `false`.
+
+```js
+const adaYangPenting = tasks.some((t) => t.priority === "tinggi");
+const semuaSelesai = tasks.every((t) => t.done);
+console.log(adaYangPenting, semuaSelesai); // → true false
+```
+
+Keduanya berhenti di tugas pertama: `some` karena tugas itu berprioritas tinggi, `every` karena tugas itu belum selesai.
+
+### sort butuh fungsi pembanding
+
+Tanpa argumen, `sort` mengurutkan elemen **sebagai teks**, huruf demi huruf seperti kamus. Untuk angka, hasilnya salah:
+
+```js
+const angka = [10, 9, 1];
+console.log(angka.sort()); // → [ 1, 10, 9 ]  ("10" < "9" sebagai teks)
+console.log(angka.sort((a, b) => a - b)); // → [ 1, 9, 10 ]
+```
+
+"10" diawali karakter "1", jadi ia diletakkan sebelum "9", sama seperti "bakso" ada sebelum "mi" di kamus.
+
+Fungsi pembanding menerima dua elemen, `a` dan `b`, lalu mengembalikan angka. Negatif berarti `a` duluan, positif berarti `b` duluan, nol berarti urutannya tetap. Jadi `a - b` mengurutkan naik (kecil ke besar), dan `b - a` turun. Untuk teks, pakai `a.localeCompare(b)` yang membandingkan sesuai abjad.
+
+### sort mengubah array asli
+
+<Callout type="analogi" title="Seperti mengurutkan tumpukan lembar KRS">
+
+Kamu diminta mengurutkan tumpukan lembar KRS teman sekelas berdasarkan NIM.
+
+- `sort` = menyusun ulang tumpukan aslinya. Urutan lama hilang, dan semua yang memakai tumpukan itu ikut melihat urutan baru.
+- `toSorted` = memfotokopi tumpukannya dulu, lalu mengurutkan fotokopinya. Tumpukan asli tetap.
+
+Analogi ini tidak sempurna. `toSorted` hanya membuat tumpukan (array) baru. Lembar-lembar di dalamnya tetap object yang sama.
+
+</Callout>
+
+`sort` tidak membuat array baru. Ia mengubah array aslinya, lalu mengembalikan array yang sama:
+
+```js
+const nilaiUjian = [85, 60, 92];
+const urut = nilaiUjian.sort((a, b) => a - b);
+
+console.log(nilaiUjian); // → [ 60, 85, 92 ]  ← array asli ikut berubah
+console.log(urut === nilaiUjian); // → true
+```
+
+Variabel `urut` hanya nama lain untuk array yang sama. Buktinya, `urut === nilaiUjian` bernilai `true`.
+
+Sejak Node 20 dan browser modern (sekitar 2023), ada `toSorted`. Cara pakainya sama, tapi ia mengembalikan array baru dan tidak menyentuh yang asli:
+
+```js
+const urutanPrioritas = { tinggi: 0, sedang: 1, rendah: 2 };
+
+const menurutPrioritas = tasks.toSorted(
+  (a, b) => urutanPrioritas[a.priority] - urutanPrioritas[b.priority]
+);
+console.log(menurutPrioritas.map((t) => t.id)); // → [ 1, 4, 2, 3 ]
+
+const menurutAbjad = tasks.toSorted((a, b) => a.title.localeCompare(b.title));
+console.log(menurutAbjad.map((t) => t.id)); // → [ 4, 2, 1, 3 ]
+
+console.log(tasks.map((t) => t.id)); // → [ 1, 2, 3, 4 ]  ← asli tetap
+```
+
+`urutanPrioritas` adalah "peta" yang mengubah teks prioritas menjadi angka, sehingga fungsi pembanding cukup memakai pengurangan. Baris terakhir membuktikan `tasks` asli tidak berubah.
+
+Saudaranya, `toReversed()`, adalah versi aman dari `reverse()` (membalik urutan). Kalau kamu menemui error `toSorted is not a function` di lingkungan lama, salin dulu baru urutkan: `[...tasks].sort(fn)`.
+
+## Immutability: persiapan untuk React
+
+<Callout type="analogi" title="Seperti berbagi link Google Docs">
+
+Kamu membagikan link Google Docs catatan kuliah ke teman. Kalau temanmu mengetik sesuatu, catatanmu ikut berubah, karena kalian membuka dokumen yang sama. Kalau ingin versi sendiri, kamu pilih "Buat salinan".
+
+- Link = referensi, yaitu alamat tempat data disimpan. Dokumennya = object atau array yang sebenarnya.
+- `const tasksB = tasksA` = membagikan link, bukan membuat salinan.
+- Spread `[...tasksA]` = "Buat salinan".
+
+</Callout>
+
+**Immutability** artinya data lama tidak diubah. Kalau perlu perubahan, kamu membuat data baru. Alasannya ada pada cara JavaScript menyimpan object dan array: sebagai **referensi**. Variabel hanya memegang "alamat" datanya:
+
+```js
+const tasksA = [{ id: 1, title: "Laporan" }];
+const tasksB = tasksA; // bukan salinan, alamatnya sama
+tasksB.push({ id: 2, title: "Kuis" });
+
+console.log(tasksA.length); // → 2
+console.log(tasksA === tasksB); // → true
+```
+
+`tasksB` memegang alamat yang sama dengan `tasksA`, jadi `push` lewat `tasksB` juga terlihat dari `tasksA`.
+
+Kenapa ini penting? Saat **state** (data yang tampil di layar dan bisa berubah) diganti, React membandingkan state lama dan baru dengan cara mirip `===`. Yang dibandingkan alamatnya, bukan isinya. Kalau kamu mengubah array lama lalu menyerahkannya lagi, alamatnya sama. React mengira tidak ada perubahan, dan layar tidak diperbarui.
+
+Mengubah data lama di tempat disebut **mutasi**. Tabel ini membandingkan cara yang melakukan mutasi dengan cara yang membuat data baru:
+
+| Aksi | Mengubah asli (hindari di state) | Membuat baru (pakai ini) |
+| --- | --- | --- |
+| Tambah | `tasks.push(baru)` | `[...tasks, baru]` |
+| Ubah satu | `task.done = true` | `tasks.map((t) => (t.id === id ? { ...t, done: true } : t))` |
+| Hapus | `tasks.splice(i, 1)` | `tasks.filter((t) => t.id !== id)` |
+| Urutkan | `tasks.sort(fn)` | `tasks.toSorted(fn)` |
+
+```js
+const tambah = [...tasks, { id: 5, title: "Esai", done: false, priority: "sedang", course: null }];
+const ubah = tasks.map((t) => (t.id === 1 ? { ...t, done: true } : t));
+const hapus = tasks.filter((t) => t.id !== 2);
+
+console.log(tasks.length, tambah.length, hapus.length); // → 4 5 3
+console.log(tasks[0].done, ubah[0].done); // → false true
+console.log(ubah[1] === tasks[1]); // → true
+```
+
+Pada `ubah`, `map` membuat array baru. Tugas id 1 diganti object baru `{ ...t, done: true }`, artinya "salin semua isinya, lalu timpa `done`". Tugas lain dikembalikan apa adanya, jadi baris terakhir bernilai `true`. Itu wajar dan hemat memori. Yang penting, array-nya baru, dan tugas yang diubah juga object baru.
+
+<Compare>
+<CompareItem title="Hindari: mengubah data lama" tone="bad">
+
+```js
+function tandaiSelesai(list, id) {
+  const task = list.find((t) => t.id === id);
+  task.done = true;
+  return list; // array yang sama
+}
+```
+
+</CompareItem>
+<CompareItem title="Lebih baik: membuat data baru" tone="good">
+
+```js
+function tandaiSelesai(list, id) {
+  return list.map((t) =>
+    t.id === id ? { ...t, done: true } : t
+  );
+}
+```
+
+</CompareItem>
+</Compare>
+
+Versi kiri mengubah tugas di dalam array lama, lalu mengembalikan array yang sama. Versi kanan mengembalikan array baru, sehingga React tahu ada perubahan.
+
+### Spread hanya menyalin satu tingkat
+
+Spread membuat salinan **dangkal** (*shallow copy*): hanya tingkat pertama yang disalin. Object di dalamnya, seperti `course`, tetap dipakai bersama:
+
+```js
+const asli = { title: "Laporan", course: { name: "Basis Data", lecturer: "Bu Rina" } };
+
+const salinan = { ...asli };
+salinan.course.lecturer = "Pak Budi";
+console.log(asli.course.lecturer); // → Pak Budi  ✗ ikut berubah
+
+const benar = { ...asli, course: { ...asli.course, lecturer: "Pak Dodi" } };
+console.log(asli.course.lecturer, benar.course.lecturer); // → Pak Budi Pak Dodi
+```
+
+Mengubah `salinan.course.lecturer` ternyata ikut mengubah `asli`, karena `salinan.course` dan `asli.course` object yang sama. Ingat lembar KRS tadi: tumpukannya difotokopi, lembarnya tidak. Cara yang benar ada di `benar`: spread object luarnya, lalu spread juga `course` sebelum mengganti `lecturer`.
+
+Untuk salinan penuh sampai ke dalam ada `structuredClone(asli)`, tapi di React spread per tingkat lebih umum. Pola ini dipakai lagi di [State & Event](/belajar/react-native/state-event).
+
+## ES Modules: import dan export
+
+<Callout type="analogi" title="Seperti warung-warung di kantin kampus">
+
+Satu kantin punya banyak warung. Tiap warung memasak banyak hal di dapurnya, tapi pembeli hanya bisa memesan menu yang dipajang di etalase.
+
+- Satu warung = satu file (modul). Menu di etalase = yang di-`export`.
+- Memesan dari warung lain = `import`, dengan menyebut nama menu yang persis = named import.
+- "Yang biasa, Bu" untuk menu andalan = default export. Hanya satu per warung, dan boleh kamu sebut dengan nama apa saja.
+- Alamat lengkap sampai nomor kios = path seperti `"./lib/tasks.js"`.
+
+</Callout>
+
+Satu file JavaScript adalah satu **modul**. Variabel di dalamnya tidak terlihat dari file lain, kecuali kamu `export`. File lain mengambilnya dengan `import`. Kita pecah proyek latihan seperti ini:
+
+<FileTree title="latihan-modul" tree={`
+package.json # berisi "type": "module"
+* index.js # titik masuk
+lib/
+  tasks.js # data dan fungsi tugas
+  errors.js # class error buatan sendiri
+`} />
+
+```js
+// lib/tasks.js
+export const tasks = [
+  { id: 1, title: "Laporan Basis Data", done: false },
+  { id: 2, title: "Kuis Pemrograman Mobile", done: true },
+];
+
+export function countRemaining(list) {
+  return list.filter((t) => !t.done).length;
+}
+
+export default function formatTask(task) {
+  return `${task.done ? "✓" : "○"} ${task.title}`;
+}
+```
+
+File ini memajang `tasks` dan `countRemaining` sebagai named export, serta `formatTask` sebagai default export.
+
+```js
+// index.js
+import formatTask, { tasks, countRemaining } from "./lib/tasks.js";
+
+console.log(tasks.map(formatTask).join("\n"));
+console.log(`${countRemaining(tasks)} tugas belum selesai`);
+// → ○ Laporan Basis Data
+// → ✓ Kuis Pemrograman Mobile
+// → 1 tugas belum selesai
+```
+
+`formatTask` di depan, tanpa kurung kurawal, adalah default export. `tasks` dan `countRemaining` di dalam kurung kurawal adalah named export. Lalu `tasks.map(formatTask)` menjalankan `formatTask` untuk tiap tugas, dan `join("\n")` menggabungkan hasilnya per baris.
+
+| Jenis | Cara export | Cara import | Catatan |
+| --- | --- | --- | --- |
+| Named | `export const tasks` | `import { tasks } from "..."` | Boleh banyak per file. Nama harus sama, atau ganti dengan `as`. |
+| Default | `export default function ...` | `import formatTask from "..."` | Maksimal satu per file. Nama bebas. |
+
+Contoh ganti nama: `import { tasks as daftarTugas } from "./lib/tasks.js"`. Modul bawaan Node (fitur yang ikut terpasang bersama Node, misalnya membaca file) diimpor dengan awalan `node:`, contohnya `import { readFile } from "node:fs/promises"`.
+
+### Peran "type": "module"
+
+Node punya dua sistem modul. **CommonJS** adalah sistem lama dengan `require()` dan `module.exports`, yang masih sering muncul di tutorial lama. **ES Modules** (ESM) adalah sistem modern dengan `import` dan `export`. Baris `"type": "module"` di `package.json` memberi tahu Node bahwa semua file `.js` di proyek ini memakai ESM.
+
+```json
+{
+  "name": "latihan-modul",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js"
+}
+```
+
+Tanpa baris itu, Node 22 tetap menjalankan kodemu, tapi menampilkan peringatan `MODULE_TYPELESS_PACKAGE_JSON` yang menyarankan menambahkan `"type": "module"`. Kalau isinya `"type": "commonjs"`, kamu akan mendapat `SyntaxError: Cannot use import statement outside a module`.
+
+Di proyek Expo dan Next.js, urusan import ditangani *bundler*, yaitu alat yang menggabungkan semua file kodemu menjadi paket siap jalan. Jadi di sana kamu tidak perlu mengatur `"type"`.
+
+<Callout type="warning" title="Tiga error modul yang paling sering">
+
+- **Lupa ekstensi `.js`**: `import ... from "./lib/tasks"` menghasilkan `ERR_MODULE_NOT_FOUND`. Node bahkan menyarankan `Did you mean to import "./lib/tasks.js"?`. Di ESM Node, ekstensi wajib ditulis.
+- **Nama import salah**: `does not provide an export named 'getTask'`. Cek ejaan dan pastikan fungsinya memang di-`export`.
+- **Mencampur gaya lama dan baru**: `require is not defined in ES module scope`. Ganti `require` dengan `import`.
+
+</Callout>
+
+## Class secara singkat
+
+Bayangkan cetakan kue lumpur. Satu cetakan bisa menghasilkan banyak kue dengan bentuk sama, tapi isiannya boleh beda, misalnya kismis atau nangka. **Class** adalah cetakannya. Object yang dibuat dari class itu adalah kuenya.
+
+Istilah yang muncul di contoh berikut:
+
+- `new` = mencetak satu object baru dari class.
+- `constructor` = langkah yang otomatis dijalankan saat `new` dipanggil. Di sini isian tiap object diatur.
+- `this` = "object yang sedang dibuat ini".
+- **Method** = function milik class, misalnya `label()`.
+
+```js
+class Course {
+  constructor(name, lecturer, sks = 2) {
+    this.name = name;
+    this.lecturer = lecturer;
+    this.sks = sks;
+  }
+
+  label() {
+    return `${this.name} (${this.sks} SKS)`;
+  }
+}
+
+class PraktikumCourse extends Course {
+  constructor(name, lecturer, sks, lab) {
+    super(name, lecturer, sks); // panggil constructor induk
+    this.lab = lab;
+  }
+
+  label() {
+    return `${super.label()} di ${this.lab}`;
+  }
+}
+
+const basisData = new Course("Basis Data", "Bu Rina", 3);
+const mobile = new PraktikumCourse("Pemrograman Mobile", "Pak Dodi", 4, "Lab 2");
+
+console.log(basisData.label()); // → Basis Data (3 SKS)
+console.log(mobile.label()); // → Pemrograman Mobile (4 SKS) di Lab 2
+console.log(mobile instanceof Course); // → true
+```
+
+`extends` membuat class turunan, seperti cetakan kue lumpur yang ditambah hiasan. `PraktikumCourse` mewarisi semua isi dan method `Course`, lalu menambah `lab`. Di dalamnya, `super(...)` memanggil constructor induk, dan `super.label()` memanggil method `label` milik induk. `instanceof` mengecek apakah sebuah object dibuat dari class tertentu atau turunannya.
+
+React modern memakai function, bukan class, jadi kamu jarang menulis class sendiri. Kamu lebih sering *memakai* class bawaan seperti `new Date()`, `new Map()`, dan yang paling penting, `Error`.
+
+## Menangani error
+
+<Callout type="analogi" title="Seperti membayar pakai QRIS di kasir minimarket">
+
+Kamu mencoba membayar pakai QRIS. Kalau berhasil, selesai. Kalau sinyal hilang dan pembayaran gagal, kamu tidak pergi begitu saja meninggalkan belanjaan. Kamu beralih ke rencana B: bayar tunai. Apa pun hasilnya, kasir tetap memberi struk.
+
+- Mencoba bayar pakai QRIS = blok `try`.
+- Beralih ke tunai saat gagal = blok `catch`.
+- Struk yang selalu diberikan = blok `finally`.
+- Mesin EDC yang menampilkan "saldo tidak cukup" lalu membatalkan transaksi = `throw`. Bagian kode yang menemukan masalah "melempar" error ke pemanggilnya.
+
+Kalau tidak ada rencana B, programmu berhenti di tengah jalan.
+
+</Callout>
+
+### try, catch, finally
+
+Kode yang bisa gagal dibungkus `try`. Kalau terjadi error, JavaScript langsung lompat ke `catch`. Blok `finally` selalu dijalankan, berhasil atau gagal:
+
+```js
+const teks = "halo"; // misalnya data rusak dari penyimpanan
+
+try {
+  const data = JSON.parse(teks);
+  console.log(data);
+} catch (error) {
+  console.log(error.name); // → SyntaxError
+  console.log(error.message); // → Unexpected token 'h', "halo" is not valid JSON
+} finally {
+  console.log("Selesai mencoba"); // → Selesai mencoba
+}
+```
+
+`JSON.parse` mengubah teks berformat JSON (format teks untuk data, mirip formulir dengan kolom tetap) menjadi object. Teks `"halo"` bukan JSON yang sah, jadi `JSON.parse` gagal dan JavaScript lompat ke `catch`. Object `error` membawa `name` (jenis error) dan `message` (penjelasannya). Terakhir, `finally` tetap jalan.
+
+Tanpa `try`/`catch`, error yang tidak tertangkap menghentikan program. Node lalu mencetak *stack trace*, yaitu daftar baris yang dilewati sampai error terjadi. Baca baris paling atas dulu, karena di situ tertulis nama file dan nomor barisnya.
+
+### throw: melempar error sendiri
+
+Kamu bisa menghentikan fungsi dengan `throw` saat datanya tidak masuk akal. Selalu lempar object `Error`, jangan teks biasa. Hanya `Error` yang membawa `stack`, catatan baris yang berguna saat mencari bug:
+
+```js
+function cariTugas(list, id) {
+  const task = list.find((t) => t.id === id);
+  if (!task) {
+    throw new Error(`Tugas dengan id ${id} tidak ditemukan`);
+  }
+  return task;
+}
+
+try {
+  cariTugas(tasks, 99);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+  // → Error: Tugas dengan id 99 tidak ditemukan
+}
+```
+
+`cariTugas` mencari tugas dengan id tertentu. Kalau tidak ketemu, fungsi berhenti di baris `throw` dan melempar error. Kode yang memanggilnya menangkap error itu di `catch`, lalu mencetak jenis dan pesannya.
+
+### Error buatan sendiri
+
+Petugas pendaftaran yang baik menyebut kolom mana yang salah, misalnya "NIM belum diisi". Kalau ia cuma bilang "formulirmu salah", kamu bingung harus memperbaiki apa. Error buatan sendiri bekerja seperti petugas yang baik itu.
+
+Dengan `extends Error`, kamu bisa membuat jenis error sendiri yang membawa informasi tambahan. Di sini kita pakai class dari bagian sebelumnya:
+
+```js
+// lib/errors.js
+export class ValidationError extends Error {
+  constructor(field, message) {
+    super(message);
+    this.name = "ValidationError";
+    this.field = field; // input mana yang salah
+  }
+}
+```
+
+`super(message)` meneruskan pesan ke class `Error` bawaan. `this.name` mengganti jenis error-nya, dan `this.field` menyimpan nama input yang salah.
+
+```js
+// index.js
+import { ValidationError } from "./lib/errors.js";
+
+function createTask({ title, priority = "sedang" }) {
+  if (!title?.trim()) {
+    throw new ValidationError("title", "Judul tugas wajib diisi");
+  }
+  return { id: Date.now(), title: title.trim(), done: false, priority };
+}
+
+try {
+  createTask({ title: "   " });
+} catch (error) {
+  if (error instanceof ValidationError) {
+    console.log(`Input salah di "${error.field}": ${error.message}`);
+  } else {
+    throw error; // bukan urusan kita, lempar lagi
+  }
+}
+// → Input salah di "title": Judul tugas wajib diisi
+```
+
+Kondisi `!title?.trim()` bernilai true kalau `title` tidak ada, atau hanya berisi spasi. `trim()` membuang spasi di awal dan akhir teks, jadi `"   "` menjadi teks kosong.
+
+`instanceof` membedakan dua macam error:
+
+- Error yang kita duga, misalnya input salah. Cukup beri pesan ke pengguna.
+- Error tak terduga, misalnya bug. Jangan disembunyikan, lempar lagi dengan `throw error`.
+
+Kalau `catch` menelan semua error tanpa pilih-pilih, bug sungguhan jadi sulit dilacak.
+
+<Callout type="info" title="Pola ini muncul lagi di track lain">
+
+Di track backend, error buatan sendiri dipakai untuk membawa [status code](/glosarium#status-code) HTTP, yaitu kode angka yang menandai hasil sebuah permintaan, mirip status di resi paket. Contohnya 400 untuk input salah. Lihat [Validasi & Error Handling](/belajar/crud-backend/validasi-error-handling). Di aplikasi mobile, pola yang sama membungkus error dari API. Penanganan error untuk kode *asynchronous* (kode yang harus menunggu, misalnya mengambil data dari internet) dibahas di [Async JavaScript](/belajar/fondasi/async-javascript).
+
+</Callout>
+
+## Kesalahan umum
+
+- **`sort()` tanpa fungsi pembanding untuk angka.** Hasilnya `[1, 10, 9]`. Untuk angka, selalu tulis `(a, b) => a - b`.
+- **Mengurutkan atau mengubah state langsung.** `sort`, `push`, `splice`, dan `task.done = true` mengubah data lama. Di React, layar tidak ikut diperbarui. Pakai `toSorted`, spread, `map`, dan `filter`.
+- **Mengira spread menyalin sampai ke dalam.** Object bertingkat tetap dipakai bersama. Spread setiap tingkat yang diubah.
+- **Memakai default destructuring untuk nilai `null`.** Default hanya bekerja untuk `undefined`. Pakai `??`.
+- **Lupa `.js` di path import** saat memakai ESM di Node.
+- **`catch` kosong.** `catch` tanpa isi membuat error hilang tanpa jejak. Minimal tampilkan pesannya, atau lempar lagi.
+
+## Latihan
+
+<Exercise title="Ganti prioritas dan urutkan tanpa mutasi" difficulty="mudah" hints={["Untuk mengubah satu tugas: `map`, lalu kembalikan `{ ...t, priority }` untuk id yang cocok.", "Buat object peta urutan seperti `{ tinggi: 0, sedang: 1, rendah: 2 }`.", "Pakai `toSorted`, bukan `sort`."]}>
+
+Pakai array `tasks` berisi 4 tugas di awal pelajaran. "Tanpa mutasi" artinya array `tasks` asli tidak boleh berubah.
+
+1. Tulis fungsi `gantiPrioritas(list, id, priority)`. Fungsi ini mengembalikan array baru, dengan prioritas tugas ber-id tersebut sudah diganti.
+2. Tulis fungsi `urutkanPrioritas(list)`. Fungsi ini mengurutkan dari `tinggi` ke `rendah` tanpa mengubah array masukan.
+3. Ganti prioritas tugas id 3 menjadi `tinggi`, lalu urutkan hasilnya.
+4. Cetak `tasks` asli untuk membuktikan isinya tidak berubah.
+
+<Solution>
+
+```js
+const gantiPrioritas = (list, id, priority) =>
+  list.map((t) => (t.id === id ? { ...t, priority } : t));
+
+const urutan = { tinggi: 0, sedang: 1, rendah: 2 };
+const urutkanPrioritas = (list) =>
+  list.toSorted((a, b) => urutan[a.priority] - urutan[b.priority]);
+
+const baru = urutkanPrioritas(gantiPrioritas(tasks, 3, "tinggi"));
+
+console.log(baru.map((t) => `${t.id}:${t.priority}`));
+// → [ '1:tinggi', '3:tinggi', '4:tinggi', '2:sedang' ]
+console.log(tasks[2].priority, tasks.map((t) => t.id));
+// → rendah [ 1, 2, 3, 4 ]
+```
+
+Baris `const baru = ...` menjalankan `gantiPrioritas` dulu, lalu hasilnya langsung diurutkan. Penulisan `{ ...t, priority }` adalah singkatan dari `{ ...t, priority: priority }`. Untuk prioritas yang sama, `toSorted` mempertahankan urutan awal, jadi tugas 1, 3, dan 4 tetap berurutan.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Pecah ke modul dan validasi input" difficulty="sedang" hints={["`lib/errors.js` cukup berisi class `ValidationError` dengan property `field`.", "Di `lib/tasks.js`, lempar `ValidationError` bila `title` kosong atau `priority` tidak ada di daftar yang diizinkan.", "Di `index.js`, coba beberapa input dalam loop dan tangkap errornya dengan `instanceof`."]}>
+
+Di proyek `latihan-modul`:
+
+1. Buat `lib/errors.js` yang meng-export `ValidationError`.
+2. Buat `lib/tasks.js` yang meng-export `createTask({ title, priority })`.
+3. Di `createTask`, judul wajib diisi. Prioritas wajib salah satu dari `rendah`, `sedang`, atau `tinggi`, dengan default `sedang`.
+4. Di `index.js`, panggil `createTask` dengan tiga input: satu benar, satu judul kosong, dan satu prioritas `darurat`.
+5. Cetak tugas yang berhasil dibuat, atau pesan error-nya.
+
+<Solution>
+
+```js
+// lib/errors.js
+export class ValidationError extends Error {
+  constructor(field, message) {
+    super(message);
+    this.name = "ValidationError";
+    this.field = field;
+  }
+}
+```
+
+```js
+// lib/tasks.js
+import { ValidationError } from "./errors.js";
+
+const PRIORITIES = ["rendah", "sedang", "tinggi"];
+
+export function createTask({ title, priority = "sedang" }) {
+  if (!title?.trim()) {
+    throw new ValidationError("title", "Judul tugas wajib diisi");
+  }
+  if (!PRIORITIES.includes(priority)) {
+    throw new ValidationError("priority", `Prioritas harus: ${PRIORITIES.join(", ")}`);
+  }
+  return { title: title.trim(), done: false, priority };
+}
+```
+
+```js
+// index.js
+import { createTask } from "./lib/tasks.js";
+import { ValidationError } from "./lib/errors.js";
+
+const inputs = [
+  { title: " Laporan Basis Data " },
+  { title: "" },
+  { title: "Esai", priority: "darurat" },
+];
+
+for (const input of inputs) {
+  try {
+    const task = createTask(input);
+    console.log("✓ Dibuat:", task.title, task.priority);
+  } catch (error) {
+    if (!(error instanceof ValidationError)) throw error;
+    console.log(`✗ ${error.field}: ${error.message}`);
+  }
+}
+// → ✓ Dibuat: Laporan Basis Data sedang
+// → ✗ title: Judul tugas wajib diisi
+// → ✗ priority: Prioritas harus: rendah, sedang, tinggi
+```
+
+Loop `for...of` mencoba ketiga input satu per satu. Input yang gagal tidak menghentikan loop karena error-nya ditangkap di `catch`. `lib/tasks.js` mengimpor `./errors.js` karena keduanya berada di folder yang sama. Path import selalu dihitung dari letak file yang menulis `import`.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Apa output kode berikut?",
+    code: "const angka = [10, 9, 1];\nconsole.log(angka.sort());",
+    options: ["`[1, 9, 10]`", "`[10, 9, 1]`", "`[1, 10, 9]`", "TypeError"],
+    answer: 2,
+    explain: "Tanpa fungsi pembanding, `sort` membandingkan elemen sebagai teks, seperti urutan kata di kamus. Teks \"10\" diletakkan sebelum \"9\" karena karakter pertamanya \"1\". Untuk angka, tulis `sort((a, b) => a - b)`.",
+  },
+  {
+    q: "Cara mana yang aman untuk menandai tugas id 2 sebagai selesai di state React?",
+    options: ["`tasks.find((t) => t.id === 2).done = true`", "`tasks[1].done = true`", "`tasks.push({ id: 2, done: true })`", "`tasks.map((t) => (t.id === 2 ? { ...t, done: true } : t))`"],
+    answer: 3,
+    explain: "Hanya `map` dengan spread yang membuat array baru dan object tugas baru. Tiga pilihan lain mengubah data lama, jadi alamatnya tetap sama dan React mengira tidak ada perubahan. `push` bahkan menambah tugas dobel.",
+  },
+  {
+    q: "Apa output kode berikut?",
+    code: "const { course = \"Umum\" } = { course: null };\nconsole.log(course);",
+    options: ["`\"Umum\"`", "`null`", "`undefined`", "TypeError"],
+    answer: 1,
+    explain: "Nilai default destructuring hanya dipakai bila nilainya `undefined`. `null` tetap dihitung sebagai nilai, seperti kolom formulir yang diisi tanda strip. Untuk menangani `null`, tulis `course ?? \"Umum\"`.",
+  },
+  {
+    q: "Proyek dengan `\"type\": \"module\"` berisi `import { tasks } from \"./lib/tasks\";`. File `lib/tasks.js` ada. Apa yang terjadi saat dijalankan dengan Node?",
+    options: ["Error `ERR_MODULE_NOT_FOUND` karena ekstensi `.js` tidak ditulis", "Berjalan normal", "Error `require is not defined`", "Node otomatis memakai CommonJS"],
+    answer: 0,
+    explain: "Di ESM Node, path relatif harus lengkap dengan ekstensi. Node akan menyarankan `Did you mean to import \"./lib/tasks.js\"?`. Bundler seperti di Expo lebih longgar, tapi Node tidak.",
+  },
+  {
+    q: "Apa output kode berikut?",
+    code: "class ValidationError extends Error {\n  constructor(message) {\n    super(message);\n    this.name = \"ValidationError\";\n  }\n}\ntry {\n  throw new ValidationError(\"Judul wajib\");\n} catch (e) {\n  console.log(e instanceof Error, e.name);\n}",
+    options: ["`false ValidationError`", "`true Error`", "`true ValidationError`", "`false Error`"],
+    answer: 2,
+    explain: "`ValidationError` mewarisi `Error` lewat `extends`, jadi `instanceof Error` bernilai true. Constructor sudah mengganti `name`, jadi yang tercetak `ValidationError`.",
+  },
+]} />
+
+## Ringkasan
+
+- Destructuring bisa mengganti nama (`title: judul`), memberi nilai default, masuk ke object bertingkat, dan dipakai langsung di parameter, seperti props di React. Default hanya berlaku untuk `undefined`, bukan `null`.
+- Array dibongkar berdasarkan posisi, seperti pola `const [nilai, setNilai] = useState()`.
+- `?.` berhenti dengan aman saat data tidak ada, termasuk bentuk `?.[ ]` dan `?.( )`. `??` memberi nilai cadangan untuk `null` dan `undefined`.
+- `some` dan `every` menjawab ya atau tidak. `sort` butuh fungsi pembanding dan mengubah array asli. `toSorted` membuat array baru.
+- Di React, jangan ubah data lama. Buat array dan object baru dengan spread, `map`, `filter`, dan `toSorted`. Ingat, spread hanya menyalin satu tingkat.
+- ES Modules memakai `export` dan `import`. Di Node, kamu butuh `"type": "module"` dan ekstensi `.js` di path relatif.
+- Class adalah cetakan object. `extends Error` membuat jenis error sendiri. Tangkap dengan `try`/`catch`, lalu bedakan jenisnya dengan `instanceof`.
+
+Contekan sintaks ada di [cheatsheet JavaScript](/cheatsheet/javascript).
+
+<Callout type="capstone" title="Langkah capstone">
+
+Fungsi seperti `gantiPrioritas` dan `tandaiSelesai` adalah bentuk awal cara aplikasi capstone (proyek akhir *Aplikasi Tugas & Catatan Kuliah*) memperbarui daftar tugas di layar. Struktur folder `lib/` dengan modul terpisah dan `ValidationError` juga akan kamu temui lagi saat membangun API dan aplikasinya.
+
+</Callout>

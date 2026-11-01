@@ -1,0 +1,789 @@
+## Pengantar
+
+Bayangkan layar utama aplikasi capstone kita, *Aplikasi Tugas & Catatan Kuliah*. Isinya daftar tugas. Tiap tugas punya judul, mata kuliah, prioritas, dan tanda selesai.
+
+Dengan JavaScript biasa, kamu membuat tiap elemen satu per satu memakai `document.createElement`. Elemen adalah satu potongan halaman, misalnya satu judul atau satu kotak. Setelah itu kamu menempelkan teksnya. Lalu kamu harus ingat sendiri elemen mana yang perlu diubah tiap kali data berubah. Untuk tiga tugas masih bisa. Untuk tiga puluh tugas yang bisa ditambah, dicentang, dan dihapus, kodenya cepat kusut.
+
+React memberi cara lain. Kamu cukup menuliskan tampilan yang kamu mau untuk data tertentu. React yang mengurus perubahan di layar.
+
+Pelajaran ini adalah pintu masuk Track 2. Komponen, JSX, dan props yang kamu pelajari di sini dipakai sama persis di React Native nanti. Bedanya hanya "batu bata"-nya: `<div>` di web, `<View>` di HP.
+
+Prasyarat: kamu sudah nyaman dengan arrow function dan `map` dari [JavaScript Modern 1](/belajar/fondasi/javascript-modern-1), serta destructuring dan `import`/`export` dari [JavaScript Modern 2](/belajar/fondasi/javascript-modern-2). Semua contoh di track ini memakai React 19.
+
+## Apa itu React?
+
+<Callout type="analogi" title="Seperti menyusun balok LEGO">
+
+Rumah LEGO tidak dicetak sekaligus. Rumah itu tersusun dari balok kecil: balok jendela, balok pintu, balok atap. Satu jenis balok bisa dipakai berkali-kali. Kalau jendelanya mau diganti, kamu cukup mencopot satu balok itu.
+
+Di React, balok = **komponen**, rumah = satu layar aplikasi. Bedanya, balok LEGO selalu sama isinya. Komponen bisa menampilkan isi yang berbeda, tergantung data yang kamu berikan.
+
+</Callout>
+
+React adalah **library** JavaScript untuk membangun UI. Library artinya kumpulan kode siap pakai buatan orang lain yang kamu panggil dari kodemu. UI (*user interface*) adalah semua yang dilihat dan disentuh pengguna: teks, tombol, kotak isian.
+
+UI di React disusun dari **komponen** (*component*). Komponen adalah potongan UI yang berdiri sendiri, misalnya satu kartu tugas. Komponen ditulis sebagai fungsi JavaScript biasa. Fungsi itu menerima data, lalu mengembalikan gambaran tampilannya.
+
+Kata kunci berikutnya adalah **deklaratif**.
+
+<Callout type="analogi" title="Memesan nasi goreng di warung">
+
+Cara imperatif itu seperti masuk ke dapur warung dan mengajari koki: "nyalakan kompor, tuang minyak, masukkan nasi". Cara deklaratif itu seperti bilang ke penjual: "nasi goreng pedas, tanpa telur". Kamu cukup menyebut hasil akhirnya. Koki (React) yang memasak.
+
+</Callout>
+
+Bandingkan dua cara menampilkan satu kartu tugas:
+
+<Compare>
+<CompareItem title="Imperatif: DOM manual" tone="bad">
+
+```js
+const card = document.createElement("div");
+card.className = "card";
+const h3 = document.createElement("h3");
+h3.textContent = "Laporan Praktikum Basis Data";
+card.appendChild(h3);
+document.body.appendChild(card);
+// Saat judul berubah, kamu harus mencari h3 lalu mengubahnya sendiri.
+```
+
+</CompareItem>
+<CompareItem title="Deklaratif: React" tone="good">
+
+```jsx
+function TaskCard() {
+  return (
+    <div className="card">
+      <h3>Laporan Praktikum Basis Data</h3>
+    </div>
+  );
+}
+// Saat data berubah, React menghitung ulang dan memperbarui DOM untukmu.
+```
+
+</CompareItem>
+</Compare>
+
+- **Imperatif** berarti memberi instruksi langkah demi langkah. Di kode kiri, kamu sendiri yang membuat elemen, mengisi teks, dan menempelkannya ke halaman. Kalau judul berubah, kamu juga yang harus mencari dan mengubahnya.
+- **Deklaratif** berarti menjelaskan hasil akhirnya. Di kode kanan, kamu hanya menulis bentuk kartunya. Saat data berubah, React membandingkan tampilan lama dan baru. Lalu React mengubah bagian yang berbeda saja di **DOM** (susunan elemen halaman yang sedang tampil di browser).
+
+<Flow nodes={["Data", "Komponen", "JSX", "React DOM", "Layar browser"]} labels={["masuk ke", "mengembalikan", "diproses", "memperbarui"]} caption="UI adalah fungsi dari data: data berubah, React menggambar ulang bagian yang perlu saja" />
+
+Ada dua aturan pertama untuk komponen:
+
+1. Komponen adalah fungsi yang mengembalikan JSX. Kalau tidak ingin menampilkan apa pun, komponen boleh mengembalikan `null`.
+2. Nama komponen wajib diawali huruf kapital: `TaskCard`, bukan `taskCard`. React melihat huruf pertama untuk membedakan komponen buatanmu dari tag HTML bawaan seperti `div` atau `p`.
+
+Coba langsung di playground berikut. Playground adalah editor kecil di halaman ini yang langsung menampilkan hasil kodemu. Klik **Buka editor interaktif**, ubah teksnya, lalu lihat panel kanan ikut berubah. Di playground ini, file `App.js` wajib punya `export default function App`. Itulah komponen akar, yaitu komponen paling luar yang ditampilkan ke halaman.
+
+<ReactPlayground title="Komponen pertama" height={320} code={`
+function Greeting() {
+  return <p>Selamat datang di kelas Pemrograman Mobile!</p>;
+}
+
+export default function App() {
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16 }}>
+      <h1>Tugas Kuliah Andi</h1>
+      <Greeting />
+      <Greeting />
+    </main>
+  );
+}
+`} />
+
+Cara membaca kode di atas:
+
+- `Greeting` adalah komponen kecil. Isinya hanya satu paragraf sapaan.
+- `App` adalah komponen akar. Isinya judul `h1` dan dua kali `<Greeting />`.
+- Hasilnya, kalimat sapaan muncul dua kali. Komponen ditulis sekali, lalu bisa dipakai berulang seperti tag HTML buatanmu sendiri.
+
+## Aturan JSX
+
+<Callout type="analogi" title="Seperti mengisi formulir KRS">
+
+Formulir KRS punya aturan tulis. NIM harus di kotak NIM. Tanda tangan harus di kolom tanda tangan. Kalau aturannya dilanggar, petugas akademik menolak formulirmu, walaupun isinya benar.
+
+JSX juga punya aturan tulis. Petugas yang memeriksanya adalah alat bernama Babel. Kalau aturannya dilanggar, Babel menolak dan menampilkan pesan error.
+
+</Callout>
+
+JSX (*JavaScript XML*) adalah cara menulis tampilan yang mirip HTML, tetapi di dalam file JavaScript. Browser sebenarnya tidak mengerti JSX. Ada alat bernama **Babel** (penerjemah kode) yang mengubah JSX menjadi panggilan fungsi biasa, kira-kira `jsx("h1", { children: "Halo" })`. Karena ujung-ujungnya JSX adalah JavaScript, aturannya sedikit lebih ketat daripada HTML:
+
+| Aturan | Salah | Benar |
+| --- | --- | --- |
+| Satu elemen akar per `return` | `<h1>A</h1><p>B</p>` | `<><h1>A</h1><p>B</p></>` |
+| Pakai `className`, bukan `class` | `<div class="card">` | `<div className="card">` |
+| Semua tag wajib ditutup | `<img src={url}>` | `<img src={url} />` |
+| Nilai JavaScript ditulis di kurung kurawal | `<h3>task.title</h3>` | `<h3>{task.title}</h3>` |
+| Nama atribut memakai camelCase | `onclick`, `tabindex` | `onClick`, `tabIndex` |
+| `style` berupa object | `style="color: red"` | `style={{ color: "red" }}` |
+
+*camelCase* artinya kata pertama huruf kecil, lalu tiap kata berikutnya diawali huruf kapital, seperti `onClick`. Dua bagian berikut membahas aturan yang paling sering bikin bingung.
+
+### Satu akar atau Fragment
+
+Sebuah fungsi hanya bisa mengembalikan satu nilai. Kalau kamu menulis dua elemen bersebelahan di `return`, itu sama saja mencoba mengembalikan dua nilai. Babel akan menolak dengan pesan `Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>?`. Artinya: "elemen yang bersebelahan harus dibungkus satu tag".
+
+Mirip kurir ojek online yang hanya mau membawa satu paket. Kalau kamu punya dua barang, masukkan dulu ke satu kantong. Solusinya di JSX sama: bungkus dengan satu elemen induk. Kalau kamu tidak ingin menambah `<div>` ekstra ke halaman, pakai **Fragment** `<>...</>`. Fragment adalah pembungkus "kosong" yang tidak ikut muncul di DOM, seperti kantong bening yang dibuang begitu paket sampai.
+
+```jsx
+function TaskHeader() {
+  return (
+    <>
+      <h2>Tugas Minggu Ini</h2>
+      <p>Prioritaskan yang deadline-nya paling dekat.</p>
+    </>
+  );
+}
+```
+
+Komponen ini mengembalikan satu judul dan satu paragraf. Keduanya dibungkus `<>` dan `</>`, jadi dihitung sebagai satu nilai. Di halaman, yang muncul hanya `h2` dan `p`.
+
+Perhatikan juga tanda kurung `(` setelah `return`. Kalau JSX baru dimulai di baris berikutnya tanpa `(`, JavaScript otomatis menyisipkan titik koma setelah `return`. Akibatnya fungsi mengembalikan `undefined`, dan tidak ada yang tampil.
+
+### Kurung kurawal: jendela ke JavaScript
+
+<Callout type="analogi" title="Seperti template surat undangan">
+
+Panitia acara kampus punya template undangan: "Kepada Yth. ____, kami mengundang Anda ke acara ____". Sebagian besar teksnya tetap. Bagian kosong diisi nama dan acara yang berbeda untuk tiap orang.
+
+JSX mirip template itu. Bagian yang mirip HTML = teks tetap. Kurung kurawal = bagian kosong yang diisi nilai dari JavaScript.
+
+</Callout>
+
+Di dalam JSX, `{ }` adalah "jendela" untuk menyisipkan **ekspresi** JavaScript. Ekspresi adalah kode yang menghasilkan nilai: variabel, operasi `a + b`, pemanggilan fungsi, ternary, sampai `map`. **Pernyataan** (*statement*) seperti `if` atau `for` tidak menghasilkan nilai. Karena itu `if` dan `for` tidak bisa ditaruh langsung di dalam kurung kurawal.
+
+```jsx
+const course = { name: "Basis Data", lecturer: "Bu Rina", sks: 3 };
+
+function CourseInfo() {
+  return (
+    <div className="course" title={"Info " + course.name}>
+      <h3>{course.name.toUpperCase()}</h3>
+      <p>Dosen: {course.lecturer}</p>
+      <p>Tatap muka: {course.sks * 50} menit per minggu</p>
+    </div>
+  );
+}
+```
+
+```txt
+BASIS DATA
+Dosen: Bu Rina
+Tatap muka: 150 menit per minggu
+```
+
+Cara membaca kode di atas:
+
+- `course` adalah object biasa berisi nama, dosen, dan jumlah SKS.
+- `{course.name.toUpperCase()}` memanggil fungsi, jadi judulnya tampil huruf besar semua.
+- `{course.sks * 50}` menghitung dulu, lalu hasilnya (150) yang tampil.
+- Atribut `title` diisi gabungan string `"Info " + course.name`.
+
+Atribut bisa diisi string biasa (`"..."`) atau ekspresi (`{...}`). Pada `style={{ color: "red" }}` ada dua pasang kurung kurawal. Pasangan luar berarti "ini ekspresi JavaScript". Pasangan dalam adalah object-nya.
+
+## Props: mengirim data ke komponen
+
+<Callout type="analogi" title="Seperti pesanan ke tukang jahit">
+
+Tukang jahit punya satu pola kemeja. Tiap pelanggan datang membawa catatan pesanan: ukuran M, warna biru, lengan panjang. Polanya sama, hasilnya beda-beda sesuai catatan.
+
+Pola kemeja = komponen `TaskCard`. Catatan pesanan = **props**. Pelanggan = komponen induk yang memakai `TaskCard`. Tukang jahit tidak boleh mengubah isi catatan pesanan seenaknya. Begitu juga komponen tidak boleh mengubah props yang diterimanya.
+
+</Callout>
+
+Komponen yang selalu menampilkan teks yang sama tidak terlalu berguna. Kita ingin satu `TaskCard` bisa menampilkan tugas apa saja. Caranya lewat **props** (*properties*). Props adalah data yang dikirim dari komponen induk (yang memakai) ke komponen anak (yang dipakai). Cara menulisnya seperti atribut HTML.
+
+React mengumpulkan semua atribut itu menjadi satu object. Object itu dikirim sebagai parameter pertama fungsi komponen. Biasanya kita langsung membongkarnya dengan destructuring, lengkap dengan nilai default (nilai cadangan kalau prop tidak dikirim):
+
+```jsx
+function TaskCard({ title, course, priority = "sedang", done }) {
+  return (
+    <div className="card">
+      <h3>{title}</h3>
+      <p>
+        {course} · prioritas {priority}
+      </p>
+      <p>{done ? "Selesai" : "Belum selesai"}</p>
+    </div>
+  );
+}
+
+// Dipakai oleh komponen induk:
+<TaskCard title="Kuis SQL" course="Basis Data" priority="tinggi" done={false} />;
+<TaskCard title="Setup Expo" course="Pemrograman Mobile" done={true} />;
+// Kartu kedua memakai priority default: "sedang"
+```
+
+Yang terjadi di kode ini: kartu pertama menerima empat props. Kartu kedua tidak mengirim `priority`, jadi nilai default `"sedang"` yang dipakai.
+
+Empat hal yang perlu kamu tahu tentang props:
+
+- **String** boleh ditulis dengan tanda kutip. Nilai lain (angka, boolean, array, object, fungsi) wajib memakai kurung kurawal: `sks={3}`, `done={false}`.
+- Hati-hati dengan `done="false"`. Itu string yang tidak kosong. JavaScript menganggapnya *truthy*, yaitu dihitung "benar" saat dipakai sebagai kondisi. Akibatnya tugasmu malah tampil "Selesai".
+- Props bersifat **read-only** (hanya boleh dibaca). Komponen tidak boleh mengubah props yang diterimanya. Dengan props yang sama, komponen harus selalu menghasilkan tampilan yang sama. Komponen seperti ini disebut *pure* (murni).
+- Kalau kamu punya object `task`, tulis `<TaskCard {...task} />` untuk mengirim semua propertinya sekaligus sebagai props. Ini memakai spread yang sudah kamu kenal.
+
+### `children` dan komposisi
+
+<Callout type="analogi" title="Seperti bingkai foto">
+
+Toko bingkai menjual bingkai tanpa tahu foto apa yang akan kamu pasang. Bingkainya sama. Isinya bisa foto wisuda, foto keluarga, atau sertifikat.
+
+Bingkai = komponen `Card`. Foto yang kamu selipkan = `children`.
+
+</Callout>
+
+Apa pun yang kamu letakkan di antara tag pembuka dan tag penutup sebuah komponen akan diterima sebagai prop khusus bernama `children`. Dengan `children`, kamu bisa membuat komponen "pembungkus". Contohnya `Card` yang hanya mengurus bingkai, sementara isinya bebas.
+
+Cara menyusun UI besar dari komponen-komponen kecil seperti ini disebut **komposisi** (*composition*). Ingat balok LEGO tadi: `Card` tidak perlu tahu isinya tugas, catatan, atau pengumuman.
+
+Playground berikut memakai file `styles.css`, jadi kamu bisa melihat `className` bekerja. Buka tab `styles.css` dan ganti warnanya.
+
+<ReactPlayground title="Props, children & komposisi" height={460} files={{
+"/App.js": `import "./styles.css";
+
+function Card({ title, children }) {
+  return (
+    <section className="card">
+      <h2 className="card-title">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function TaskCard({ title, course, priority = "sedang", done }) {
+  return (
+    <article className={done ? "task task-done" : "task"}>
+      <h3>{title}</h3>
+      <p className="meta">
+        {course} · prioritas {priority}
+      </p>
+    </article>
+  );
+}
+
+export default function App() {
+  return (
+    <main className="page">
+      <Card title="Minggu ini">
+        <TaskCard
+          title="Laporan Praktikum Basis Data"
+          course="Basis Data"
+          priority="tinggi"
+          done={false}
+        />
+        <TaskCard title="Kuis Expo Router" course="Pemrograman Mobile" done={true} />
+      </Card>
+      <Card title="Catatan">
+        <p>Bawa laptop untuk praktikum hari Kamis.</p>
+      </Card>
+    </main>
+  );
+}
+`,
+"/styles.css": `body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  background: #f4f6fb;
+}
+.page {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 12px 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.card-title {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  color: #4338ca;
+}
+.task {
+  border-left: 4px solid #6366f1;
+  padding: 4px 12px;
+  margin-bottom: 8px;
+}
+.task h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.task-done h3 {
+  text-decoration: line-through;
+  color: #888;
+}
+.meta {
+  margin: 4px 0 0;
+  font-size: 0.875rem;
+  color: #555;
+}
+`,
+}} />
+
+Di playground ini, `Card` hanya menggambar kotak dan judul, lalu menaruh `children` di bawahnya. `TaskCard` memilih nama class berdasarkan `done`: tugas selesai mendapat class tambahan `task-done` yang mencoret judulnya. `App` memakai `Card` dua kali dengan isi berbeda, yaitu dua kartu tugas dan satu catatan.
+
+## Render kondisional
+
+<Callout type="analogi" title="Seperti papan menu warung">
+
+Kalau stok ayam habis, penjual menempel tulisan "Habis" di samping menu ayam. Kalau masih ada, tulisan itu tidak dipasang. Tampilan papan menu mengikuti keadaan dapur.
+
+Keadaan dapur = data (props). Tulisan "Habis" = bagian JSX yang muncul hanya kalau syaratnya terpenuhi.
+
+</Callout>
+
+Sering kali tampilan bergantung pada data. Tugas yang terlambat diberi peringatan. Tugas tanpa deadline tidak menampilkan tanggal. Menampilkan sesuatu hanya kalau syaratnya terpenuhi disebut **render kondisional**. *Render* artinya menggambar tampilan ke layar. Karena JSX adalah JavaScript, kamu memakai alat JavaScript biasa:
+
+- **`if` + `return` lebih awal** di luar JSX. Cocok kalau tampilannya sangat berbeda.
+- **Ternary** `kondisi ? A : B` di dalam JSX. Dipakai untuk memilih salah satu dari dua tampilan.
+- **`&&`** untuk "tampilkan ini, atau tidak sama sekali".
+- **`return null`** agar komponen tidak menampilkan apa pun.
+
+```jsx
+function DeadlineInfo({ daysLeft }) {
+  if (daysLeft === undefined) return null;
+
+  return (
+    <p>
+      {daysLeft < 0 ? "Terlambat!" : "Sisa " + daysLeft + " hari"}
+      {daysLeft <= 1 && <strong> Segera kerjakan</strong>}
+    </p>
+  );
+}
+```
+
+```txt
+<DeadlineInfo />               → (tidak tampil apa-apa)
+<DeadlineInfo daysLeft={5} />  → Sisa 5 hari
+<DeadlineInfo daysLeft={1} />  → Sisa 1 hari Segera kerjakan
+<DeadlineInfo daysLeft={-2} /> → Terlambat! Segera kerjakan
+```
+
+Cara membaca `DeadlineInfo`:
+
+- Baris pertama di dalam fungsi: kalau `daysLeft` tidak dikirim, komponen langsung mengembalikan `null`. Tidak ada yang tampil.
+- Ternary memilih teks "Terlambat!" kalau `daysLeft` negatif. Kalau tidak, tampil "Sisa ... hari".
+- `daysLeft <= 1 && ...` menambahkan teks tebal "Segera kerjakan" hanya kalau sisa harinya 1 atau kurang.
+
+Jebakan klasik ada pada `&&` dengan angka. `{tasks.length && <p>Ada tugas</p>}` akan menampilkan angka **0** di layar saat array kosong. Penyebabnya, `0 && ...` menghasilkan `0`, dan React tetap menampilkan angka. Nilai `false`, `null`, dan `undefined` tidak ditampilkan, tetapi angka 0 ditampilkan. Jadi ubah dulu menjadi boolean: `tasks.length > 0 && ...`.
+
+## Sekilas: list dengan `key`
+
+<Callout type="analogi" title="Seperti NIM di daftar hadir">
+
+Dosen mengecek daftar hadir pakai NIM, bukan nomor urut baris. Kalau ada mahasiswa yang pindah kelas, nomor urut semua orang di bawahnya bergeser. NIM tiap orang tetap sama.
+
+NIM = `key`. Nomor urut baris = indeks array. Itulah sebabnya `key` sebaiknya diambil dari `id` data, bukan dari urutan.
+
+</Callout>
+
+Data dari API hampir selalu berupa array. Untuk menampilkannya, ubah array data menjadi array JSX dengan `map`. Setiap elemen hasil `map` wajib diberi prop **`key`**. Isinya string atau angka yang unik di antara saudaranya, biasanya `id` dari database. React memakai `key` untuk mengenali item mana yang mana saat list berubah, misalnya ada yang ditambah, dihapus, atau diurutkan ulang.
+
+Kalau `key` lupa diberikan, React menampilkan peringatan di console (panel pesan untuk programmer di browser): `Each child in a list should have a unique "key" prop.` Satu catatan lagi: `key` dibaca oleh React sendiri dan tidak diteruskan sebagai props. Jadi di dalam `TaskItem` kamu tidak bisa membaca `props.key`. Kenapa indeks array adalah `key` yang buruk akan dibahas di [useEffect, List & Custom Hook](/belajar/react-native/effect-list-custom-hook).
+
+<ReactPlayground title="List, key & kondisional" height={380} code={`
+const tasks = [
+  { id: 1, title: "Laporan Praktikum Basis Data", course: "Basis Data", done: false },
+  { id: 2, title: "Kuis Expo Router", course: "Pemrograman Mobile", done: true },
+  { id: 3, title: "Rangkum Bab Normalisasi", course: "Basis Data", done: false },
+];
+
+function TaskItem({ title, course, done }) {
+  return (
+    <li style={{ marginBottom: 8 }}>
+      <span style={{ textDecoration: done ? "line-through" : "none" }}>{title}</span>{" "}
+      <small>({course})</small>
+      {done && <strong> ✓ selesai</strong>}
+    </li>
+  );
+}
+
+export default function App() {
+  const pending = tasks.filter((t) => !t.done);
+
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16 }}>
+      <h1>Tugas Sari</h1>
+      {pending.length > 0 ? (
+        <p>{pending.length} tugas belum selesai.</p>
+      ) : (
+        <p>Semua tugas beres!</p>
+      )}
+      <ul>
+        {tasks.map((task) => (
+          <TaskItem key={task.id} title={task.title} course={task.course} done={task.done} />
+        ))}
+      </ul>
+    </main>
+  );
+}
+`} />
+
+Di kode ini, `pending` berisi tugas yang belum selesai. Ternary memilih kalimat "X tugas belum selesai" atau "Semua tugas beres!". Lalu `tasks.map(...)` mengubah tiap object tugas menjadi satu `<TaskItem>`, masing-masing dengan `key={task.id}`.
+
+Coba ubah semua `done` menjadi `true`, lalu lihat pesannya berganti. Setelah itu hapus `key={task.id}` dan buka console di DevTools browser (<Kbd>F12</Kbd>) untuk melihat peringatannya.
+
+## Berpikir dalam komponen: membedah TaskCard
+
+<Callout type="analogi" title="Seperti membagi laporan kelompok">
+
+Sebelum menulis laporan kelompok, kalian membagi laporan menjadi bab. Tiap bab punya satu topik. Kalian menyusun daftar isi, lalu tiap orang mengerjakan babnya di file sendiri. Terakhir semua bab digabung.
+
+Laporan = satu layar. Bab = komponen. Daftar isi = hierarki komponen. File per bab = file per komponen. Bedanya, satu komponen bisa dipakai berulang kali di layar yang sama. Bab laporan tidak ditulis dua kali.
+
+</Callout>
+
+Dokumentasi resmi React punya panduan terkenal, [Thinking in React](https://react.dev/learn/thinking-in-react). Isinya: sebelum menulis kode, pecah dulu tampilan menjadi komponen. Kita praktikkan langsung pada layar daftar tugas aplikasi capstone. Gambar di bawah adalah *mockup*, yaitu sketsa kasar tampilan sebelum dibuat.
+
+```txt
+┌────────────────────────────────────────────┐
+│ Tugas Kuliah                      3 tugas  │ ← App (header)
+├────────────────────────────────────────────┤
+│ ┌────────────────────────────────────────┐ │
+│ │ Laporan Praktikum           [TINGGI]   │ │ ← TaskCard
+│ │ Basis Data · 12 Nov                    │ │     └ PriorityBadge
+│ │ ☐ Belum selesai                        │ │
+│ └────────────────────────────────────────┘ │
+│ ┌────────────────────────────────────────┐ │
+│ │ Kuis Expo Router            [SEDANG]   │ │ ← TaskCard (diulang)
+│ └────────────────────────────────────────┘ │
+└────────────────────────────────────────────┘
+```
+
+<Steps>
+<Step title="Gambar kotak di sekitar tiap bagian">
+
+Lihat mockup, lalu tandai bagian-bagian yang punya satu tugas jelas. Prinsipnya: satu komponen idealnya mengurus satu hal saja. Kalau sebuah komponen mulai mengurus terlalu banyak hal, pecah lagi.
+
+</Step>
+<Step title="Beri nama dan susun hierarki">
+
+Dari mockup, kita dapat tiga komponen. `App` adalah layar daftar beserta header-nya. `TaskCard` adalah satu kartu tugas yang dipakai berulang. `PriorityBadge` adalah label warna prioritas di dalam kartu. Hierarkinya (siapa berada di dalam siapa): `App` → `TaskCard` → `PriorityBadge`.
+
+</Step>
+<Step title="Bangun versi statis dengan props">
+
+Tulis komponen yang hanya menampilkan data dari props, tanpa interaksi apa pun. Statis artinya tampilannya belum bisa berubah karena klik. Data mengalir satu arah, dari induk ke anak, seperti air dari lantai atas ke lantai bawah. `App` memegang array `tasks` dan mengirim satu `task` ke tiap `TaskCard`. Lalu `TaskCard` mengirim `priority` ke `PriorityBadge`.
+
+</Step>
+<Step title="Pisahkan ke file sendiri">
+
+Komponen yang dipakai di banyak tempat sebaiknya punya file sendiri. Di file itu, komponen di-`export default`. File lain yang membutuhkannya cukup meng-`import`.
+
+</Step>
+</Steps>
+
+<FileTree title="Playground TaskCard" tree={`
+App.js # layar daftar + header
+* TaskCard.js # satu kartu tugas
+PriorityBadge.js # label warna prioritas
+styles.css
+`} />
+
+Hasilnya ada di playground berikut. Pindah-pindah tab file untuk melihat bagaimana tiap komponen saling meng-`import`.
+
+<ReactPlayground title="Membedah TaskCard" height={480} files={{
+"/App.js": `import "./styles.css";
+import TaskCard from "./TaskCard";
+
+const tasks = [
+  { id: 1, title: "Laporan Praktikum", course: "Basis Data", priority: "tinggi", deadline: "12 Nov", done: false },
+  { id: 2, title: "Kuis Expo Router", course: "Pemrograman Mobile", priority: "sedang", deadline: "15 Nov", done: true },
+  { id: 3, title: "Rangkum Bab Normalisasi", course: "Basis Data", priority: "rendah", deadline: null, done: false },
+];
+
+export default function App() {
+  return (
+    <main className="page">
+      <header className="header">
+        <h1>Tugas Kuliah</h1>
+        <span>{tasks.length} tugas</span>
+      </header>
+      {tasks.map((task) => (
+        <TaskCard key={task.id} task={task} />
+      ))}
+    </main>
+  );
+}
+`,
+"/TaskCard.js": `import PriorityBadge from "./PriorityBadge";
+
+export default function TaskCard({ task }) {
+  const { title, course, priority, deadline, done } = task;
+
+  return (
+    <article className={done ? "task done" : "task"}>
+      <div className="task-top">
+        <h3>{title}</h3>
+        <PriorityBadge level={priority} />
+      </div>
+      <p className="meta">
+        {course}
+        {deadline && <span> · {deadline}</span>}
+      </p>
+      <p className="status">{done ? "☑ Selesai" : "☐ Belum selesai"}</p>
+    </article>
+  );
+}
+`,
+"/PriorityBadge.js": `const COLORS = {
+  rendah: "#16a34a",
+  sedang: "#d97706",
+  tinggi: "#dc2626",
+};
+
+export default function PriorityBadge({ level }) {
+  return (
+    <span className="badge" style={{ backgroundColor: COLORS[level] }}>
+      {level.toUpperCase()}
+    </span>
+  );
+}
+`,
+"/styles.css": `body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  background: #f4f6fb;
+}
+.page {
+  padding: 16px;
+}
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.header h1 {
+  margin: 0;
+}
+.task {
+  background: white;
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-top: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.task-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.task h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.done h3 {
+  text-decoration: line-through;
+  color: #888;
+}
+.badge {
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.meta,
+.status {
+  margin: 4px 0 0;
+  font-size: 0.875rem;
+  color: #555;
+}
+`,
+}} />
+
+Perhatikan pilihan desainnya. `TaskCard` menerima satu prop `task` (object utuh), bukan lima prop terpisah. Keduanya sama-sama benar. Satu object membuat pemanggilan lebih ringkas. Props terpisah membuat kebutuhan komponen lebih jelas terlihat dari luar. Di Track 3 nanti, komponen `src/components/task-card.js` di aplikasi capstone juga menerima `task` utuh.
+
+`PriorityBadge` memakai object `COLORS` sebagai kamus warna. `COLORS[level]` mengambil warna sesuai prioritas, misalnya `COLORS["tinggi"]` menghasilkan merah.
+
+Versi ini masih statis: belum ada tombol yang bekerja. Membuatnya interaktif adalah tugas **state**, topik pelajaran berikutnya.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Pesan error yang paling sering muncul">
+
+- **`Adjacent JSX elements must be wrapped in an enclosing tag`**: ada dua elemen bersebelahan di `return`. Bungkus dengan `<div>` atau Fragment `<>...</>`.
+- **`Unterminated JSX contents`**: biasanya ada tag yang tidak ditutup, misalnya `<img>` atau `<input>`. Di JSX, tulis `<img />`.
+- **``Invalid DOM property `class`. Did you mean `className`?``**: kamu menyalin HTML mentah. Ganti `class` dengan `className`, dan `for` dengan `htmlFor`.
+- **`The tag <taskCard> is unrecognized in this browser`**: nama komponen diawali huruf kecil, jadi React mengira itu tag HTML. Ganti menjadi `TaskCard`.
+- **`Objects are not valid as a React child (found: object with keys {id, title})`**: kamu menaruh object utuh di JSX, misalnya `{task}`. React tidak tahu cara menampilkan object. Tampilkan propertinya saja, misalnya `{task.title}`.
+- **Angka 0 muncul sendirian di layar**: ini pola `{list.length && ...}`. Ganti menjadi `{list.length > 0 && ...}`.
+- **Tidak ada yang tampil sama sekali**: cek apakah `return` diikuti `(` di baris yang sama. Cek juga apakah komponen akar sudah di-`export default`.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Kartu mata kuliah" difficulty="mudah" hints={["Terima props dengan destructuring: `function CourseCard({ name, lecturer, sks })`.", "Gunakan ternary untuk teks SKS.", "Jangan lupa `key={course.id}` di dalam `map`."]}>
+
+Kerjakan di [React Playground](/lab/react-playground).
+
+1. Buat komponen `CourseCard` yang menerima props `name`, `lecturer`, dan `sks`.
+2. Tampilkan nama mata kuliah sebagai judul dan nama dosen di bawahnya.
+3. Kalau `sks` ada, tampilkan misalnya "3 SKS". Kalau tidak ada, tampilkan "SKS belum diisi".
+4. Di komponen `App`, tampilkan semua data berikut memakai `map`.
+
+```jsx
+const courses = [
+  { id: 1, name: "Basis Data", lecturer: "Bu Rina", sks: 3 },
+  { id: 2, name: "Pemrograman Mobile", lecturer: "Pak Dimas", sks: 4 },
+  { id: 3, name: "Etika Profesi", lecturer: "Bu Wulan" },
+];
+```
+
+<Solution>
+
+```jsx
+const courses = [
+  { id: 1, name: "Basis Data", lecturer: "Bu Rina", sks: 3 },
+  { id: 2, name: "Pemrograman Mobile", lecturer: "Pak Dimas", sks: 4 },
+  { id: 3, name: "Etika Profesi", lecturer: "Bu Wulan" },
+];
+
+function CourseCard({ name, lecturer, sks }) {
+  return (
+    <article style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, marginBottom: 8 }}>
+      <h3 style={{ margin: 0 }}>{name}</h3>
+      <p style={{ margin: "4px 0" }}>Dosen: {lecturer}</p>
+      <small>{sks ? sks + " SKS" : "SKS belum diisi"}</small>
+    </article>
+  );
+}
+
+export default function App() {
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16 }}>
+      <h1>Mata Kuliah Semester Ini</h1>
+      {courses.map((course) => (
+        <CourseCard key={course.id} name={course.name} lecturer={course.lecturer} sks={course.sks} />
+      ))}
+    </main>
+  );
+}
+```
+
+Mata kuliah "Etika Profesi" tidak punya `sks`, sehingga nilainya `undefined` (falsy) dan ternary memilih teks "SKS belum diisi". Kamu juga bisa menulis `<CourseCard key={course.id} {...course} />`; properti `id` ikut terkirim sebagai prop, tetapi tidak dipakai, jadi tidak masalah.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Komponen Section dengan children" difficulty="sedang" hints={["Prop `children` berisi apa pun di antara tag pembuka dan penutup.", "Hitung jumlah item dengan `tasks.length`, lalu bandingkan dengan `> 0`."]}>
+
+Buat komponen `Section` yang menerima `title` dan `children`, lalu menampilkan judul `h2` di atas isinya. Pakai `Section` dua kali di `App`: "Belum selesai" dan "Selesai", masing-masing berisi `<ul>` tugas yang sesuai dari array `tasks` di playground "List, key & kondisional". Jika sebuah bagian kosong, tampilkan teks "Tidak ada tugas" alih-alih `<ul>` kosong.
+
+<Solution>
+
+```jsx
+const tasks = [
+  { id: 1, title: "Laporan Praktikum Basis Data", done: false },
+  { id: 2, title: "Kuis Expo Router", done: true },
+  { id: 3, title: "Rangkum Bab Normalisasi", done: false },
+];
+
+function Section({ title, children }) {
+  return (
+    <section>
+      <h2>{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function TaskList({ items }) {
+  if (items.length === 0) return <p>Tidak ada tugas</p>;
+  return (
+    <ul>
+      {items.map((task) => (
+        <li key={task.id}>{task.title}</li>
+      ))}
+    </ul>
+  );
+}
+
+export default function App() {
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16 }}>
+      <Section title="Belum selesai">
+        <TaskList items={tasks.filter((t) => !t.done)} />
+      </Section>
+      <Section title="Selesai">
+        <TaskList items={tasks.filter((t) => t.done)} />
+      </Section>
+    </main>
+  );
+}
+```
+
+`Section` tidak tahu apa isinya. Inilah yang disebut komposisi. Logika "kosong atau tidak" dipisah ke `TaskList` dengan `return` lebih awal, sehingga JSX di `App` tetap bersih.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Manakah JSX yang valid?",
+    options: [
+      "`<div class=\"card\">Halo</div>`",
+      "`<img src={foto}>`",
+      "`<><h2>Judul</h2><p>Isi</p></>`",
+      "`<h2>Judul</h2><p>Isi</p>` langsung setelah `return`",
+    ],
+    answer: 2,
+    explain: "Fragment `<>...</>` membungkus dua elemen menjadi satu akar tanpa menambah elemen ke DOM. `class` harus `className`, `<img>` wajib ditutup `<img />`, dan dua elemen bersebelahan tanpa pembungkus memicu error Adjacent JSX elements.",
+  },
+  {
+    q: "Apa yang tampil di layar saat `tasks` adalah array kosong?",
+    code: "<div>{tasks.length && <p>Ada tugas</p>}</div>",
+    options: ["Tidak tampil apa-apa", "Teks `Ada tugas`", "Angka `0`", "Error"],
+    answer: 2,
+    explain: "`0 && ...` menghasilkan `0`, dan React merender angka. Gunakan `tasks.length > 0 && ...` agar hasilnya boolean `false`, yang tidak dirender.",
+  },
+  {
+    q: "Kenapa nama komponen wajib diawali huruf kapital?",
+    options: [
+      "Agar React bisa membedakan komponen buatanmu dari tag HTML bawaan",
+      "Karena JavaScript melarang nama fungsi berhuruf kecil",
+      "Supaya komponen dirender lebih cepat",
+      "Hanya konvensi gaya, tidak ada efeknya",
+    ],
+    answer: 0,
+    explain: "JSX dengan huruf kecil seperti `<taskCard />` dianggap tag HTML, sehingga React mencoba membuat elemen DOM `taskcard` dan memberi peringatan. Fungsi berhuruf kecil sah di JavaScript, dan ini bukan soal kecepatan.",
+  },
+  {
+    q: "Dalam komponen `Card`, bagaimana cara membaca `<p>Isi</p>` dari pemakaian `<Card title=\"Info\"><p>Isi</p></Card>`?",
+    options: ["`props.title`", "`props.children`", "`props.content`", "Tidak bisa, harus lewat prop `body`"],
+    answer: 1,
+    explain: "Isi di antara tag pembuka dan penutup otomatis dikirim sebagai prop `children`. `title` hanya berisi string \"Info\", sedangkan `content` dan `body` tidak ada kecuali kamu mengirimnya sendiri.",
+  },
+  {
+    q: "Prop mana yang membuat `TaskCard` keliru menampilkan tugas sebagai selesai?",
+    code: "function TaskCard({ done }) {\n  return <p>{done ? \"Selesai\" : \"Belum\"}</p>;\n}",
+    options: ["`done={false}`", "Tidak mengirim `done` sama sekali", "`done={0}`", "`done=\"false\"`"],
+    answer: 3,
+    explain: "`\"false\"` adalah string tidak kosong, jadi truthy, dan ternary memilih \"Selesai\". `done={false}`, `done={0}`, dan `undefined` (prop tidak dikirim) semuanya falsy sehingga menampilkan \"Belum\".",
+  },
+]} />
+
+## Ringkasan
+
+- React membangun UI secara **deklaratif**: kamu menjelaskan tampilan untuk data tertentu, React yang memperbarui DOM.
+- Komponen adalah fungsi bernama **PascalCase** yang mengembalikan JSX (atau `null`).
+- Aturan JSX: satu akar (atau Fragment `<>...</>`), `className`, semua tag ditutup, ekspresi di dalam `{ }`, atribut camelCase.
+- **Props** mengalirkan data dari induk ke anak, bersifat read-only. Nilai non-string ditulis dengan `{ }`.
+- **`children`** memungkinkan komposisi: komponen pembungkus yang tidak peduli isinya.
+- Render kondisional memakai `if`/`return` lebih awal, ternary, `&&` (hati-hati angka 0), dan `return null`.
+- List dirender dengan `map`, dan tiap item butuh `key` unik yang stabil, idealnya `id`.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Coret-coret di kertas: layar **detail tugas** di aplikasi capstone akan berisi apa saja? Gambar kotak di sekitar tiap bagian dan beri nama komponennya (misalnya `TaskHeader`, `PriorityBadge`, `AttachmentList`). Hierarki ini akan kamu wujudkan dengan komponen React Native di Track 3, dan `PriorityBadge` bisa langsung dipakai ulang dari daftar tugas.
+
+</Callout>

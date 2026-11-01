@@ -1,0 +1,904 @@
+## Pengantar
+
+Di [CRUD API dengan Data In-Memory](/belajar/crud-backend/crud-in-memory), semua tugas disimpan di array `tasks`. Array itu hanya hidup di memori (RAM) selama server menyala. Cara ini enak untuk belajar alur CRUD, tapi ada masalah besar: setiap kali server restart, semua data hilang.
+
+Coba sendiri. Tambah tugas lewat `POST`, lalu simpan file apa saja di VS Code. `node --watch` akan me-restart server. Panggil `GET /api/tasks` lagi, dan tugas barumu sudah lenyap.
+
+<Callout type="analogi" title="Papan tulis vs buku catatan">
+
+Dosen menulis daftar tugas di papan tulis. Begitu kelas selesai, petugas kebersihan menghapusnya. Besok pagi papannya kosong lagi.
+
+- Papan tulis = array in-memory. Isinya hilang saat server dimatikan.
+- Buku catatan yang disimpan di lemari = database. Isinya tetap ada sampai kamu sendiri yang menghapus.
+
+</Callout>
+
+Aplikasi Tugas & Catatan Kuliah butuh "buku catatan" itu, yaitu penyimpanan permanen. Di pelajaran ini kamu mengganti array dengan database **SQLite**. SQLite adalah database yang seluruh isinya tersimpan di satu file biasa, jadi kamu tidak perlu memasang server database terpisah. Untuk mengaksesnya, kamu memakai **Prisma 7**, alat yang membuat kode JavaScript bisa bicara dengan database.
+
+Kamu juga menambahkan model `Course` (mata kuliah). Satu mata kuliah punya banyak `Task`, persis seperti relasi satu-ke-banyak di [Relasi & JOIN](/belajar/crud-backend/relasi-join).
+
+Di akhir pelajaran ini, `belajar-api` kamu:
+
+- menyimpan data di file `dev.db` yang tetap ada setelah server restart,
+- punya schema (rancangan tabel) dan riwayat migrasi yang tercatat rapi,
+- memakai Prisma Client untuk lima operasi [CRUD](/glosarium#crud),
+- punya endpoint `/api/courses` yang menampilkan mata kuliah beserta tugasnya,
+- bisa diisi data contoh dengan satu perintah seed.
+
+<Flow nodes={["Route Express", "Prisma Client", "Adapter better-sqlite3", "File dev.db"]} labels={["prisma.task.findMany()", "query SQL", "baca/tulis file"]} caption="Perjalanan satu query dari route sampai ke file database" />
+
+Cara membaca diagram di atas: route Express memanggil Prisma Client. Prisma Client menyusun perintah SQL dan menyerahkannya ke adapter. Adapter lalu membaca atau menulis file `dev.db`. Semua istilah ini dijelaskan satu per satu di bawah.
+
+## ORM: penerjemah antara objek dan tabel
+
+<Callout type="analogi" title="Seperti teman yang jadi penerjemah">
+
+Kamu bertemu turis Jepang di Malioboro. Kamu hanya bisa bahasa Indonesia, dia hanya bisa bahasa Jepang. Untung ada temanmu yang bisa dua-duanya. Kamu bicara, temanmu menerjemahkan, lalu jawaban si turis diterjemahkan kembali untukmu.
+
+- Kamu = kode Express, yang bicara dalam objek JavaScript.
+- Turis = database, yang hanya mengerti SQL.
+- Teman penerjemah = ORM. Di pelajaran ini ORM-nya adalah Prisma.
+
+Bedanya, penerjemah manusia kadang menebak kata yang tidak ia tahu. Prisma tidak menebak. Ia hanya mau menerjemahkan tabel dan kolom yang sudah tercatat di schema.
+
+</Callout>
+
+Database relasional (database yang menyimpan data dalam tabel berisi baris dan kolom) bicara dalam bahasa SQL. Kode Express bicara dalam objek JavaScript. **ORM** (Object-Relational Mapper) menjembatani keduanya. Kamu memanggil method seperti `prisma.task.findMany()`. ORM lalu menyusun query SQL, menjalankannya, dan mengubah baris hasilnya menjadi objek JavaScript.
+
+Bandingkan dua cara mengambil tugas yang belum selesai:
+
+<Compare>
+<CompareItem title="SQL manual" tone="neutral">
+
+```js
+const rows = db
+  .prepare("SELECT * FROM Task WHERE done = ? ORDER BY id")
+  .all(0);
+// done bernilai 0/1, nama kolom hanya string biasa
+```
+
+Query ditulis sebagai teks biasa. Kalau kamu salah ketik nama kolom, kesalahannya baru ketahuan saat program dijalankan. Nilai `done` juga datang sebagai angka 0/1, jadi kamu harus mengubahnya sendiri.
+
+</CompareItem>
+<CompareItem title="Prisma Client" tone="good">
+
+```js
+const tasks = await prisma.task.findMany({
+  where: { done: false },
+  orderBy: { id: "asc" },
+});
+// done bernilai true/false, createdAt berupa Date
+```
+
+Query ditulis sebagai objek. Prisma tahu kolom apa saja yang ada karena membaca schema. Tipe data diubah otomatis, dan VS Code bisa menyarankan nama kolom saat kamu mengetik (autocomplete).
+
+</CompareItem>
+</Compare>
+
+ORM tidak menggantikan pengetahuan SQL. Prisma tetap menjalankan SQL di belakang layar. Pelajaran [Dasar SQL](/belajar/crud-backend/dasar-sql) tetap berguna saat kamu membaca file migrasi atau mencari tahu kenapa sebuah query lambat.
+
+Prisma terdiri dari beberapa bagian. Kamu akan memakainya satu per satu:
+
+| Bagian | Fungsinya |
+| --- | --- |
+| `prisma/schema.prisma` | Rancangan database: model (tabel), kolom, dan relasi |
+| Prisma Migrate | Mengubah schema menjadi file SQL migrasi, lalu menerapkannya ke database |
+| Prisma Client | Kode yang dibuat otomatis dari schema. Isinya `prisma.task`, `prisma.course`, dan seterusnya |
+| Driver adapter | Penghubung Prisma Client ke **driver** database (program yang benar-benar membaca dan menulis file database). Mirip colokan adapter yang menyambungkan charger ke stopkontak. Di Prisma 7 adapter wajib dipasang. Untuk SQLite kita memakai `@prisma/adapter-better-sqlite3` |
+| Prisma Studio | Tampilan web untuk melihat dan mengedit isi database, mirip membuka file Excel |
+
+## Instalasi Prisma 7 dan SQLite
+
+Cek dulu versi Node dengan `node -v`. Versinya minimal 22.18. Alasannya ada di bagian Prisma Client nanti. Jalankan semua perintah di bawah dari folder `belajar-api`. Hentikan dulu server yang sedang jalan dengan <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd>.
+
+<Callout type="warning" title="Kunci versi ke Prisma 7">
+
+Saat materi ini ditulis, tag `latest` paket `prisma` di npm sudah menunjuk ke rilis kandidat Prisma 8 (versi uji coba sebelum rilis resmi). Kalau kamu mengetik `npm install prisma` tanpa nomor versi, yang terpasang adalah Prisma 8, dan beberapa langkah di sini bisa berbeda. Jadi selalu tulis akhiran `@7`. CLI mungkin juga menampilkan kotak "Update available 7.x -> 8.x". Abaikan saja.
+
+</Callout>
+
+<Steps>
+<Step title="Instal Prisma CLI sebagai dev dependency">
+
+```bash
+npm install prisma@7 --save-dev
+```
+
+**CLI** `prisma` adalah program yang kamu jalankan lewat terminal, misalnya untuk membuat migrasi. Ia hanya dibutuhkan saat mengembangkan aplikasi, bukan saat aplikasi melayani pengguna. Paket seperti ini disebut **dev dependency** dan dipasang dengan flag `--save-dev`.
+
+</Step>
+<Step title="Instal Prisma Client, adapter SQLite, dan dotenv">
+
+```bash
+npm install @prisma/client@7 @prisma/adapter-better-sqlite3@7 dotenv
+```
+
+Perintah ini memasang tiga paket:
+
+- `@prisma/client`: bagian Prisma yang dipakai server saat berjalan.
+- `@prisma/adapter-better-sqlite3`: adapter untuk SQLite. Paket ini ikut memasang `better-sqlite3`, driver yang membaca dan menulis file database.
+- `dotenv`: membaca file `.env`, lalu memasukkan isinya ke `process.env`.
+
+</Step>
+<Step title="Inisialisasi Prisma">
+
+```bash
+npx prisma init --datasource-provider sqlite --output ../src/generated/prisma --no-skills
+```
+
+Arti tiap flag:
+
+- `--datasource-provider sqlite` memilih SQLite sebagai database.
+- `--output` menentukan di mana Prisma Client hasil generate disimpan. Path-nya dihitung dari folder `prisma/`, jadi hasilnya ada di `src/generated/prisma`.
+- `--no-skills` mencegah Prisma membuat folder panduan untuk AI coding assistant (`.claude/`, `.agents/`, dan sejenisnya). Kita tidak membutuhkannya.
+
+</Step>
+<Step title="Cek versi">
+
+```bash
+npx prisma -v
+```
+
+```txt
+prisma               : 7.10.1
+@prisma/client       : 7.10.1
+Node.js              : v22.18.0
+Query Compiler       : enabled
+```
+
+Angka terakhir (patch) boleh berbeda. Yang penting, keduanya diawali `7.`.
+
+</Step>
+</Steps>
+
+`prisma init` membuat beberapa file baru. File bertanda bintang adalah file yang dibuat atau diubah oleh perintah ini:
+
+<FileTree title="belajar-api" tree={`
+prisma/
+  * schema.prisma # model dan relasi
+src/
+  server.js
+* .env # DATABASE_URL
+* .gitignore
+package.json
+* prisma7.config.ts # konfigurasi Prisma CLI
+`} />
+
+### File konfigurasi Prisma
+
+Prisma 7 membaca pengaturannya dari file konfigurasi. Di versi 7.10, file ini bernama `prisma7.config.ts` supaya tidak tertukar dengan `prisma.config.ts` milik Prisma 8. Prisma 7 mengenali kedua nama itu. Isinya:
+
+```ts title="prisma7.config.ts"
+import "dotenv/config";
+import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  migrations: {
+    path: "prisma/migrations",
+  },
+  datasource: {
+    url: process.env["DATABASE_URL"],
+  },
+});
+```
+
+Cara membacanya:
+
+- `schema` adalah lokasi file schema.
+- `migrations.path` adalah folder tempat riwayat migrasi disimpan.
+- `datasource.url` adalah alamat database. Nilainya diambil dari variabel `DATABASE_URL` di file `.env`.
+
+Ekstensinya `.ts` (TypeScript), tapi kamu belum perlu belajar TypeScript. CLI Prisma membaca file ini sendiri. Kalau ingin semuanya JavaScript, ganti nama file menjadi `prisma.config.js` tanpa mengubah isinya. CLI akan menampilkan `Loaded Prisma config from prisma.config.js`. API pendamping yang dipakai di Track 3 memakai nama `prisma.config.ts`.
+
+Jangan hapus baris `import "dotenv/config"`. Prisma 7 tidak lagi membaca `.env` secara otomatis, dan komentar di file `.env` juga menyebutkan hal ini. Tanpa baris itu, `process.env.DATABASE_URL` kosong saat kamu menjalankan perintah Prisma.
+
+### File .env dan .gitignore
+
+File `.env` menyimpan pengaturan yang bisa berbeda di tiap komputer, misalnya alamat database. Isinya pasangan `NAMA=nilai`. File ini tidak ikut dikirim ke git, sama seperti kunci rumah yang tidak kamu tempel di pintu.
+
+```dotenv title=".env"
+DATABASE_URL="file:./dev.db"
+```
+
+Awalan `file:` berarti database-nya berupa satu file SQLite. Path `./dev.db` dihitung dari folder tempat kamu menjalankan perintah. Jadi file database akan muncul di root proyek, di samping `package.json`. Biasakan selalu menjalankan perintah dari root `belajar-api`.
+
+File `.gitignore` berisi daftar file yang tidak boleh masuk git. `prisma init` sudah menambahkan `.env` dan `/src/generated/prisma` ke daftar itu. Tambahkan juga file database (`dev.db*`), karena data di laptopmu tidak perlu ikut di-commit:
+
+```txt title=".gitignore"
+node_modules
+# Keep environment variables out of version control
+.env
+
+/src/generated/prisma
+dev.db*
+```
+
+Sebenarnya Node 22 bisa membaca `.env` tanpa paket tambahan, lewat `node --env-file=.env src/server.js`. Kita tetap memakai `dotenv` karena file konfigurasi Prisma membutuhkannya. Dengan begitu, server dan CLI membaca `.env` dengan cara yang sama.
+
+## Menulis schema: Task dan Course
+
+<Callout type="analogi" title="Seperti mendesain formulir dan lembar KRS">
+
+Sebelum mencetak formulir pendaftaran, panitia memutuskan dulu kolomnya: nama, NIM, nomor HP. Mereka juga menandai mana yang wajib diisi dan mana yang boleh kosong.
+
+- Desain formulir = **schema**. Satu jenis formulir = satu **model** (tabel).
+- Setiap kotak isian = satu kolom.
+- Lembar KRS hanya menulis NIM, bukan seluruh biodata mahasiswa. Dari NIM itu, bagian akademik bisa mencari data lengkapnya. `courseId` di tabel Task bekerja seperti NIM tersebut: hanya angka, tapi cukup untuk menemukan mata kuliahnya.
+
+Bedanya, formulir kertas bisa kamu tambah kolomnya dengan pulpen kapan saja. Perubahan schema baru sampai ke database setelah kamu menjalankan migrasi (dibahas di bagian berikutnya).
+
+</Callout>
+
+Buka `prisma/schema.prisma` dan ganti seluruh isinya:
+
+```prisma title="prisma/schema.prisma" showLineNumbers
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Course {
+  id        Int      @id @default(autoincrement())
+  name      String
+  lecturer  String
+  sks       Int?
+  tasks     Task[]
+  createdAt DateTime @default(now())
+}
+
+model Task {
+  id        Int      @id @default(autoincrement())
+  title     String
+  done      Boolean  @default(false)
+  priority  String   @default("sedang") // rendah | sedang | tinggi
+  courseId  Int?
+  course    Course?  @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+```
+
+Cara membacanya:
+
+- Blok `generator` (baris 1–5) mengatur pembuatan Prisma Client. `prisma-client` adalah generator baru di Prisma 7. `output` adalah folder hasilnya. `importFileExtension = "ts"` membuat file-file hasil generate saling meng-import dengan ekstensi `.ts`.
+- Blok `datasource` (baris 7–9) hanya menyebut jenis database, yaitu `sqlite`. Alamat database tidak ditulis di sini, tapi di file konfigurasi tadi.
+- Setiap `model` menjadi satu tabel. Setiap baris di dalamnya adalah satu kolom, dengan urutan: nama, tipe, lalu atribut (aturan tambahan yang diawali `@`).
+- `@id @default(autoincrement())` menjadikan `id` sebagai primary key (nomor unik tiap baris, seperti NIM) yang diisi otomatis 1, 2, 3, dan seterusnya. Kamu tidak butuh variabel `nextId` lagi.
+- `@default(now())` mengisi waktu saat data dibuat. `@updatedAt` diperbarui Prisma setiap kali data diubah.
+- Tanda `?` berarti kolom boleh kosong (`NULL`). Ada tugas yang tidak terikat mata kuliah, misalnya "Daftar ulang semester". Karena itu `courseId` bertipe `Int?`.
+- SQLite tidak punya tipe enum (tipe yang hanya menerima pilihan tertentu). Jadi `priority` disimpan sebagai `String`. Nilainya akan kita batasi ke rendah/sedang/tinggi dengan Zod di pelajaran berikutnya.
+
+Relasi satu-ke-banyak antara Course dan Task dibentuk oleh tiga baris:
+
+- `courseId Int?` (baris 25) adalah **foreign key**: kolom yang benar-benar ada di tabel Task dan berisi `id` sebuah mata kuliah.
+- `course Course? @relation(...)` (baris 26) dan `tasks Task[]` (baris 16) adalah **field relasi**. Keduanya tidak menjadi kolom di database. Gunanya memberi tahu Prisma Client cara mengambil data pasangannya.
+
+Bagian `onDelete: SetNull` mengatur apa yang terjadi saat mata kuliah dihapus. Tugas-tugasnya tetap ada, tapi `courseId`-nya berubah menjadi `null`.
+
+## Migrasi dan generate client
+
+<Callout type="analogi" title="Seperti catatan renovasi rumah">
+
+Kamu punya denah rumah impian. Tukang tidak membangun ulang rumah dari nol setiap kali denah berubah. Ia mencatat pekerjaannya satu per satu: "12 Jan: tambah kamar", "3 Feb: bongkar dinding dapur".
+
+- Denah = `schema.prisma`, bentuk database yang kamu inginkan.
+- Satu catatan pekerjaan = satu **migrasi** (file SQL yang mengubah database selangkah).
+- Buku catatan renovasi = folder `prisma/migrations`.
+
+Dengan buku itu, rumah kedua (laptop temanmu atau server) bisa dibangun persis sama. Caranya, ikuti semua catatan dari halaman pertama.
+
+</Callout>
+
+Schema yang baru kamu tulis masih berupa rencana. Tabelnya belum ada di database. Untuk membuatnya, jalankan migrasi:
+
+```bash
+npx prisma migrate dev --name init
+```
+
+Output-nya kurang lebih seperti ini:
+
+```txt
+Prisma schema loaded from prisma\schema.prisma.
+Datasource "db": SQLite database "dev.db" at "file:./dev.db"
+
+SQLite database dev.db created at file:./dev.db
+
+Applying migration `20261030145904_init`
+
+The following migration(s) have been created and applied from new schema changes:
+
+prisma\migrations/
+  └─ 20261030145904_init/
+    └─ migration.sql
+
+Your database is now in sync with your schema.
+```
+
+Prisma membandingkan schema dengan isi database. Lalu ia menulis SQL yang dibutuhkan ke folder `prisma/migrations` dan langsung menjalankannya. Nama folder migrasi diawali tanggal dan jam (`20261030145904`), diikuti nama yang kamu berikan lewat `--name`. Buka file `migration.sql`, dan kamu akan menemukan SQL yang sudah kamu kenal:
+
+```sql title="prisma/migrations/..._init/migration.sql"
+CREATE TABLE "Task" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "title" TEXT NOT NULL,
+    "done" BOOLEAN NOT NULL DEFAULT false,
+    "priority" TEXT NOT NULL DEFAULT 'sedang',
+    "courseId" INTEGER,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "Task_courseId_fkey" FOREIGN KEY ("courseId") REFERENCES "Course" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+```
+
+Semua kolom model Task muncul di sini, kecuali field relasi `course`. Baris `CONSTRAINT ... FOREIGN KEY` adalah terjemahan dari `@relation` di schema. Artinya, `courseId` hanya boleh berisi `id` mata kuliah yang ada, dan berubah menjadi `NULL` kalau mata kuliahnya dihapus.
+
+Di Prisma 7, `migrate dev` tidak membuat Prisma Client. Kamu perlu menjalankan langkah kedua:
+
+```bash
+npx prisma generate
+```
+
+```txt
+✔ Generated Prisma Client (7.10.1) to .\src\generated\prisma in 53ms
+```
+
+**Generate** artinya Prisma membaca schema, lalu menulis kode Prisma Client ke `src/generated/prisma`. Kode inilah yang nanti kamu import di server. Kalau schema berubah tapi kamu lupa generate, Prisma Client masih mengenal schema versi lama.
+
+<Callout type="tip" title="Ritual setiap kali schema berubah">
+
+1. Ubah `schema.prisma`.
+2. Jalankan `npx prisma migrate dev --name nama-perubahan`.
+3. Jalankan `npx prisma generate`.
+
+Folder `prisma/migrations` masuk git, karena itulah riwayat struktur database. File `dev.db` dan folder `src/generated` tidak masuk git, karena keduanya bisa dibuat ulang kapan saja.
+
+</Callout>
+
+### Melihat data dengan Prisma Studio
+
+Prisma Studio menampilkan isi tabel di browser, mirip membuka file Excel. Di Prisma 7.10, perintah biasa `npx prisma studio` gagal dengan pesan `Prisma Studio is not supported for the "file:./dev.db" protocol.` Penyebabnya, Studio salah membaca format URL `file:./`. Solusinya, berikan URL dengan format yang dimengerti Studio lewat flag `--url`:
+
+```bash
+npx prisma studio --url file://./dev.db
+```
+
+Studio terbuka di `http://localhost:5555`. Tabel `Course` dan `Task` masih kosong. Kita isi dengan seed sebentar lagi. Tekan <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd> di terminal untuk menutup Studio.
+
+## Prisma Client di JavaScript
+
+Buat file `src/lib/prisma.js`. Semua bagian aplikasi akan mengambil Prisma Client dari file ini.
+
+```js title="src/lib/prisma.js" showLineNumbers
+import "dotenv/config";
+import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaClient } from "../generated/prisma/client.ts";
+
+const adapter = new PrismaBetterSqlite3({ url: process.env.DATABASE_URL });
+
+export const prisma = new PrismaClient({ adapter });
+```
+
+Baris per baris:
+
+- Baris 1 mengisi `process.env` dari file `.env`.
+- Baris 5 membuat adapter SQLite dengan alamat database dari `DATABASE_URL`.
+- Baris 7 membuat `PrismaClient` yang memakai adapter itu, lalu meng-export-nya dengan nama `prisma`.
+
+Objek `prisma` hanya dibuat sekali. Node menjalankan setiap file ES module satu kali, lalu menyimpan hasilnya di cache (ingatan sementara). Jadi setiap file yang menulis `import { prisma } from "./lib/prisma.js"` mendapat objek yang sama. Pola satu objek untuk seluruh aplikasi ini disebut **singleton**. Mirip satu dispenser air di kos yang dipakai semua penghuni, tidak ada yang perlu membeli dispenser sendiri. Jangan membuat `new PrismaClient()` di dalam route, karena setiap objek baru membuka koneksi database sendiri.
+
+<Callout type="info" title="Kenapa file JavaScript boleh meng-import client.ts?">
+
+Generator `prisma-client` di Prisma 7 menghasilkan kode **TypeScript**, yaitu JavaScript yang ditambah keterangan tipe data. Node 22.18 ke atas punya fitur *type stripping* yang aktif dari awal. Saat meng-import file `.ts`, Node menghapus keterangan tipenya, lalu menjalankan sisanya sebagai JavaScript biasa. Kode hasil generate Prisma hanya memakai bagian TypeScript yang bisa dihapus begitu saja. Hasilnya, `node src/server.js` langsung jalan tanpa `tsx`, tanpa proses build, dan tanpa peringatan.
+
+Di Node yang lebih lama, server berhenti dengan error `ERR_UNKNOWN_FILE_EXTENSION: Unknown file extension ".ts"`. Solusi terbaik adalah memperbarui Node. Generator lama `prisma-client-js` yang menghasilkan JavaScript memang masih ada di Prisma 7. Tapi generator itu sudah deprecated (ditandai usang dan akan dihapus), jadi jangan dipakai di proyek baru. Catat syarat versi Node di `package.json` supaya teman satu tim tahu:
+
+```json title="package.json (tambahan)"
+"engines": {
+  "node": ">=22.18"
+}
+```
+
+</Callout>
+
+## Seed: mengisi data contoh
+
+<Callout type="analogi" title="Seperti menata etalase sebelum warung buka">
+
+Sebelum warung baru dibuka, pemiliknya menata contoh dagangan di etalase. Dengan begitu ia bisa mengecek rak, label harga, dan kasir sebelum pembeli datang.
+
+- Isi etalase = data contoh (tugas dan mata kuliah).
+- Daftar barang yang harus ditata = file **seed**.
+- Karyawan mana pun yang membaca daftar itu akan menata etalase yang sama persis. Begitu juga temanmu yang menjalankan seed yang sama.
+
+Bedanya, seed kita menghapus semua data lama dulu sebelum mengisi. Jadi jangan jalankan seed di database yang berisi data penting.
+
+</Callout>
+
+Database kosong membuat pengujian repot, karena kamu harus menambah data satu per satu lewat `POST`. **Seed** adalah script yang mengisi database dengan data contoh. Buat `prisma/seed.js`:
+
+```js title="prisma/seed.js"
+import { prisma } from "../src/lib/prisma.js";
+
+await prisma.task.deleteMany();
+await prisma.course.deleteMany();
+
+const basisData = await prisma.course.create({
+  data: {
+    name: "Basis Data",
+    lecturer: "Bu Rina",
+    sks: 3,
+    tasks: {
+      create: [
+        { title: "Membuat ERD perpustakaan", priority: "tinggi" },
+        { title: "Latihan query JOIN", done: true },
+      ],
+    },
+  },
+});
+
+const mobile = await prisma.course.create({
+  data: {
+    name: "Pemrograman Mobile",
+    lecturer: "Pak Dimas",
+    sks: 4,
+    tasks: {
+      create: [{ title: "Install Expo dan Android Studio", priority: "rendah" }],
+    },
+  },
+});
+
+await prisma.task.create({ data: { title: "Daftar ulang semester" } });
+
+const total = await prisma.task.count();
+console.log(`Seed selesai: 2 mata kuliah (${basisData.name}, ${mobile.name}), ${total} tugas`);
+
+await prisma.$disconnect();
+```
+
+Urutan kerja script ini:
+
+1. Menghapus semua tugas, lalu semua mata kuliah, supaya mulai dari tabel kosong.
+2. Membuat mata kuliah "Basis Data" sekaligus dua tugasnya. Cara ini disebut **nested create** (create bertingkat). Properti `tasks: { create: [...] }` membuat baris `Task` dan mengisi `courseId`-nya otomatis.
+3. Membuat "Pemrograman Mobile" dengan satu tugas, lalu satu tugas tanpa mata kuliah.
+4. Menghitung jumlah tugas dengan `count()`, lalu mencetaknya.
+5. Menutup koneksi database dengan `$disconnect()` supaya proses Node selesai dengan rapi.
+
+Kata `await` boleh ditulis langsung di luar fungsi (disebut top-level await) karena proyek kita memakai ESM (`"type": "module"`).
+
+Daftarkan perintah seed di file konfigurasi. Baris yang diawali `+` adalah baris baru:
+
+```diff title="prisma7.config.ts"
+   migrations: {
+     path: "prisma/migrations",
++    seed: "node prisma/seed.js",
+   },
+```
+
+Lalu jalankan:
+
+```bash
+npx prisma db seed
+```
+
+```txt
+Running seed command `node prisma/seed.js` ...
+Seed selesai: 2 mata kuliah (Basis Data, Pemrograman Mobile), 4 tugas
+
+The seed command has been executed.
+```
+
+Di Prisma 7, seed hanya berjalan lewat perintah `prisma db seed`. `migrate dev` tidak menjalankannya otomatis.
+
+Kalau seed dijalankan berulang kali, `id` terus bertambah (5, 6, 7, …). SQLite tidak memakai ulang nomor `AUTOINCREMENT` yang sudah pernah terpakai, mirip nomor antrean bank yang tidak diulang walau nasabahnya sudah pulang. Untuk benar-benar mulai dari nol:
+
+1. Jalankan `npx prisma migrate reset`. Perintah ini menghapus semua data, lalu menerapkan ulang semua migrasi.
+2. Jalankan `npx prisma db seed`.
+
+Perintah reset hanya untuk database development. Jangan pernah menjalankannya ke database produksi, yaitu database yang dipakai pengguna sungguhan.
+
+## Menulis ulang route dengan Prisma
+
+Setiap operasi array punya pasangan di Prisma Client. Bedanya, semua method Prisma bersifat **asynchronous**: hasilnya tidak langsung ada, karena Prisma harus menunggu database. Method itu mengembalikan **Promise**, semacam janji bahwa hasilnya akan datang. Mirip memesan GoFood: kamu langsung dapat nomor pesanan, tapi makanannya baru tiba nanti. Kata `await` artinya "tunggu sampai makanannya tiba", jadi wajib ditulis sebelum kamu memakai hasilnya.
+
+| Versi in-memory | Versi Prisma |
+| --- | --- |
+| `tasks` | `await prisma.task.findMany()` |
+| `tasks.find((t) => t.id === id)` | `await prisma.task.findUnique({ where: { id } })` |
+| `tasks.push(task)` dan `nextId++` | `await prisma.task.create({ data })` |
+| mengubah properti objek | `await prisma.task.update({ where: { id }, data })` |
+| `tasks.splice(index, 1)` | `await prisma.task.delete({ where: { id } })` |
+
+Ganti seluruh isi `src/server.js` dengan versi berikut. Array `tasks`, `nextId`, dan fungsi pencarian manual tidak diperlukan lagi. Baris yang disorot adalah bagian yang paling berubah.
+
+```js title="src/server.js" showLineNumbers {2,30-31,35-39,51-53,64-73,91-97}
+import express from "express";
+import { prisma } from "./lib/prisma.js";
+
+const app = express();
+const PORT = process.env.PORT ?? 3000;
+const PRIORITAS = ["rendah", "sedang", "tinggi"];
+
+app.use((req, res, next) => {
+  const mulai = Date.now();
+  res.on("finish", () => {
+    const durasi = Date.now() - mulai;
+    console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${durasi} ms)`);
+  });
+  next();
+});
+
+app.use(express.json());
+
+function tugasTidakDitemukan(res) {
+  return res.status(404).json({
+    error: { message: "Tugas tidak ditemukan", code: "NOT_FOUND" },
+  });
+}
+
+app.get("/api/health", (req, res) => {
+  res.json({ data: { status: "ok" } });
+});
+
+// ---------- Tasks ----------
+app.get("/api/tasks", async (req, res) => {
+  const tasks = await prisma.task.findMany({ orderBy: { id: "asc" } });
+  res.json({ data: tasks, meta: { total: tasks.length } });
+});
+
+app.get("/api/tasks/:id", async (req, res) => {
+  const task = await prisma.task.findUnique({
+    where: { id: Number(req.params.id) },
+    include: { course: true },
+  });
+  if (!task) return tugasTidakDitemukan(res);
+  res.json({ data: task });
+});
+
+app.post("/api/tasks", async (req, res) => {
+  const { title, priority = "sedang", courseId = null } = req.body ?? {};
+  if (typeof title !== "string" || title.trim() === "" || !PRIORITAS.includes(priority)) {
+    return res.status(400).json({
+      error: { message: "title wajib diisi dan priority harus rendah/sedang/tinggi", code: "VALIDATION_ERROR" },
+    });
+  }
+  const task = await prisma.task.create({
+    data: { title: title.trim(), priority, courseId },
+  });
+  res.status(201).json({ data: task });
+});
+
+app.put("/api/tasks/:id", async (req, res) => {
+  const { title, done, priority = "sedang", courseId = null } = req.body ?? {};
+  if (typeof title !== "string" || title.trim() === "" || typeof done !== "boolean") {
+    return res.status(400).json({
+      error: { message: "PUT wajib menyertakan title dan done", code: "VALIDATION_ERROR" },
+    });
+  }
+  try {
+    const task = await prisma.task.update({
+      where: { id: Number(req.params.id) },
+      data: { title: title.trim(), done, priority, courseId },
+    });
+    res.json({ data: task });
+  } catch (err) {
+    if (err.code === "P2025") return tugasTidakDitemukan(res);
+    throw err;
+  }
+});
+
+app.patch("/api/tasks/:id", async (req, res) => {
+  const { title, done, priority, courseId } = req.body ?? {};
+  try {
+    const task = await prisma.task.update({
+      where: { id: Number(req.params.id) },
+      data: { title, done, priority, courseId },
+    });
+    res.json({ data: task });
+  } catch (err) {
+    if (err.code === "P2025") return tugasTidakDitemukan(res);
+    throw err;
+  }
+});
+
+app.delete("/api/tasks/:id", async (req, res) => {
+  try {
+    await prisma.task.delete({ where: { id: Number(req.params.id) } });
+    res.status(204).end();
+  } catch (err) {
+    if (err.code === "P2025") return tugasTidakDitemukan(res);
+    throw err;
+  }
+});
+
+// ---------- Courses ----------
+app.get("/api/courses", async (req, res) => {
+  const courses = await prisma.course.findMany({
+    orderBy: { name: "asc" },
+    include: { _count: { select: { tasks: true } } },
+  });
+  res.json({ data: courses, meta: { total: courses.length } });
+});
+
+app.get("/api/courses/:id", async (req, res) => {
+  const course = await prisma.course.findUnique({
+    where: { id: Number(req.params.id) },
+    include: { tasks: { orderBy: { id: "asc" } } },
+  });
+  if (!course) {
+    return res.status(404).json({
+      error: { message: "Mata kuliah tidak ditemukan", code: "NOT_FOUND" },
+    });
+  }
+  res.json({ data: course });
+});
+
+app.post("/api/courses", async (req, res) => {
+  const { name, lecturer, sks = null } = req.body ?? {};
+  if (!name || !lecturer) {
+    return res.status(400).json({
+      error: { message: "name dan lecturer wajib diisi", code: "VALIDATION_ERROR" },
+    });
+  }
+  const course = await prisma.course.create({ data: { name, lecturer, sks } });
+  res.status(201).json({ data: course });
+});
+
+// 404 catch-all: harus paling bawah, setelah semua route
+app.use((req, res) => {
+  res.status(404).json({
+    error: { message: "Route tidak ditemukan", code: "ROUTE_NOT_FOUND" },
+  });
+});
+
+app.listen(PORT, (error) => {
+  if (error) throw error;
+  console.log(`Server jalan di http://localhost:${PORT}`);
+});
+```
+
+Cara membaca kode ini:
+
+- **Semua handler memakai `async`.** Tanpa `await`, variabel `task` berisi Promise, bukan data tugas.
+- **`id`, `createdAt`, dan `updatedAt` diisi database.** Kamu cukup mengirim `data` berisi kolom yang relevan, misalnya `title` dan `priority`.
+- **`findUnique` mengembalikan `null`** kalau data tidak ada. Karena itu kita cek dulu, lalu membalas 404.
+- **`update` dan `delete` melempar error** kalau data tidak ada. Error itu punya `code: "P2025"`, artinya "record not found" (data tidak ditemukan). Kita tangkap dengan `try/catch`, lalu ubah menjadi 404. Error lain dilempar ulang dengan `throw err`. Express 5 meneruskannya ke error handler bawaan, yang membalas 500.
+- **PATCH memanfaatkan `undefined`.** Kalau body hanya berisi `{"done":true}`, nilai `title`, `priority`, dan `courseId` adalah `undefined`. Prisma membaca `undefined` sebagai "jangan ubah kolom ini". Lain halnya dengan `null`, yang benar-benar mengosongkan kolom.
+- **Route `/api/courses`** memakai `include` untuk ikut mengambil data relasi. Penjelasannya ada di bagian setelah ini.
+
+Validasi di kode ini masih manual dan banyak celahnya. PATCH belum memeriksa tipe data. Alamat `/api/tasks/abc` menghasilkan `Number("abc")`, yaitu `NaN` (bukan angka). Prisma menolaknya dengan `PrismaClientValidationError: Argument id is missing`, dan client menerima halaman HTML dengan status 500. Semua itu kita rapikan di pelajaran berikutnya.
+
+### Mencoba endpoint
+
+Jalankan `npm run dev`. Buka terminal kedua, lalu kirim request berikut. Cara mengirim body JSON sama seperti di [Express Dasar](/belajar/crud-backend/express-dasar):
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+curl.exe http://localhost:3000/api/tasks
+curl.exe http://localhost:3000/api/tasks/1
+
+'{"title":"Kuis Basis Data","priority":"tinggi","courseId":1}' | curl.exe -X POST http://localhost:3000/api/tasks -H "Content-Type: application/json" --data-binary "@-"
+'{"done":true}' | curl.exe -X PATCH http://localhost:3000/api/tasks/5 -H "Content-Type: application/json" --data-binary "@-"
+curl.exe -i -X DELETE http://localhost:3000/api/tasks/5
+```
+
+</Tab>
+<Tab>
+
+```bash
+curl http://localhost:3000/api/tasks
+curl http://localhost:3000/api/tasks/1
+
+curl -X POST http://localhost:3000/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Kuis Basis Data","priority":"tinggi","courseId":1}'
+curl -X PATCH http://localhost:3000/api/tasks/5 \
+  -H "Content-Type: application/json" \
+  -d '{"done":true}'
+curl -i -X DELETE http://localhost:3000/api/tasks/5
+```
+
+</Tab>
+</Tabs>
+
+Urutan perintahnya: lihat semua tugas, lihat tugas 1, tambah tugas, tandai tugas 5 selesai, lalu hapus tugas 5.
+
+Dengan database yang baru di-seed, `POST` membalas status 201 dengan tugas ber-`id` 5:
+
+```json
+{"data":{"id":5,"title":"Kuis Basis Data","done":false,"priority":"tinggi","courseId":1,"createdAt":"2026-10-30T13:58:58.984Z","updatedAt":"2026-10-30T13:58:58.984Z"}}
+```
+
+`PATCH` mengubah `done` menjadi `true` dan memperbarui `updatedAt`. `DELETE` membalas `HTTP/1.1 204 No Content`, artinya berhasil tanpa isi. Jalankan `DELETE` yang sama sekali lagi. Kali ini jawabannya status 404 dengan body `{"error":{"message":"Tugas tidak ditemukan","code":"NOT_FOUND"}}`, hasil dari penanganan P2025 tadi. Terakhir, restart server dan panggil `GET /api/tasks`. Datanya masih ada, beda dengan versi array.
+
+## Relasi dengan include dan _count
+
+<Callout type="analogi" title="Seperti minta data ke bagian akademik">
+
+Kamu bertanya ke bagian akademik, "Tolong data mata kuliah Basis Data." Petugas memberi kartu mata kuliahnya saja. Kalau kamu ingin daftar tugasnya juga, kamu harus bilang, "Sekalian daftar tugasnya, ya." Kalau kamu cuma ingin tahu ada berapa tugas, cukup tanya jumlahnya. Petugas tidak perlu memfotokopi seluruh daftar.
+
+- Permintaan biasa = query tanpa tambahan, hanya kolom milik model itu.
+- "Sekalian daftar tugasnya" = `include`.
+- "Ada berapa tugasnya?" = `_count`.
+
+</Callout>
+
+Secara bawaan, Prisma hanya mengembalikan kolom milik model itu sendiri. Untuk ikut mengambil data relasi, pakai `include`. Route detail tugas memakai `include: { course: true }`, sehingga hasilnya membawa objek `course`:
+
+```json title="GET /api/tasks/1"
+{
+  "data": {
+    "id": 1,
+    "title": "Membuat ERD perpustakaan",
+    "done": false,
+    "priority": "tinggi",
+    "courseId": 1,
+    "createdAt": "2026-10-30T14:26:27.489Z",
+    "updatedAt": "2026-10-30T14:26:27.489Z",
+    "course": { "id": 1, "name": "Basis Data", "lecturer": "Bu Rina", "sks": 3, "createdAt": "2026-10-30T14:26:27.489Z" }
+  }
+}
+```
+
+Di belakang layar, Prisma mengambil data mata kuliahnya untukmu. Hasilnya mirip `JOIN` yang kamu tulis manual di pelajaran SQL. Arah sebaliknya juga bisa. `GET /api/courses/1` memakai `include: { tasks: ... }`, jadi mata kuliah datang bersama daftar tugasnya.
+
+Untuk daftar semua mata kuliah, kita cukup butuh jumlah tugasnya. `_count` menghitung jumlah itu tanpa mengirim seluruh isi tugas:
+
+```json title="GET /api/courses"
+{
+  "data": [
+    { "id": 1, "name": "Basis Data", "lecturer": "Bu Rina", "sks": 3, "createdAt": "2026-10-30T14:26:27.489Z", "_count": { "tasks": 2 } },
+    { "id": 2, "name": "Pemrograman Mobile", "lecturer": "Pak Dimas", "sks": 4, "createdAt": "2026-10-30T14:26:27.499Z", "_count": { "tasks": 1 } }
+  ],
+  "meta": { "total": 2 }
+}
+```
+
+Pakai `include` seperlunya. Setiap relasi yang di-include menambah query dan memperbesar respons. Aplikasi HP yang memakai jaringan seluler akan terasa lebih lambat. Kalau hanya butuh beberapa kolom dari relasi, gabungkan dengan `select` (memilih kolom tertentu saja), seperti di latihan nanti. Ringkasan sintaks lainnya ada di [cheatsheet Prisma](/cheatsheet/prisma).
+
+## Kesalahan umum
+
+Pesan error di tabel ini muncul apa adanya saat kamu mengerjakan proyek. Cari pesan yang sama dengan yang tampil di terminalmu, lalu ikuti kolom terakhir.
+
+| Pesan / gejala | Penyebab | Cara memperbaiki |
+| --- | --- | --- |
+| `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '...\src\generated\prisma\client.ts'` | Prisma Client belum dibuat (belum di-generate) | Jalankan `npx prisma generate` |
+| `ERR_UNKNOWN_FILE_EXTENSION: Unknown file extension ".ts"` | Versi Node lebih lama dari 22.18 | Perbarui Node ke 22.18 atau lebih baru |
+| `P2021` `The table main.Task does not exist in the current database.` | Migrasi belum dijalankan, atau `DATABASE_URL` menunjuk file database lain | Jalankan `npx prisma migrate dev` dari folder utama proyek |
+| `Prisma Studio is not supported for the "file:./dev.db" protocol.` | Studio 7.10 salah membaca alamat database | Jalankan `npx prisma studio --url file://./dev.db` |
+| Respons `{"data":{}}` padahal data ada | Lupa `await`, jadi yang dikirim adalah Promise | Tambahkan `await` di depan pemanggilan Prisma |
+| HTML 500 berisi `Foreign key constraint violated on the foreign key` (`P2003`) | `courseId` menunjuk mata kuliah yang tidak ada | Kirim `courseId` yang ada. Validasinya kita tambahkan di pelajaran berikutnya |
+| `npx prisma -v` menunjukkan versi 8 | Terpasang tanpa `@7` | `npm install prisma@7 --save-dev` dan `npm install @prisma/client@7 @prisma/adapter-better-sqlite3@7` |
+
+Instalasi `better-sqlite3` kadang gagal dengan pesan yang menyebut `node-gyp` atau `prebuild-install`. Paket ini butuh binary, yaitu file program yang sudah dikompilasi untuk komputermu. Pesan itu muncul kalau npm tidak menemukan binary siap pakai untuk versi Node-mu. Cara mengatasinya:
+
+1. Pastikan kamu memakai Node 22 LTS resmi dari nodejs.org.
+2. Hapus folder `node_modules`.
+3. Jalankan `npm install` lagi.
+
+<Callout type="danger" title="Jangan ubah tabel lewat SQL manual">
+
+Jangan mengubah struktur tabel langsung lewat aplikasi database. Akibatnya, schema, migrasi, dan database jadi tidak cocok satu sama lain. Prisma akan mendeteksinya dan meminta kamu me-reset database. Reset berarti semua data di dalamnya hilang. Jadi, ubah struktur selalu lewat `schema.prisma`, lalu jalankan `migrate dev`.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Hapus mata kuliah" difficulty="sedang" hints={["Pola `try/catch` dengan `err.code === \"P2025\"` sama seperti DELETE tugas.", "Setelah menghapus, cek tugas yang tadinya milik mata kuliah itu dengan `GET /api/tasks`."]}>
+
+Tambahkan endpoint untuk menghapus mata kuliah, lalu amati nasib tugas-tugasnya.
+
+1. Di `src/server.js`, tambahkan endpoint `DELETE /api/courses/:id`. Letakkan sebelum 404 catch-all (penangkap semua alamat yang tidak dikenal).
+2. Kalau berhasil, balas dengan status 204 tanpa isi.
+3. Kalau `id` tidak ada, balas 404 dengan pesan "Mata kuliah tidak ditemukan".
+4. Cari `id` mata kuliah "Pemrograman Mobile" lewat `GET /api/courses`.
+5. Hapus mata kuliah itu lewat endpoint barumu.
+6. Buka `GET /api/tasks` dan lihat tugas "Install Expo dan Android Studio". Apa yang berubah?
+
+<Solution>
+
+```js title="src/server.js (sebelum 404 catch-all)"
+app.delete("/api/courses/:id", async (req, res) => {
+  try {
+    await prisma.course.delete({ where: { id: Number(req.params.id) } });
+    res.status(204).end();
+  } catch (err) {
+    if (err.code === "P2025") {
+      return res.status(404).json({
+        error: { message: "Mata kuliah tidak ditemukan", code: "NOT_FOUND" },
+      });
+    }
+    throw err;
+  }
+});
+```
+
+`prisma.course.delete` menghapus satu baris berdasarkan `id`. Kalau baris itu tidak ada, Prisma melempar error berkode P2025, dan kita ubah menjadi 404. Error lain dilempar lagi dengan `throw err` supaya tetap terlihat.
+
+Tugas "Install Expo dan Android Studio" tidak ikut terhapus. Nilai `courseId`-nya berubah menjadi `null`. Itulah efek `onDelete: SetNull` di schema. Kalau kamu ingin tugas ikut terhapus, ganti aturannya menjadi `onDelete: Cascade`, lalu buat migrasi baru. Jalankan `npx prisma db seed` untuk mengembalikan data contoh.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Nama mata kuliah di daftar tugas" difficulty="mudah" hints={["`include` bisa berisi objek, bukan hanya `true`.", "Di dalamnya pakai `select: { name: true }`."]}>
+
+Saat ini `GET /api/tasks` hanya membawa angka `courseId`, bukan nama mata kuliahnya. Ubah supaya setiap tugas membawa nama mata kuliahnya saja.
+
+1. Buka route `GET /api/tasks` di `src/server.js`.
+2. Tambahkan `include` untuk relasi `course`.
+3. Batasi kolomnya dengan `select` supaya hanya `name` yang ikut.
+4. Buka `GET /api/tasks` dan periksa bentuk field `course` di setiap tugas.
+
+<Solution>
+
+```js title="src/server.js"
+app.get("/api/tasks", async (req, res) => {
+  const tasks = await prisma.task.findMany({
+    orderBy: { id: "asc" },
+    include: { course: { select: { name: true } } },
+  });
+  res.json({ data: tasks, meta: { total: tasks.length } });
+});
+```
+
+`include` meminta Prisma ikut mengambil relasi `course`. `select` di dalamnya membatasi kolom yang dikirim, yaitu hanya `name`. Hasilnya, setiap tugas kini punya `"course":{"name":"Basis Data"}`. Tugas tanpa mata kuliah punya `"course":null`. Respons tetap ringkas karena kolom lain tidak ikut.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Kamu menambah kolom baru di `schema.prisma`. Apa langkah yang benar supaya database dan Prisma Client ikut berubah?",
+    options: ["Menjalankan `npx prisma studio`", "`npx prisma migrate dev --name ...` lalu `npx prisma generate`", "`npm install @prisma/client@7` ulang", "`npx prisma db seed`"],
+    answer: 1,
+    explain: "`migrate dev` membuat file migrasi SQL dan menerapkannya ke database. `generate` memperbarui Prisma Client. Di Prisma 7, `migrate dev` tidak menjalankan generate secara otomatis. Studio hanya untuk melihat data, dan seed hanya mengisi data contoh.",
+  },
+  {
+    q: "Tugas dengan id 999 tidak ada. Apa yang terjadi saat `prisma.task.update({ where: { id: 999 }, data: { done: true } })` dipanggil?",
+    options: ["Mengembalikan `null`", "Membuat tugas baru dengan id 999", "Melempar error dengan `code` `P2025`", "Mengembalikan objek kosong"],
+    answer: 2,
+    explain: "`update` dan `delete` melempar error berkode P2025 kalau datanya tidak ditemukan. Yang mengembalikan `null` adalah `findUnique`. `update` tidak pernah membuat data baru. Untuk itu ada `create` atau `upsert`.",
+  },
+  {
+    q: "Di model Task ada baris `course Course? @relation(fields: [courseId], references: [id])`. Apa fungsinya?",
+    options: ["Field relasi untuk Prisma Client, sedangkan kolom aslinya adalah `courseId`", "Kolom teks bernama `course` di tabel Task", "Tabel baru penghubung Task dan Course", "Index untuk mempercepat pencarian"],
+    answer: 0,
+    explain: "Field relasi tidak menjadi kolom di tabel, jadi tidak ada kolom `course`. Baris ini memberi tahu Prisma cara mengambil Course lewat foreign key `courseId`, misalnya saat kamu memakai `include: { course: true }`. Tabel penghubung hanya dipakai untuk relasi many-to-many.",
+  },
+  {
+    q: "Route berikut membalas `{\"data\":{}}` padahal tugas 1 ada. Kenapa?",
+    code: "app.get(\"/api/tasks/:id\", async (req, res) => {\n  const task = prisma.task.findUnique({ where: { id: 1 } });\n  res.json({ data: task });\n});",
+    options: ["`findUnique` butuh `include`", "Port server salah", "Tabel Task belum dimigrasi", "Lupa `await`, sehingga yang dikirim adalah Promise"],
+    answer: 3,
+    explain: "Tanpa `await`, isi `task` adalah Promise yang belum selesai. Saat diubah ke JSON, Promise menjadi `{}`. Kalau tabel belum dimigrasi, yang muncul justru error P2021, bukan objek kosong.",
+  },
+  {
+    q: "Kenapa `src/lib/prisma.js` bisa meng-import `../generated/prisma/client.ts` tanpa tsx atau proses build?",
+    options: ["Node 22.18+ menghapus anotasi tipe file `.ts` secara otomatis (type stripping)", "Prisma 7 menghasilkan file JavaScript yang diberi ekstensi `.ts`", "Express 5 mengompilasi TypeScript", "`dotenv` mengubah TypeScript menjadi JavaScript"],
+    answer: 0,
+    explain: "Sejak Node 22.18, Node otomatis menghapus tulisan tipe dari file `.ts` sebelum menjalankannya. Fitur ini disebut type stripping. Kode buatan Prisma hanya memakai tulisan tipe yang aman dihapus. Express dan dotenv tidak berurusan dengan TypeScript.",
+  },
+]} />
+
+## Ringkasan
+
+- Prisma adalah ORM, penerjemah antara kode JavaScript dan SQL. Kamu memanggil method, Prisma menulis SQL-nya, lalu hasilnya kembali sebagai objek.
+- Pasang paket dengan versi terkunci: `prisma@7` (dev), `@prisma/client@7`, `@prisma/adapter-better-sqlite3@7`, dan `dotenv`. Prisma 7 tidak membaca `.env` sendiri, jadi file konfigurasi meng-import `dotenv/config`.
+- Model dan relasi ditulis di `schema.prisma`. Setiap kali schema berubah, jalankan `npx prisma migrate dev --name ...`, lalu `npx prisma generate`.
+- `src/lib/prisma.js` membuat satu `PrismaClient` dengan adapter better-sqlite3. File client `.ts` bisa di-import karena type stripping di Node 22.18+.
+- `findMany`, `findUnique`, `create`, `update`, dan `delete` menggantikan operasi array. Data yang tidak ada membuat `findUnique` mengembalikan `null`, sedangkan `update` dan `delete` melempar error berkode P2025. Keduanya kita ubah menjadi 404.
+- `include` ikut mengambil data relasi, `_count` menghitung jumlahnya, dan `npx prisma db seed` mengisi data contoh.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Data tugas dan mata kuliah kini tersimpan permanen di SQLite, dengan relasi yang sama seperti di aplikasi akhir. Masalahnya, validasi kita masih manual dan mudah bocor. Contohnya, `/api/tasks/abc` masih menghasilkan error 500. Di [Validasi dengan Zod & Error Handling](/belajar/crud-backend/validasi-error-handling), kamu mengganti semua pengecekan manual itu dengan Zod dan satu penanganan error terpusat.
+
+</Callout>

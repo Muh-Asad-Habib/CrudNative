@@ -1,0 +1,589 @@
+## Pengantar
+
+Koki butuh dapur yang siap sebelum memasak. Programmer juga begitu. Di pelajaran ini kamu menyiapkan "dapur" yang dipakai sampai akhir kursus. Setelahnya, laptopmu bisa menjalankan JavaScript, menulis kode dengan nyaman, dan menyimpan riwayat perubahan. HP-mu juga siap mencoba aplikasi buatanmu sendiri.
+
+Kerjakan bagian demi bagian secara berurutan. Instalasi memang membosankan, tetapi cukup sekali.
+
+| Alat | Fungsinya | Mulai dipakai di |
+| --- | --- | --- |
+| Node.js 22 LTS + npm | Menjalankan JavaScript di laptop dan memasang *package* (kode siap pakai buatan orang lain) | Pelajaran ini |
+| VS Code | Tempat menulis kode, seperti Word khusus kode | Pelajaran ini |
+| Terminal | Memberi perintah ke komputer dengan mengetik | Pelajaran ini |
+| Git | Mencatat riwayat perubahan kode | Track 1 dan seterusnya |
+| Expo Go (HP) | Mencoba aplikasi buatanmu langsung di HP | Track 2 dan seterusnya |
+
+## 1. Node.js 22 LTS dan npm
+
+<Callout type="analogi" title="Seperti kompor dan minimarket bumbu">
+
+JavaScript adalah bahasa untuk menulis "resep" program. Awalnya resep ini hanya bisa dimasak di satu dapur, yaitu browser.
+
+- **Node.js** = kompor yang kamu pasang di laptop, supaya resep JavaScript bisa dimasak di luar browser.
+- **npm** = minimarket bumbu jadi, jadi kamu tidak perlu membuat semuanya dari nol.
+- **Package** = satu bungkus bumbu jadi, yaitu kode siap pakai seperti Express atau Expo.
+
+Bedanya, package di npm gratis dan diambil lewat internet dengan satu perintah.
+
+</Callout>
+
+**Node.js** membuat JavaScript bisa berjalan langsung di laptop, jadi bisa dipakai untuk membuat server dan API. **npm** (*Node Package Manager*) otomatis ikut terpasang bersama Node.js.
+
+Kursus ini memakai **Node.js 22 LTS**. LTS (*Long Term Support*) artinya versi itu dirawat lama, termasuk perbaikan bug dan keamanan. Jadi versi ini stabil untuk belajar. Situs nodejs.org mungkin menawarkan versi yang lebih baru. Biasanya versi itu juga jalan, tetapi contoh di sini diuji dengan v22. Pilih **v22** agar hasilmu sama persis.
+
+<Tabs items={["Windows", "macOS", "Linux"]}>
+<Tab>
+
+1. Buka [nodejs.org/en/download](https://nodejs.org/en/download).
+2. Pilih **v22 (LTS)**, sistem operasi **Windows**, lalu unduh **Windows Installer (.msi)**, yaitu file pemasang aplikasi.
+3. Jalankan installer dan klik **Next** sampai selesai. Biarkan opsi **Add to PATH** tetap aktif. PATH adalah daftar folder tempat terminal mencari program, jadi opsi ini membuat perintah `node` dikenali. Opsi *Tools for Native Modules* tidak perlu dicentang.
+
+Cara lain memakai `winget`, pemasang aplikasi bawaan Windows 10/11. Perintah ini artinya "pasang Node.js versi 22":
+
+```powershell
+winget install OpenJS.NodeJS.22
+```
+
+</Tab>
+<Tab>
+
+1. Buka [nodejs.org/en/download](https://nodejs.org/en/download).
+2. Pilih **v22 (LTS)**, sistem operasi **macOS**, lalu unduh **macOS Installer (.pkg)**.
+3. Buka file `.pkg` dan ikuti langkahnya sampai selesai.
+
+Alternatif lain adalah **nvm** (*Node Version Manager*), alat untuk berganti-ganti versi Node. Caranya sama dengan tab Linux.
+
+</Tab>
+<Tab>
+
+Cara paling rapi adalah memakai **nvm**. nvm memasang Node di folder pribadimu, jadi tidak perlu `sudo` (izin administrator):
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.8/install.sh | bash
+# tutup terminal, buka lagi, lalu:
+nvm install 22
+```
+
+Baris pertama mengunduh lalu menjalankan pemasang nvm. Baris terakhir memasang Node versi 22. Versi nvm terbaru tercantum di [github.com/nvm-sh/nvm](https://github.com/nvm-sh/nvm).
+
+</Tab>
+</Tabs>
+
+Setelah instalasi, **tutup semua jendela terminal lalu buka yang baru**. Terminal yang dibuka sebelum instalasi belum tahu bahwa Node sudah ada. Lalu cek versinya. `-v` artinya "tampilkan versi":
+
+```bash
+node -v
+npm -v
+```
+
+```txt
+v22.18.0
+10.9.3
+```
+
+Angka di belakangnya boleh berbeda. Yang penting, versi Node diawali `v22` dan npm menampilkan angka, bukan pesan error.
+
+## 2. VS Code dan ekstensi
+
+<Callout type="analogi" title="Seperti HP baru dan aplikasi dari Play Store">
+
+HP baru sudah bisa menelepon dan memotret. Supaya lebih berguna, kamu memasang aplikasi tambahan dari Play Store, misalnya WhatsApp atau GoFood.
+
+- VS Code = HP baru, sudah bisa dipakai menulis kode
+- **Ekstensi** = aplikasi tambahan, masing-masing menambah satu kemampuan
+- Panel Extensions di VS Code = Play Store-nya
+
+Bedanya, ekstensi VS Code gratis dan tidak minta izin akses kamera atau kontak.
+
+</Callout>
+
+**Visual Studio Code** (VS Code) adalah editor kode gratis dari Microsoft. Editor kode adalah aplikasi untuk mengetik kode, mirip Microsoft Word tetapi khusus kode. Kata-kata di kodemu diberi warna berbeda, dan VS Code menyarankan lanjutan ketikan seperti keyboard HP.
+
+Unduh dari [code.visualstudio.com](https://code.visualstudio.com/) lalu instal seperti aplikasi biasa. Di Windows, centang **Add "Open with Code" action**. Dengan opsi ini, kamu bisa klik kanan sebuah folder lalu membukanya langsung di VS Code.
+
+Untuk memasang ekstensi, buka panel Extensions dengan <Kbd>Ctrl</Kbd> + <Kbd>Shift</Kbd> + <Kbd>X</Kbd> (macOS: <Kbd>⌘</Kbd> + <Kbd>Shift</Kbd> + <Kbd>X</Kbd>). Ketik nama ekstensi di kolom pencarian, lalu klik **Install**. Pasang empat ekstensi ini:
+
+| Ekstensi | ID | Gunanya |
+| --- | --- | --- |
+| ESLint | `dbaeumer.vscode-eslint` | Memberi garis merah/kuning pada kode yang mungkin salah, seperti cek ejaan di Word |
+| Prettier | `esbenp.prettier-vscode` | Merapikan spasi dan baris kode secara otomatis |
+| Prisma | `Prisma.prisma` | Membantu menulis file `schema.prisma` (dipakai di Track 1) |
+| Expo Tools | `expo.vscode-expo-tools` | Membantu mengatur proyek Expo (dipakai di Track 2) |
+
+**ID** adalah nama unik ekstensi, mirip username. Banyak ekstensi punya nama mirip, jadi cocokkan ID-nya sebelum klik Install.
+
+Kamu juga bisa memasang semuanya lewat terminal (dibahas di bagian 3). Setiap baris memasang satu ekstensi berdasarkan ID-nya:
+
+```bash
+code --install-extension dbaeumer.vscode-eslint
+code --install-extension esbenp.prettier-vscode
+code --install-extension Prisma.prisma
+code --install-extension expo.vscode-expo-tools
+```
+
+<Callout type="tip" title="Rapikan kode tiap kali menyimpan">
+
+1. Buka Settings dengan <Kbd>Ctrl</Kbd> + <Kbd>,</Kbd>.
+2. Cari **Format On Save**, lalu centang.
+3. Cari **Default Formatter**, lalu pilih **Prettier**.
+
+Sekarang kode otomatis rapi setiap kali kamu menyimpan dengan <Kbd>Ctrl</Kbd> + <Kbd>S</Kbd>.
+
+Di macOS, perintah `code` belum tersedia di terminal. Buka Command Palette (<Kbd>⌘</Kbd> + <Kbd>Shift</Kbd> + <Kbd>P</Kbd>) lalu jalankan **Shell Command: Install 'code' command in PATH**.
+
+</Callout>
+
+## 3. Dasar terminal
+
+<Callout type="analogi" title="Seperti chat dengan komputer">
+
+Di WhatsApp, kamu mengetik pesan lalu temanmu membalas. Terminal mirip itu, hanya lawan bicaramu komputer.
+
+- Pesan yang kamu ketik = **perintah**
+- Balasan teks = **output**
+- Ruangan tempat kamu sedang berdiri = **folder aktif**. Perintah `cd` membuatmu pindah ruangan.
+
+Bedanya, komputer tidak paham bahasa sehari-hari. Perintah harus diketik persis, karena salah satu huruf saja akan ditolak.
+
+</Callout>
+
+**Terminal** adalah jendela tempat kamu mengetik perintah, lalu komputer membalas dengan teks. Kelihatannya kuno, tetapi hampir semua alat developer (Node, npm, Git, Expo) dijalankan dari sini. Di VS Code, buka terminal dengan menu **Terminal → New Terminal** atau <Kbd>Ctrl</Kbd> + <Kbd>\`</Kbd>.
+
+Di Windows, terminal bawaannya **PowerShell**. Di macOS biasanya **zsh**, dan di Linux biasanya **bash**. Perintah dasarnya mirip:
+
+| Tujuan | Windows (PowerShell) | macOS / Linux |
+| --- | --- | --- |
+| Lihat folder aktif | `pwd` | `pwd` |
+| Lihat isi folder | `ls` atau `dir` | `ls` |
+| Masuk ke folder | `cd nama-folder` | `cd nama-folder` |
+| Naik satu folder | `cd ..` | `cd ..` |
+| Ke folder home | `cd ~` | `cd ~` |
+| Buat folder | `mkdir nama-folder` | `mkdir nama-folder` |
+| Bersihkan layar | `cls` atau `clear` | `clear` |
+| Buka folder ini di VS Code | `code .` | `code .` |
+
+**Folder home** adalah folder pribadi akunmu, misalnya `C:\Users\andi`. Tanda `~` adalah singkatannya, dan `..` berarti folder satu tingkat di atas.
+
+Tiga trik yang menghemat waktu:
+
+- <Kbd>Tab</Kbd> melengkapi nama folder atau file.
+- <Kbd>↑</Kbd> memanggil perintah sebelumnya.
+- <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd> menghentikan program yang sedang berjalan.
+
+Sekarang buat folder kerja kursus ini di folder home:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+cd ~
+mkdir kursus-crud
+cd kursus-crud
+pwd
+```
+
+```txt
+Path
+----
+C:\Users\andi\kursus-crud
+```
+
+</Tab>
+<Tab>
+
+```bash
+cd ~
+mkdir kursus-crud
+cd kursus-crud
+pwd
+```
+
+```txt
+/Users/andi/kursus-crud
+```
+
+</Tab>
+</Tabs>
+
+Urutannya: pindah ke home, buat folder `kursus-crud`, masuk ke folder itu, lalu tampilkan posisimu. Output terakhir membuktikan kamu sudah berada di dalamnya.
+
+Folder home sengaja dipilih, bukan Documents. Di banyak laptop Windows, Documents disinkronkan ke OneDrive (penyimpanan online Microsoft). Proyek JavaScript berisi ribuan file kecil yang membuat sinkronisasi lambat.
+
+### Perintah yang beda di PowerShell
+
+Banyak tutorial di internet ditulis untuk macOS/Linux. Di Windows PowerShell 5 (versi bawaan Windows), beberapa perintah dari tutorial itu tidak jalan. Ini mirip resep dari luar negeri yang memakai bahan yang tidak dijual di pasar dekat rumah, jadi kamu perlu tahu penggantinya:
+
+- `&&` (menjalankan dua perintah berurutan) tidak didukung. Jalankan satu per satu, atau pisahkan dengan `;`.
+- `rm -rf folder` (hapus folder beserta isinya) tidak ada. Gunakan `Remove-Item -Recurse -Force folder`.
+- `touch file.js` (membuat file kosong) tidak ada. Gunakan `New-Item file.js`, atau buat file dari VS Code.
+- `curl` di PowerShell adalah perintah lain. Ketik `curl.exe` untuk curl yang asli.
+
+<Callout type="warning" title="Error: running scripts is disabled">
+
+Saat pertama kali menjalankan `npm` di PowerShell, kamu mungkin melihat pesan ini:
+
+```txt
+npm : File C:\Program Files\nodejs\npm.ps1 cannot be loaded because running scripts is disabled on this system. For more information, see about_Execution_Policies at https:/go.microsoft.com/fwlink/?LinkID=135170.
+```
+
+Artinya, Windows memblokir file skrip PowerShell (`.ps1`), termasuk `npm.ps1` milik npm. Skrip adalah file berisi daftar perintah. Izinkan skrip lokal untuk akunmu saja (tidak perlu admin), lalu jawab `Y`:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+`RemoteSigned` mengizinkan skrip buatan laptopmu sendiri. Skrip dari internet tetap harus punya tanda tangan digital. Tutup lalu buka lagi terminal, kemudian coba `npm -v` lagi.
+
+</Callout>
+
+## 4. Git
+
+<Callout type="analogi" title="Seperti folder skripsi_final_revisi2">
+
+Kamu mungkin pernah melihat folder berisi `skripsi.docx`, `skripsi_revisi.docx`, dan `skripsi_final_BENERAN.docx`. Tujuannya supaya bisa kembali ke versi lama kalau revisi baru kacau.
+
+- Folder proyek yang diawasi Git = **repository**
+- Satu versi tersimpan beserta catatan "apa yang diubah" = **commit**
+- Nama di sampul skripsi = identitas di `git config`
+
+Bedanya, kamu tidak perlu menyalin file sendiri. Git menyimpan semua versi di folder tersembunyi, jadi foldermu tetap rapi.
+
+</Callout>
+
+**Git** mencatat riwayat perubahan kode, mirip *version history* di Google Docs. Kalau kodemu rusak, kamu bisa kembali ke versi sebelumnya. Git juga dipakai untuk mengunggah proyek ke GitHub (situs penyimpanan kode online) dan untuk deploy (memasang aplikasi di internet) di Track 4.
+
+<Tabs items={["Windows", "macOS", "Linux"]}>
+<Tab>
+
+Unduh installer dari [git-scm.com](https://git-scm.com/downloads), lalu klik **Next** dengan pilihan bawaan. Atau pasang lewat winget:
+
+```powershell
+winget install --id Git.Git -e
+```
+
+</Tab>
+<Tab>
+
+Jalankan perintah ini, lalu klik **Install** di jendela yang muncul. Perintah ini memasang Command Line Tools dari Apple, dan Git ikut di dalamnya.
+
+```bash
+xcode-select --install
+```
+
+</Tab>
+<Tab>
+
+Pilih baris yang sesuai jenis Linux-mu. `sudo` meminta izin administrator.
+
+```bash
+# Ubuntu / Debian
+sudo apt install git
+# Fedora
+sudo dnf install git
+```
+
+</Tab>
+</Tabs>
+
+Buka terminal baru, lalu cek dengan `git --version`. Setelah itu perkenalkan dirimu ke Git. Nama dan email ini tercatat di setiap perubahan yang kamu simpan, jadi ganti contohnya dengan datamu:
+
+```bash
+git config --global user.name "Andi Pratama"
+git config --global user.email "andi@kampus.ac.id"
+git config --global init.defaultBranch main
+git config --global --list
+```
+
+- Dua baris pertama menyimpan nama dan email. `--global` artinya berlaku untuk semua proyek di laptop ini.
+- Baris ketiga memberi nama `main` pada jalur riwayat utama (disebut *branch*) di setiap proyek baru.
+- Baris terakhir menampilkan semua pengaturan, seperti output di bawah.
+
+```txt
+user.name=Andi Pratama
+user.email=andi@kampus.ac.id
+init.defaultbranch=main
+```
+
+Kalau langkah ini terlewat, Git nanti menolak menyimpan perubahan dengan pesan `Author identity unknown *** Please tell me who you are.` Solusinya, jalankan dua perintah `git config` pertama di atas.
+
+## 5. Expo Go di HP
+
+<Callout type="analogi" title="Seperti aplikasi pemutar video">
+
+Pemutar video di HP bisa memutar video apa pun yang kamu berikan. Kamu tidak perlu membuat pemutar baru untuk tiap video.
+
+- Expo Go = pemutar yang sudah terpasang di HP
+- Kode aplikasimu di laptop = video yang mau diputar
+- QR code di terminal = link untuk membuka videonya
+
+Bedanya, saat kamu mengubah kode di laptop, tampilan di HP ikut berubah dalam hitungan detik.
+
+</Callout>
+
+**Expo Go** adalah aplikasi untuk menjalankan proyek React Native langsung di HP. React Native adalah cara membuat aplikasi HP dengan JavaScript. Dengan Expo Go, kamu tidak perlu menunggu *build* (proses mengemas kode menjadi aplikasi siap pasang) yang lama. Cukup pindai QR code dari terminal, dan aplikasimu tampil di HP. Bagian ini opsional, karena di Track 2 kamu juga bisa memakai mode web di browser.
+
+<Steps>
+<Step title="Instal Expo Go">
+
+Cari **Expo Go** di Google Play Store (Android) atau App Store (iPhone), lalu instal.
+
+</Step>
+<Step title="Pastikan versinya terbaru">
+
+Expo Go dari toko aplikasi hanya mendukung versi Expo SDK terbaru. SDK adalah paket alat dan fitur Expo, dan tiap versinya bernomor. Kursus ini memakai **Expo SDK 58**, jadi aktifkan update otomatis untuk Expo Go.
+
+</Step>
+<Step title="Pahami cara memindai QR code">
+
+Di Android, pindai QR code dari dalam Expo Go. Di iPhone, pindai dengan aplikasi Kamera. HP dan laptop harus terhubung ke **Wi-Fi yang sama**. Belum ada yang perlu dipindai sekarang. Kamu akan mencobanya di Track 2.
+
+</Step>
+</Steps>
+
+<Callout type="note" title="Emulator itu opsional">
+
+**Emulator** adalah HP tiruan yang berjalan di layar laptop. **Android Studio** menyediakan emulator Android, dan **Xcode** menyediakan iOS Simulator (khusus macOS). Keduanya berguna kalau kamu tidak punya HP, tetapi ukurannya besar dan butuh banyak RAM. Kamu tidak wajib memasangnya.
+
+</Callout>
+
+## 6. Program pertamamu
+
+Saatnya menguji semua alat sekaligus, seperti mencoba kompor baru dengan memasak mi instan dulu. Kamu akan membuat folder latihan `halo-node` di dalam `kursus-crud`.
+
+<Steps>
+<Step title="Buat folder dan buka di VS Code">
+
+```bash
+cd ~/kursus-crud
+mkdir halo-node
+cd halo-node
+code .
+```
+
+Perintah di atas juga berjalan di PowerShell. Artinya: pindah ke `kursus-crud`, buat folder `halo-node`, masuk ke sana, lalu buka folder itu di VS Code. Titik di `code .` berarti "folder tempatku berada sekarang".
+
+</Step>
+<Step title="Tulis hello.js">
+
+Di VS Code, buat file baru bernama `hello.js` lalu ketik (jangan salin-tempel, supaya tanganmu terbiasa):
+
+```js
+const nama = "Andi";
+const tugas = ["Install Node.js", "Install VS Code", "Konfigurasi Git"];
+
+console.log(`Halo, ${nama}!`);
+console.log(`Kamu punya ${tugas.length} tugas setup hari ini.`);
+console.log(`Node.js yang dipakai: ${process.version}`);
+```
+
+Arti tiap bagian:
+
+- Baris 1 menyimpan teks `"Andi"` dengan nama `nama`. Anggap saja kotak berlabel "nama" yang berisi tulisan Andi.
+- Baris 2 menyimpan daftar tiga tugas dalam kotak bernama `tugas`. Daftar seperti ini disebut *array*.
+- `console.log` mencetak teks ke terminal.
+- Teks di antara tanda backtick (`` ` ``) boleh disisipi isi kotak lewat tanda dolar dan kurung kurawal. Jadi `nama` diganti "Andi", dan `tugas.length` diganti jumlah isi daftar, yaitu 3.
+- `process.version` berisi versi Node yang sedang kamu pakai.
+
+Detail variabel dan backtick dibahas di pelajaran JavaScript modern.
+
+</Step>
+<Step title="Jalankan dengan node">
+
+Buka terminal VS Code (otomatis berada di folder `halo-node`), lalu jalankan perintah ini. Artinya "hai Node, tolong jalankan file hello.js":
+
+```bash
+node hello.js
+```
+
+```txt
+Halo, Andi!
+Kamu punya 3 tugas setup hari ini.
+Node.js yang dipakai: v22.18.0
+```
+
+</Step>
+<Step title="Jadikan proyek npm">
+
+```bash
+npm init -y
+```
+
+Perintah ini membuat **package.json**, "kartu identitas" proyek. Isinya nama proyek, daftar package yang dipakai, dan skrip (perintah pendek yang bisa kamu jalankan lewat npm). Opsi `-y` (dari *yes*) berarti menjawab "ya" untuk semua pertanyaan, jadi npm memakai jawaban bawaan.
+
+</Step>
+<Step title="Tambahkan skrip start">
+
+Buka `package.json` di VS Code. Tambahkan dua hal:
+
+1. Baris `"type": "module"`, supaya proyek memakai cara modern untuk berbagi kode antar-file (`import`/`export`, dibahas nanti).
+2. Skrip `start` di dalam `"scripts"`, isinya `"node hello.js"`.
+
+Hasilnya menjadi seperti ini:
+
+```json
+{
+  "name": "halo-node",
+  "version": "1.0.0",
+  "description": "",
+  "main": "hello.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node hello.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
+```
+
+Simpan, lalu jalankan `npm start`. npm membaca skrip `start` di `package.json`, lalu menjalankan `node hello.js` untukmu. Mirip tombol pintas di HP: satu sentuhan menjalankan perintah yang lebih panjang.
+
+```txt
+> halo-node@1.0.0 start
+> node hello.js
+
+Halo, Andi!
+Kamu punya 3 tugas setup hari ini.
+Node.js yang dipakai: v22.18.0
+```
+
+</Step>
+</Steps>
+
+<FileTree title="kursus-crud" tree={`
+halo-node/
+  * hello.js # program pertamamu
+  package.json # dibuat oleh npm init -y
+`} />
+
+Selamat, kamu baru saja menulis dan menjalankan program JavaScript pertamamu di luar browser.
+
+## Kesalahan umum
+
+**1. Perintah `node` tidak dikenali.** Pesannya berbeda di tiap terminal:
+
+```txt
+'node' is not recognized as an internal or external command,
+operable program or batch file.
+```
+
+```txt
+node : The term 'node' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+```
+
+```txt
+zsh: command not found: node
+```
+
+Artinya terminal tidak menemukan program Node. Penyebab paling umum: terminal dibuka sebelum instalasi selesai. Tutup **semua** terminal dan VS Code, lalu buka lagi. Jika masih gagal, instal ulang Node dan pastikan opsi **Add to PATH** aktif.
+
+**2. Menjalankan file dari folder yang salah.**
+
+```txt
+Error: Cannot find module 'C:\Users\andi\kursus-crud\hello.js'
+    at Function._resolveFilename (node:internal/modules/cjs/loader:1365:15)
+    ...
+  code: 'MODULE_NOT_FOUND',
+```
+
+Node mencari `hello.js` di folder aktif, padahal file itu ada di `halo-node`. Cek posisimu dengan `pwd` dan `ls`, lalu `cd halo-node`.
+
+**3. Menjalankan npm di folder tanpa package.json.**
+
+```txt
+npm error code ENOENT
+npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open 'C:\Users\andi\kursus-crud\package.json'
+```
+
+ENOENT berarti "file tidak ditemukan". Pastikan kamu berada di folder proyek yang sudah menjalankan `npm init -y`.
+
+## Latihan
+
+<Exercise title="Skrip profil developer" difficulty="mudah" hints={["Salin pola `hello.js`: buat variabel dulu, lalu cetak dengan `console.log`.", "`tools.join(\", \")` menggabungkan isi array menjadi satu teks.", "Skrip selain `start` dan `test` dijalankan dengan `npm run nama-skrip`."]}>
+
+Di folder `halo-node`, buat program yang mencetak profilmu sebagai developer. Targetnya seperti ini:
+
+```txt
+Developer: Sari (Universitas Nusantara)
+Tools siap: Node.js, VS Code, Git, Expo Go
+Total: 4 tools, Node.js v22.18.0
+```
+
+1. Buat file `profil.js` di folder `halo-node`.
+2. Buat tiga variabel: nama, kampus, dan daftar tools. Pakai nama dan kampusmu sendiri.
+3. Cetak tiga baris di atas dengan `console.log`.
+4. Tambahkan skrip `profil` di `package.json`, lalu jalankan file itu lewat npm.
+
+<Solution>
+
+```js
+const nama = "Sari";
+const kampus = "Universitas Nusantara";
+const tools = ["Node.js", "VS Code", "Git", "Expo Go"];
+
+console.log(`Developer: ${nama} (${kampus})`);
+console.log(`Tools siap: ${tools.join(", ")}`);
+console.log(`Total: ${tools.length} tools, Node.js ${process.version}`);
+```
+
+Di `package.json`, tambahkan baris skrip baru (perhatikan koma setelah baris `start`):
+
+```json
+"scripts": {
+  "test": "echo \"Error: no test specified\" && exit 1",
+  "start": "node hello.js",
+  "profil": "node profil.js"
+}
+```
+
+Jalankan dengan `npm run profil`. Jika kamu mengetik `npm profil` tanpa `run`, npm mengira kamu memanggil perintah bawaannya, `npm profile`, lalu menampilkan error `EUSAGE`.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Kenapa kursus ini meminta Node.js versi LTS?",
+    options: ["Karena versi LTS paling kecil ukurannya", "Karena hanya versi LTS yang menyertakan npm", "Karena versi LTS mendapat perbaikan bug dan keamanan jangka panjang sehingga stabil", "Karena versi LTS tidak butuh terminal"],
+    answer: 2,
+    explain: "LTS = Long Term Support: versi yang dirawat lama dan stabil. Semua versi Node menyertakan npm dan tetap dijalankan lewat terminal; ukurannya juga tidak menjadi alasan.",
+  },
+  {
+    q: "Kamu baru selesai menginstal Node.js, lalu terminal yang sudah terbuka menampilkan `'node' is not recognized...`. Langkah pertama yang paling tepat adalah…",
+    options: ["Menutup dan membuka lagi terminal (serta VS Code)", "Langsung menginstal ulang Windows", "Mengganti `node` dengan `npm`", "Menjalankan `npm init -y`"],
+    answer: 0,
+    explain: "Terminal yang dibuka sebelum instalasi belum membaca PATH yang baru. Membuka terminal baru biasanya cukup. `npm` dan `npm init -y` juga butuh Node, dan instal ulang Windows jelas berlebihan.",
+  },
+  {
+    q: "Di PowerShell muncul error `npm.ps1 cannot be loaded because running scripts is disabled`. Perintah apa yang memperbaikinya?",
+    options: ["`npm install npm`", "`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`", "`rm -rf node_modules`", "`git config --global user.name`"],
+    answer: 1,
+    explain: "Error ini berasal dari kebijakan eksekusi PowerShell yang memblokir skrip `.ps1`. `RemoteSigned` untuk CurrentUser mengizinkan skrip lokal. Perintah lain tidak menyentuh kebijakan tersebut (dan `rm -rf` bahkan tidak ada di PowerShell).",
+  },
+  {
+    q: "Apa hasil utama dari perintah `npm init -y`?",
+    options: ["Menginstal Node.js versi terbaru", "Menjalankan file `hello.js`", "Membuat folder `node_modules`", "Membuat file `package.json` dengan jawaban bawaan"],
+    answer: 3,
+    explain: "`npm init -y` membuat `package.json`, kartu identitas proyek. Ia tidak menginstal Node, tidak menjalankan file, dan `node_modules` baru muncul setelah kamu memasang package.",
+  },
+]} />
+
+## Ringkasan
+
+- **Node.js 22 LTS** menjalankan JavaScript di laptop; **npm** ikut terpasang untuk mengelola package. Cek dengan `node -v` dan `npm -v`.
+- **VS Code** + ekstensi ESLint, Prettier, Prisma, dan Expo Tools menjadi editor utama.
+- Perintah terminal dasar: `pwd`, `ls`/`dir`, `cd`, `cd ..`, `mkdir`, `code .`. Di PowerShell, hindari `&&` dan `rm -rf`.
+- Error `npm.ps1 cannot be loaded` diperbaiki dengan `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+- **Git** terpasang dan sudah mengenal nama serta email kamu lewat `git config --global`.
+- **Expo Go** di HP (opsional) siap dipakai di Track 2; emulator juga opsional.
+- Program pertama: `node hello.js`, lalu `npm init -y` dan skrip `npm start`.
+
+Lanjut ke [Cara Kerja Web](/belajar/fondasi/cara-kerja-web) untuk memahami apa yang terjadi saat aplikasi meminta data ke server.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Folder `kursus-crud` di home laptopmu sudah siap dan berisi `halo-node`. Semua latihan berikutnya, termasuk API `belajar-api` dan aplikasi `kuliah-app`, akan dibuat di dalam folder ini.
+
+</Callout>

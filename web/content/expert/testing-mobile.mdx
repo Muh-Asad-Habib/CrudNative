@@ -1,0 +1,925 @@
+## Pengantar
+
+Andi baru saja merapikan kartu tugas di aplikasi kuliahnya. Di HP-nya, semua terlihat benar. Seminggu kemudian Sari melapor dua hal. Tugas yang deadline-nya besok malah tertulis "terlambat". Tombol **Simpan** di form mata kuliah juga diam saja saat nama dikosongkan. Dua bug ini lolos karena Andi hanya punya satu cara mengecek: membuka aplikasi lalu mengetuk-ngetuk layar.
+
+**Test** adalah kode kecil yang memeriksa kode aplikasimu secara otomatis. Kamu menulisnya sekali. Setelah itu kamu bisa menjalankannya ratusan kali, dan hasilnya keluar dalam hitungan detik.
+
+Di [Testing Backend](/belajar/expert/testing-backend) kamu sudah melihat `api/` dijaga puluhan test Vitest + Supertest. Sekarang giliran sisi aplikasi. Kamu akan memakai tiga alat:
+
+- **Jest**: *test runner*, yaitu program yang mencari file test, menjalankannya, lalu melaporkan mana yang lulus dan mana yang gagal. Ini alat standar di ekosistem React Native.
+- **React Native Testing Library** (RNTL): alat untuk menguji komponen dari sudut pandang pengguna.
+- **Maestro**: alat untuk test *end-to-end* (E2E), yaitu menguji aplikasi utuh di emulator dari awal sampai akhir, seperti pengguna sungguhan. **Emulator** adalah HP tiruan yang berjalan di laptop.
+
+Proyek yang diuji adalah `kuliah-app` versi TypeScript milikmu (Expo SDK 58). Kamu sudah memigrasinya di Track 4 dan merapikannya ke struktur `src/features/...`. Kita mulai dari nol. Kamu sendiri yang menyiapkan Jest, lalu menambah file test satu per satu. Semua test di pelajaran ini adalah **contoh referensi** untuk kode di `kuliah-app/src/`. Kalau nama file, fungsi, atau label di proyekmu berbeda, sesuaikan saja.
+
+## Piramida testing untuk aplikasi mobile
+
+<Callout type="analogi" title="Seperti mencicipi masakan di dapur warung">
+
+Koki warung tidak menunggu pembeli komplain baru sadar kuahnya keasinan. Ia mengecek bertahap:
+
+1. Mencicipi kuah sesendok untuk cek garam. Cepat, bisa dilakukan berkali-kali. Ini **unit test**.
+2. Mencicipi satu lauk yang sudah jadi. Ini **test komponen**.
+3. Mengecek satu piring lengkap: nasi, lauk, dan sambal cocok satu sama lain. Ini **test integrasi**.
+4. Meminta teman datang sebagai pembeli: pesan, makan, lalu bayar. Lama dan repot, jadi cukup sesekali. Ini **test E2E**.
+
+Bedanya dengan dapur sungguhan, "cicipan" di sini dilakukan mesin dan diulang setiap kali resepnya (kodemu) berubah.
+
+</Callout>
+
+**Piramida testing** adalah cara membagi test menurut ukurannya. Bagian bawah yang lebar berisi banyak test kecil dan cepat. Bagian atas yang sempit berisi sedikit test besar dan lambat. Aplikasi mobile punya hal yang tidak dimiliki API: layar, sentuhan, keyboard, navigasi, dan jenis HP yang berbeda-beda. Karena itu isi piramidanya sedikit berbeda.
+
+| Lapisan | Contoh di `kuliah-app` | Alat | Kecepatan | Jumlah ideal |
+| --- | --- | --- | --- | --- |
+| Unit | `formatDeadline()` mengembalikan "besok" | Jest | milidetik | banyak |
+| Komponen | `CourseForm` menampilkan error saat nama kosong | Jest + RNTL | puluhan milidetik | banyak |
+| Integrasi | hook `useTask` + API tiruan + QueryClient | Jest + RNTL + mock | puluhan sampai ratusan milidetik | secukupnya |
+| E2E | login, membuat tugas, melihatnya di daftar | Maestro + emulator + API asli | detik sampai menit | sedikit, alur kritis saja |
+
+Kolom "Kecepatan" menunjukkan berapa lama satu test berjalan. Kolom "Jumlah ideal" menunjukkan berapa banyak test sejenis yang sebaiknya kamu tulis.
+
+Test Jest **tidak** berjalan di HP. Jest berjalan di Node.js di laptopmu. Komponen React Native tidak digambar ke layar. Komponen itu dirender menjadi pohon objek JavaScript tiruan yang bisa diperiksa. **Modul native** (kode bawaan HP seperti kamera, SecureStore, dan haptics) juga diganti versi tiruan oleh preset `jest-expo`. Hasilnya cepat dan stabil. Kekurangannya, Jest tidak bisa menangkap masalah yang hanya muncul di HP asli, misalnya izin kamera atau layout yang terpotong. Celah itu ditutup oleh test E2E.
+
+<Flow nodes={["Fungsi murni (Jest)", "Komponen (RNTL)", "Hook + API tiruan", "Aplikasi di emulator (Maestro)"]} labels={["+ render UI", "+ QueryClient", "+ app & server asli"]} caption="Makin ke kanan makin realistis, tetapi makin lambat dan rapuh" />
+
+## Menyiapkan Jest, jest-expo, dan RNTL
+
+**Preset** adalah paket pengaturan siap pakai. Mirip mode "Potret" di kamera HP: sekali pilih, banyak setelan langsung diatur. **jest-expo** adalah preset Jest buatan tim Expo. Preset ini melakukan dua hal:
+
+- Mengatur **Babel**, yaitu penerjemah yang mengubah JSX dan TypeScript menjadi JavaScript biasa yang dimengerti Node.
+- Menyediakan versi tiruan untuk modul native Expo.
+
+Langkah di bawah mengikuti dokumentasi resmi [Unit testing with Jest](https://docs.expo.dev/develop/unit-testing/).
+
+<Steps>
+<Step title="Instal jest-expo, Jest, dan tipe Jest">
+
+<Tabs items={["macOS/Linux", "Windows (PowerShell)"]}>
+<Tab>
+
+```bash
+npx expo install jest-expo jest @types/jest --dev
+npx expo install @testing-library/react-native --dev
+```
+
+</Tab>
+<Tab>
+
+```powershell
+npx expo install jest-expo jest @types/jest "--" --dev
+npx expo install @testing-library/react-native "--" --dev
+```
+
+</Tab>
+</Tabs>
+
+`npx expo install` memilih versi paket yang cocok dengan SDK 58. Contohnya, `jest-expo` ~58 butuh Jest 30. Di PowerShell, tulis `"--"` sebelum `--dev` supaya flag itu diteruskan ke npm. Kalau lupa, paket masuk ke `dependencies` biasa, bukan ke `devDependencies` (paket yang hanya dibutuhkan saat mengembangkan dan mengetes). Test tetap jalan. Tapi agar rapi, buka `kuliah-app/package.json` dan pindahkan `jest`, `jest-expo`, atau `@types/jest` ke `devDependencies` bila terlanjur salah tempat.
+
+</Step>
+<Step title="Pasang preset dan script di package.json">
+
+Tambahkan script dan konfigurasi `jest` berikut ke `kuliah-app/package.json`:
+
+```json title="kuliah-app/package.json (cuplikan)"
+{
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "jest": {
+    "preset": "jest-expo",
+    "transformIgnorePatterns": [
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@tanstack/.*)"
+    ]
+  }
+}
+```
+
+Arti tiap bagian:
+
+- `"test": "jest"` membuat perintah `npm test` menjalankan Jest.
+- `"preset": "jest-expo"` memakai paket pengaturan siap pakai tadi.
+- `transformIgnorePatterns` menentukan paket mana di `node_modules` yang ikut diterjemahkan Babel.
+
+Bayangkan penerjemah yang hanya menerjemahkan surat yang kamu tulis sendiri. Surat dari pihak lain dilewati, kecuali yang namanya ada di daftar khusus. Jest bekerja seperti itu. Secara default ia **tidak** menerjemahkan (mentranspilasi) isi `node_modules`. Masalahnya, banyak paket React Native dikirim sebagai kode modern (ESM, JSX, Flow) yang belum bisa dibaca Jest begitu saja. Pola di `transformIgnorePatterns` artinya: abaikan semua isi `node_modules`, **kecuali** paket yang cocok dengan daftar di dalam `(?!...)`. Di sini kita menambahkan `@tanstack/.*` ke pola dari dokumentasi Expo, supaya TanStack Query ikut diterjemahkan.
+
+</Step>
+<Step title="Aktifkan tipe Jest di TypeScript">
+
+Buka `kuliah-app/tsconfig.json`, lalu tambahkan `"types": ["jest"]` di dalam `compilerOptions`. Setelah itu TypeScript mengenali `describe`, `test`, dan `expect` tanpa perlu import.
+
+</Step>
+<Step title="Tentukan lokasi file test">
+
+Preset jest-expo menganggap file berikut sebagai file test:
+
+- nama berakhiran `.test.ts(x)` atau `-test.ts(x)`;
+- semua file di dalam folder `__tests__`.
+
+Expo Router punya satu aturan keras: **jangan taruh test di `src/app/`**. Setiap file di folder itu dianggap route (satu halaman aplikasi).
+
+</Step>
+</Steps>
+
+<FileTree title="kuliah-app (setelah test ditambahkan)" tree={`
+src/
+  app/ # hanya route & layout, tanpa test
+  components/
+    ui/
+      Button.tsx
+      __tests__/
+        * Button.test.tsx
+  features/
+    courses/
+      components/
+        CourseForm.tsx
+      __tests__/
+        * CourseForm.test.tsx
+    tasks/
+      deadline.ts
+      hooks.ts
+      __tests__/
+        * deadline.test.ts
+        * hooks.test.tsx
+  * test-utils.tsx # helper QueryClient untuk test, bukan file test
+package.json
+`} />
+
+<Callout type="warning" title="RNTL 14: render, fireEvent, dan act sekarang async">
+
+Pelajaran ini memakai `@testing-library/react-native` versi 14. Sejak versi ini, `render`, `renderHook`, `fireEvent`, dan `act` bersifat async. Artinya, fungsi itu mengembalikan Promise (janji hasil yang baru siap sebentar lagi). Jadi semuanya **wajib di-`await`**.
+
+Banyak tutorial lama menulis `render(<App />)` tanpa `await`. Di RNTL 14, kode seperti itu bisa membuat query gagal secara acak. RNTL 14 juga memakai paket `test-renderer` sebagai pengganti `react-test-renderer`, yang sudah usang dan tidak mendukung React 19.
+
+</Callout>
+
+## Unit test: helper murni dulu
+
+<Callout type="analogi" title="Seperti soal ujian yang menetapkan tanggal hari ini">
+
+Kalkulator selalu menjawab 2 + 3 = 5, kapan pun kamu menekannya. Jawaban untuk "berapa hari lagi UTS?" berbeda setiap hari. Supaya soal kedua bisa dinilai, dosen menulis: "Anggap hari ini Senin, 12 Mei 2025." Sekarang jawabannya pasti dan bisa dicek.
+
+Fungsi yang mudah diuji mirip kalkulator. Kalau fungsi butuh "hari ini", kita berikan "hari ini" dari luar, persis seperti dosen tadi.
+
+</Callout>
+
+**Unit test** menguji satu bagian kecil, biasanya satu fungsi. Yang paling mudah dan murah diuji adalah **fungsi murni**. Fungsi murni selalu memberi output sama untuk input yang sama, dan tidak mengubah apa pun di luar dirinya.
+
+`kuliah-app/src/features/tasks/deadline.ts` sebaiknya dirancang begitu. Parameter `now` (waktu sekarang) bisa diisi dari luar, jadi test tidak bergantung pada jam laptop. Kalau helper versimu masih memanggil `new Date()` langsung di dalam fungsi, ubah dulu `now` menjadi parameter.
+
+```ts title="kuliah-app/src/features/tasks/deadline.ts (cuplikan)"
+export function formatDeadline(deadline: string | null, now: Date = new Date()): DeadlineInfo {
+  if (!deadline) return { label: 'tanpa deadline', tone: 'none' };
+
+  const due = new Date(deadline);
+  if (Number.isNaN(due.getTime())) return { label: 'tanpa deadline', tone: 'none' };
+
+  const days = calendarDaysBetween(now, due);
+
+  if (due.getTime() < now.getTime()) {
+    return { label: days < 0 ? `terlambat ${-days} hari` : 'terlambat', tone: 'overdue' };
+  }
+  if (days === 0) return { label: 'hari ini', tone: 'soon' };
+  if (days === 1) return { label: 'besok', tone: 'soon' };
+  return { label: `${days} hari lagi`, tone: days <= SOON_THRESHOLD_DAYS ? 'soon' : 'normal' };
+}
+```
+
+Cara kerja `formatDeadline`, dari atas ke bawah:
+
+- Kalau deadline kosong atau tidak bisa dibaca sebagai tanggal, hasilnya label "tanpa deadline".
+- `calendarDaysBetween` menghitung selisih **hari kalender**, bukan selisih jam.
+- Kalau deadline sudah lewat, hasilnya "terlambat" (ditambah jumlah hari kalau lebih dari sehari).
+- Selain itu, hasilnya "hari ini", "besok", atau "N hari lagi".
+
+`tone` adalah penanda warna untuk kartu tugas: `soon` untuk yang mepet, `overdue` untuk yang lewat. Batas "mepet" disimpan di konstanta `SOON_THRESHOLD_DAYS`.
+
+Sekarang test-nya. Fungsi `describe`, `test`, dan `expect` sama seperti di Vitest:
+
+- `describe` mengelompokkan beberapa test di bawah satu judul.
+- `test` berisi satu pemeriksaan dengan namanya sendiri.
+- `expect(nilai).toEqual(harapan)` memeriksa apakah nilainya sama dengan yang kita harapkan. Kalau beda, test gagal.
+
+```ts title="kuliah-app/src/features/tasks/__tests__/deadline.test.ts"
+import { formatDeadline } from '../deadline';
+
+// Senin, 12 Mei 2025 pukul 10.00 waktu lokal.
+const NOW = new Date(2025, 4, 12, 10, 0);
+const at = (day: number, hour: number, minute = 0) =>
+  new Date(2025, 4, day, hour, minute).toISOString();
+
+describe('formatDeadline', () => {
+  test('tanpa deadline', () => {
+    expect(formatDeadline(null, NOW)).toEqual({ label: 'tanpa deadline', tone: 'none' });
+  });
+
+  test.each([
+    ['nanti sore', at(12, 17), 'hari ini', 'soon'],
+    ['besok pagi', at(13, 8), 'besok', 'soon'],
+    ['tiga hari lagi', at(15, 9), '3 hari lagi', 'soon'],
+    ['seminggu lagi', at(19, 9), '7 hari lagi', 'normal'],
+    ['tadi pagi', at(12, 8), 'terlambat', 'overdue'],
+    ['dua hari lalu', at(10, 23, 59), 'terlambat 2 hari', 'overdue'],
+  ])('%s → %s', (_nama, deadline, label, tone) => {
+    expect(formatDeadline(deadline, NOW)).toEqual({ label, tone });
+  });
+
+  test('besok tetap "besok" walau selisihnya kurang dari 24 jam', () => {
+    const malam = new Date(2025, 4, 12, 23, 0);
+    expect(formatDeadline(at(13, 8), malam).label).toBe('besok');
+  });
+});
+```
+
+`NOW` adalah "hari ini" palsu yang sudah kita tetapkan: Senin, 12 Mei 2025 pukul 10.00. Helper `at(day, hour)` membuat deadline di bulan Mei 2025 dalam format ISO, supaya tabel di bawahnya ringkas.
+
+`test.each` menjalankan satu test untuk tiap baris tabel. Setiap baris berisi nama kasus, deadline, label yang diharapkan, dan `tone` yang diharapkan. Nama test dibentuk dari pola `'%s → %s'`. Dua `%s` itu diisi dua kolom pertama, yaitu nama kasus dan deadline. Hasilnya di laporan Jest seperti ini:
+
+```txt
+ PASS  src/features/tasks/__tests__/deadline.test.ts
+  formatDeadline
+    √ tanpa deadline
+    √ nanti sore → 2025-05-12T10:00:00.000Z
+    ...
+    √ besok tetap "besok" walau selisihnya kurang dari 24 jam
+```
+
+Tanda `√` berarti test lulus. Test terakhir menjaga kasus tepi yang paling sering salah. **Kasus tepi** adalah situasi di pinggir aturan yang mudah terlewat. Dari Senin 23.00 ke Selasa 08.00 hanya 9 jam, tetapi bagi mahasiswa itu tetap "besok". Misalkan suatu hari ada yang mengganti `calendarDaysBetween` dengan pembagian milidetik biasa. Test ini langsung gagal (di terminal ditandai merah), jadi bug-nya ketahuan sebelum sampai ke pengguna.
+
+## Test komponen dengan React Native Testing Library
+
+<Callout type="analogi" title="Seperti pembeli yang menilai dari rasa, bukan dari resep">
+
+Pembeli warung tidak peduli kamu memakai panci apa atau menumis bawang berapa menit. Ia hanya menilai yang bisa ia rasakan: nasinya hangat, sambalnya pedas, porsinya pas. Kalau kamu ganti panci tapi rasanya tetap sama, pembeli tetap puas.
+
+- Pembeli = test yang ditulis dengan RNTL.
+- Rasa dan tampilan makanan = teks, tombol, dan pesan error yang terlihat di layar.
+- Panci dan urutan memasak = detail implementasi, misalnya nama `useState` di dalam komponen.
+
+Jadi test yang baik tetap lulus walau kamu merapikan isi komponen, selama yang dilihat pengguna tidak berubah.
+
+</Callout>
+
+Prinsip RNTL: **uji apa yang dilihat dan dilakukan pengguna**, bukan detail implementasi. Pengguna tidak tahu ada `useState` bernama `errors`. Ia hanya tahu: "saya mengetuk Simpan dengan nama kosong, lalu muncul tulisan merah".
+
+Empat alat utama yang akan sering kamu pakai:
+
+- `render(<Komponen />)` merender komponen ke pohon tiruan. Ingat, wajib pakai `await`.
+- `screen` berisi semua **query**, yaitu fungsi untuk mencari elemen di hasil render. Misalnya "cari tombol bertuliskan Simpan".
+- `userEvent` meniru gerakan pengguna yang realistis: `press` (mengetuk), `type` (mengetik), dan `clear` (menghapus isi input). `fireEvent` adalah versi yang lebih kasar, dipakai untuk event yang tidak didukung `userEvent`.
+- `waitFor` dan query `findBy*` menunggu sesuatu yang baru muncul belakangan, misalnya setelah data selesai diambil.
+
+### Memilih query
+
+Ada tiga awalan nama query. Bedanya ada di apa yang terjadi kalau elemen tidak ketemu:
+
+| Varian | Jika tidak ketemu | Async? | Kapan dipakai |
+| --- | --- | --- | --- |
+| `getBy...` | melempar error | tidak | elemen pasti sudah ada |
+| `queryBy...` | mengembalikan `null` | tidak | memastikan elemen **tidak** ada |
+| `findBy...` | Promise ditolak setelah timeout | ya | elemen muncul belakangan (setelah fetch) |
+
+"Promise ditolak setelah timeout" artinya `findBy` menunggu beberapa saat. Kalau elemen tetap tidak muncul, test gagal.
+
+RNTL menganjurkan urutan berikut. Pakai `getByRole` (dengan `name`) lebih dulu, lalu `getByLabelText`, `getByPlaceholderText`, `getByText`, dan terakhir `getByTestId`. Query berbasis peran dan label juga memaksa komponenmu **aksesibel**, artinya bisa dibacakan oleh pembaca layar untuk pengguna tunanetra. Contohnya, pastikan `kuliah-app/src/components/ui/Button.tsx` memasang `accessibilityRole="button"` dan `accessibilityLabel={title}`. Dengan begitu, tombol bisa ditemukan lewat `getByRole('button', { name: 'Simpan' })`.
+
+### Menguji Button
+
+```tsx title="kuliah-app/src/components/ui/__tests__/Button.test.tsx"
+import { render, screen, userEvent } from '@testing-library/react-native';
+
+import { Button } from '../Button';
+
+describe('Button', () => {
+  test('memanggil onPress saat ditekan', async () => {
+    const user = userEvent.setup();
+    const onPress = jest.fn();
+    await render(<Button title="Simpan" onPress={onPress} />);
+
+    await user.press(screen.getByRole('button', { name: 'Simpan' }));
+
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  test('tidak bisa ditekan saat loading', async () => {
+    const user = userEvent.setup();
+    const onPress = jest.fn();
+    await render(<Button title="Simpan" onPress={onPress} loading />);
+
+    const button = screen.getByRole('button', { name: 'Simpan' });
+    expect(button).toBeDisabled();
+    expect(button).toBeBusy();
+
+    await user.press(button);
+    expect(onPress).not.toHaveBeenCalled();
+  });
+});
+```
+
+Cara membaca test pertama:
+
+1. `userEvent.setup()` menyiapkan "jari" tiruan untuk mengetuk.
+2. `jest.fn()` membuat **fungsi tiruan** (*mock function*). Fungsi ini tidak melakukan apa-apa, tapi mencatat setiap kali ia dipanggil. Mirip buku tamu yang mencatat siapa saja yang datang.
+3. `render` menampilkan tombol "Simpan" dengan fungsi tiruan itu sebagai `onPress`.
+4. `user.press` mengetuk tombol, lalu `toHaveBeenCalledTimes(1)` memastikan `onPress` dipanggil tepat satu kali.
+
+Test kedua memasang prop `loading`. `toBeDisabled()` memastikan tombol tidak aktif, dan `toBeBusy()` memastikan tombol menandai dirinya sedang sibuk. Setelah diketuk pun, `onPress` tidak boleh dipanggil. Matcher seperti `toBeDisabled()` dan `toBeBusy()` langsung tersedia begitu kamu meng-import sesuatu dari `@testing-library/react-native`.
+
+### Menguji form: mengetik, menekan, melihat error
+
+`CourseForm` di `kuliah-app/src/features/courses/components/CourseForm.tsx` memeriksa isi form sebelum memanggil `onSubmit`. Di contoh ini, setiap `TextField` memasang `accessibilityLabel={label}`, jadi input bisa dicari dengan `getByLabelText`. Kalau `TextField` versimu belum memasangnya, tambahkan dulu.
+
+```tsx title="kuliah-app/src/features/courses/__tests__/CourseForm.test.tsx"
+import { render, screen, userEvent } from '@testing-library/react-native';
+
+import { ApiError } from '@/lib/api';
+
+import { CourseForm } from '../components/CourseForm';
+
+describe('CourseForm', () => {
+  test('menolak nama kosong tanpa memanggil onSubmit', async () => {
+    const user = userEvent.setup();
+    const onSubmit = jest.fn();
+    await render(<CourseForm submitLabel="Simpan" submitting={false} onSubmit={onSubmit} />);
+
+    await user.press(screen.getByRole('button', { name: 'Simpan' }));
+
+    expect(screen.getByText('Nama mata kuliah wajib diisi.')).toBeOnTheScreen();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  test('mengirim input yang sudah dirapikan', async () => {
+    const user = userEvent.setup();
+    const onSubmit = jest.fn().mockResolvedValue(undefined);
+    await render(<CourseForm submitLabel="Simpan" submitting={false} onSubmit={onSubmit} />);
+
+    await user.type(screen.getByLabelText('Nama mata kuliah'), '  Basis Data  ');
+    await user.type(screen.getByLabelText('Dosen (opsional)'), 'Dr. Sari Wulandari');
+    await user.press(screen.getByRole('button', { name: 'Simpan' }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Basis Data', code: null, lecturer: 'Dr. Sari Wulandari' }),
+    );
+  });
+
+  test('menampilkan error validasi dari server di field yang tepat', async () => {
+    const user = userEvent.setup();
+    const onSubmit = jest.fn().mockRejectedValue(
+      new ApiError(400, 'VALIDATION_ERROR', 'Data tidak valid', [
+        { field: 'name', message: 'Nama mata kuliah sudah dipakai.' },
+      ]),
+    );
+    await render(<CourseForm submitLabel="Simpan" submitting={false} onSubmit={onSubmit} />);
+
+    await user.type(screen.getByLabelText('Nama mata kuliah'), 'Basis Data');
+    await user.press(screen.getByRole('button', { name: 'Simpan' }));
+
+    expect(await screen.findByText('Nama mata kuliah sudah dipakai.')).toBeOnTheScreen();
+  });
+});
+```
+
+Tiga test itu meniru tiga kejadian berbeda:
+
+- **Test pertama**: pengguna langsung menekan Simpan tanpa mengisi apa pun. Pesan "Nama mata kuliah wajib diisi." harus tampil, dan `onSubmit` tidak boleh dipanggil.
+- **Test kedua**: pengguna mengetik nama dengan spasi berlebih. `onSubmit` harus menerima nama yang sudah dirapikan (`'Basis Data'`). `expect.objectContaining` artinya "objeknya minimal berisi properti ini", jadi properti lain boleh ada.
+- **Test ketiga**: server menolak data. `mockRejectedValue` membuat `onSubmit` gagal dengan `ApiError` berisi pesan untuk field `name`. Pesan itu harus muncul di layar.
+
+Test ketiga memakai `findByText`, bukan `getByText`. Pesan error baru muncul setelah Promise `onSubmit` ditolak, jadi kita perlu menunggu sebentar, bukan langsung mencari.
+
+## Menguji hook TanStack Query
+
+<Callout type="analogi" title="Seperti papan tulis yang dihapus sebelum kelas berikutnya">
+
+Cache TanStack Query itu seperti papan tulis kelas yang berisi jawaban dari dosen sebelumnya. Kalau papan tidak dihapus, kelas berikutnya bisa salah mengira tulisan lama sebagai materi hari ini.
+
+- Papan tulis = **QueryClient**, tempat cache disimpan.
+- Satu kelas = satu test.
+- Menghapus papan sebelum kelas dimulai = membuat QueryClient baru untuk setiap test.
+
+Bedanya: papan tulis dihapus dengan penghapus. Di test, kita tidak menghapus, tapi langsung memakai papan yang benar-benar baru.
+
+</Callout>
+
+Hook seperti `useTask` di `kuliah-app/src/features/tasks/hooks.ts` butuh `QueryClientProvider`, yaitu pembungkus yang memberi akses ke QueryClient. Jangan memakai `queryClient` milik aplikasi (`kuliah-app/src/lib/query-client.ts`) di test. Ada dua alasan:
+
+- Cache-nya **dipakai bersama** oleh semua test. Hasil test A bisa terbawa ke test B.
+- Opsi `retry` aplikasi mengulang error 5xx sampai dua kali dengan jeda. Akibatnya, test untuk kasus error menjadi lambat dan bisa melewati batas waktu (*timeout*).
+
+Solusinya, buat **QueryClient baru untuk setiap test** dengan `retry: false`.
+
+```tsx title="kuliah-app/src/test-utils.tsx"
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
+
+export function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: Infinity },
+      mutations: { retry: false },
+    },
+  });
+}
+
+export function createWrapper(queryClient = createTestQueryClient()) {
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  };
+}
+```
+
+File ini berisi dua helper:
+
+- `createTestQueryClient()` membuat QueryClient baru. Query dan mutation tidak diulang saat gagal (`retry: false`).
+- `createWrapper()` membuat komponen pembungkus berisi `QueryClientProvider`. Kita memberikannya ke `renderHook` lewat opsi `wrapper`.
+
+`gcTime: Infinity` artinya cache tidak pernah dibersihkan otomatis. Dengan begitu, TanStack Query tidak memasang timer pembersih. Timer seperti itu sering membuat Jest mengeluh tidak bisa selesai.
+
+## Mem-mock API dalam test
+
+<Callout type="analogi" title="Seperti latihan dengan pelayan pura-pura">
+
+Kamu ingin menguji apakah pembeli (aplikasimu) bereaksi benar saat pesanan siap atau saat bahan habis. Kalau setiap uji memakai dapur sungguhan, bahan cepat habis dan hasilnya tidak bisa diatur. Jadi seorang teman berpura-pura menjadi pelayan dan menjawab sesuai naskah: "nasi goreng siap" atau "maaf, bahannya habis".
+
+- Pelayan dan dapur sungguhan = API dan database asli.
+- Teman yang berpura-pura = **mock**, tiruan yang jawabannya sudah kamu tentukan.
+- Naskah "siap" atau "habis" = respons sukses atau error yang kamu atur di test.
+
+Teman itu bisa berdiri di dua tempat. Dengan `jest.mock`, ia langsung menjawab begitu pembeli mau memesan, jadi pembeli tidak sempat menulis nota pesanan. Dengan MSW, pembeli tetap menulis nota dan menyerahkannya di loket seperti biasa, lalu teman menjawab dari balik loket. Nota pesanan di sini = kode `api.ts` yang menyusun URL dan header.
+
+</Callout>
+
+Test komponen dan hook tidak boleh memanggil server sungguhan. Server bisa mati, datanya bisa berubah, dan test jadi lambat. Ada dua cara populer untuk menggantinya.
+
+<Compare>
+<CompareItem title="jest.mock modul API" tone="good">
+
+Ganti modul `tasksApi` dengan fungsi tiruan. Ini cara paling sederhana, tanpa paket tambahan, dan cocok untuk menguji hook serta layar. Kekurangannya, `kuliah-app/src/lib/api.ts` (URL, header, cara membaca error) tidak ikut teruji.
+
+</CompareItem>
+<CompareItem title="MSW (Mock Service Worker)" tone="neutral">
+
+MSW mencegat request `fetch` di level jaringan, lalu membalas dengan JSON tiruan. Seluruh jalur `api.ts` ikut teruji, dan cara ini dianjurkan oleh dokumentasi RNTL. Kekurangannya, kamu perlu paket `msw` dan pengaturan tambahan agar berjalan di lingkungan jest-expo.
+
+</CompareItem>
+</Compare>
+
+### Cara 1: jest.mock
+
+```tsx title="kuliah-app/src/features/tasks/__tests__/hooks.test.tsx"
+import { renderHook, waitFor } from '@testing-library/react-native';
+
+import { ApiError } from '@/lib/api';
+import { createWrapper } from '@/test-utils';
+
+import { tasksApi } from '../api';
+import { useTask } from '../hooks';
+import type { Task } from '../types';
+
+jest.mock('../api');
+const mockedApi = jest.mocked(tasksApi);
+
+const laporan: Task = {
+  id: 7,
+  title: 'Laporan Praktikum Basis Data',
+  description: null,
+  deadline: null,
+  status: 'TODO',
+  priority: 'HIGH',
+  courseId: null,
+  course: null,
+  attachments: [],
+  createdAt: '2025-05-01T08:00:00.000Z',
+  updatedAt: '2025-05-01T08:00:00.000Z',
+};
+
+describe('useTask', () => {
+  test('mengambil detail tugas dari API', async () => {
+    mockedApi.get.mockResolvedValue(laporan);
+
+    const { result } = await renderHook(() => useTask(7), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.title).toBe('Laporan Praktikum Basis Data');
+    expect(mockedApi.get).toHaveBeenCalledWith(7, expect.any(AbortSignal));
+  });
+
+  test('meneruskan ApiError saat tugas tidak ditemukan', async () => {
+    mockedApi.get.mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'Tugas tidak ditemukan'));
+
+    const { result } = await renderHook(() => useTask(99), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toMatchObject({ status: 404, code: 'NOT_FOUND' });
+  });
+});
+```
+
+`jest.mock('../api')` tanpa argumen kedua disebut **automock**. Jest membaca modul aslinya, lalu mengganti setiap fungsinya dengan `jest.fn()` kosong. `jest.mocked()` hanya membantu TypeScript tahu bahwa `tasksApi.get` sekarang adalah mock. Jest otomatis memindahkan panggilan `jest.mock` ke paling atas file, jadi letaknya di bawah `import` tidak masalah.
+
+Isi kedua test:
+
+- **Test pertama**: `mockResolvedValue(laporan)` menyuruh `get` berhasil dan mengembalikan data `laporan`. `waitFor` menunggu sampai `isSuccess` bernilai `true`. Lalu kita cek judulnya, dan cek bahwa `get` dipanggil dengan ID 7 serta sebuah `AbortSignal` (sinyal untuk membatalkan request).
+- **Test kedua**: `mockRejectedValue` menyuruh `get` gagal dengan error 404. Hook harus meneruskan error itu apa adanya, lengkap dengan `status` dan `code`.
+
+### Menguji optimistic delete dan rollback
+
+**Optimistic update** artinya aplikasi langsung mengubah tampilan sebelum server menjawab. Mirip mencoret tugas di daftar begitu kamu yakin selesai, lalu menulisnya lagi kalau ternyata belum. `useDeleteTask` langsung menghapus tugas dari cache. Kalau server menolak, tugas itu dikembalikan (**rollback**). Ini logika paling berisiko di `hooks.ts`, jadi layak diuji.
+
+Caranya: isi cache secara manual, suruh `tasksApi.remove` gagal, lalu periksa isi cache.
+
+```tsx title="kuliah-app/src/features/tasks/__tests__/hooks.test.tsx (lanjutan)"
+import { act } from '@testing-library/react-native';
+import { Alert } from 'react-native';
+
+import { createTestQueryClient } from '@/test-utils';
+import { taskKeys } from '../query-keys';
+import { useDeleteTask } from '../hooks';
+
+test('useDeleteTask mengembalikan tugas bila server gagal', async () => {
+  const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  const queryClient = createTestQueryClient();
+  const filters = {};
+  queryClient.setQueryData(taskKeys.list(filters), {
+    pages: [{ data: [laporan], meta: { page: 1, limit: 10, total: 1, totalPages: 1 } }],
+    pageParams: [1],
+  });
+  mockedApi.remove.mockRejectedValue(new ApiError(500, 'INTERNAL_ERROR', 'Server sedang bermasalah'));
+  mockedApi.list.mockResolvedValue({
+    data: [laporan],
+    meta: { page: 1, limit: 10, total: 1, totalPages: 1 },
+  });
+
+  const { result } = await renderHook(() => useDeleteTask(), { wrapper: createWrapper(queryClient) });
+  await act(async () => {
+    await result.current.mutateAsync(7).catch(() => {});
+  });
+
+  const cached = queryClient.getQueryData<{ pages: { data: Task[] }[] }>(taskKeys.list(filters));
+  expect(cached?.pages[0].data.map((task) => task.id)).toEqual([7]);
+  expect(alertSpy).toHaveBeenCalledWith('Gagal menghapus tugas', 'Server sedang bermasalah');
+});
+```
+
+Alur test ini, langkah demi langkah:
+
+1. `jest.spyOn(Alert, 'alert')` "menyadap" fungsi `Alert.alert` asli. `mockImplementation(() => {})` mencegah dialog sungguhan muncul, tapi setiap panggilan tetap tercatat.
+2. `setQueryData` mengisi cache dengan satu tugas, yaitu `laporan` (ID 7).
+3. `remove` disuruh gagal dengan error 500. `list` disuruh berhasil, karena hook mengambil ulang daftar setelah mutation selesai.
+4. `mutateAsync(7)` menjalankan penghapusan. `.catch(() => {})` menelan error-nya supaya test tidak berhenti di situ.
+5. Terakhir, cache harus kembali berisi tugas 7, dan `Alert.alert` harus dipanggil dengan pesan error yang tepat.
+
+Test ini menangkap bug yang sangat sulit dilihat secara manual. Contohnya, lupa `await queryClient.cancelQueries()`, sehingga refetch lama datang belakangan dan menimpa hasil rollback.
+
+### Cara 2: MSW
+
+**MSW** memasang "server palsu" di dalam proses test. Server palsu ini mencegat setiap `fetch`. Kodenya berbentuk *handler*, yaitu satu fungsi penjawab untuk tiap endpoint:
+
+```ts title="contoh: handler MSW untuk daftar tugas"
+import { http, HttpResponse } from 'msw';
+import { setupServer } from 'msw/node';
+
+export const server = setupServer(
+  http.get('http://localhost:3000/api/tasks', () =>
+    HttpResponse.json({
+      data: [{ id: 7, title: 'Laporan Praktikum Basis Data' }],
+      meta: { page: 1, limit: 10, total: 1, totalPages: 1 },
+    }),
+  ),
+);
+
+// Di file setup Jest:
+// beforeAll(() => server.listen());
+// afterEach(() => server.resetHandlers());
+// afterAll(() => server.close());
+```
+
+Handler di atas berarti: setiap ada `GET` ke `http://localhost:3000/api/tasks`, balas dengan JSON berisi satu tugas. Tiga baris komentar di bawahnya menunjukkan cara memakainya di file setup Jest. Server palsu dinyalakan sebelum semua test, di-reset setelah tiap test, lalu dimatikan di akhir.
+
+Kalau satu test butuh skenario error, timpa handler-nya dengan `server.use(http.get(..., () => new HttpResponse(null, { status: 500 })))`. Sebelum memakai MSW di proyek Expo, baca panduan resmi [MSW untuk React Native](https://mswjs.io/docs/integrations/react-native) dan [cookbook network requests RNTL](https://oss.callstack.com/react-native-testing-library/docs/cookbook/network-requests). Untuk pemula, mulailah dengan `jest.mock`.
+
+## Mem-mock Expo Router
+
+Layar di `src/app/` hampir selalu memakai `useRouter()` (untuk pindah layar) atau `useLocalSearchParams()` (untuk membaca parameter URL, misalnya ID tugas). Kedua hook itu hanya bekerja di dalam navigator. Saat sebuah layar dirender sendirian di test, hook itu gagal. Ada dua strategi untuk mengatasinya.
+
+**Strategi 1: mock modul `expo-router`.** Cocok untuk menguji satu layar secara terpisah, misalnya memastikan tombol Batal memanggil `router.back()`.
+
+```tsx title="contoh: mock expo-router di satu file test"
+const mockBack = jest.fn();
+
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ back: mockBack, push: jest.fn(), replace: jest.fn() }),
+  useLocalSearchParams: () => ({ id: '7' }),
+}));
+```
+
+Kode ini mengganti `expo-router` dengan versi palsu. `useRouter()` mengembalikan objek berisi `back`, `push`, dan `replace` tiruan. `useLocalSearchParams()` selalu menjawab ID `'7'`. Setelah tombol Batal ditekan, kamu cukup memeriksa `expect(mockBack).toHaveBeenCalled()`.
+
+Nama variabel yang dipakai di dalam fungsi pembuat mock (*factory*) di `jest.mock` harus berawalan `mock`. Ini aturan Jest. Alasannya, factory dipindahkan ke paling atas file, sebelum variabel lain dibuat. Awalan `mock` memberi tahu Jest bahwa kamu sadar akan hal itu.
+
+**Strategi 2: `renderRouter` dari `expo-router/testing-library`.** Fungsi ini membuat aplikasi Expo Router sungguhan di memori dengan daftar file tiruan. Cocok untuk menguji navigasi dan **deep link**, yaitu link yang langsung membuka layar tertentu di dalam aplikasi. Di SDK 58, fitur ini butuh RNTL 14 atau lebih baru.
+
+```tsx title="kuliah-app/src/__tests__/navigation.test.tsx"
+import { Link, useLocalSearchParams } from 'expo-router';
+import { renderRouter, screen, testRouter } from 'expo-router/testing-library';
+import { Text } from 'react-native';
+
+function DaftarTugas() {
+  return <Link href="/tasks/7">Laporan Praktikum Basis Data</Link>;
+}
+
+function DetailTugas() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  return <Text>Detail tugas #{id}</Text>;
+}
+
+test('deep link membuka detail tugas', async () => {
+  await renderRouter({ index: DaftarTugas, 'tasks/[id]/index': DetailTugas }, { initialUrl: '/tasks/7' });
+
+  expect(screen).toHavePathname('/tasks/7');
+  expect(screen.getByText('Detail tugas #7')).toBeOnTheScreen();
+});
+
+test('kembali ke daftar', async () => {
+  await renderRouter({ index: DaftarTugas, 'tasks/[id]/index': DetailTugas }, { initialUrl: '/tasks/7' });
+
+  await testRouter.replace('/');
+  expect(screen).toHavePathname('/');
+});
+```
+
+Objek pertama di `renderRouter` adalah daftar file tiruan. Kuncinya adalah path route, nilainya adalah komponen layar. `index` berarti layar awal, dan `'tasks/[id]/index'` berarti layar detail dengan ID di URL. Kunci ditulis **tanpa** `./`, `/` di depan, maupun ekstensi file. Opsi `initialUrl: '/tasks/7'` membuka aplikasi langsung di detail tugas 7, seperti deep link.
+
+Test pertama memastikan path-nya benar dan teks "Detail tugas #7" tampil. Test kedua pindah ke `/` dengan `testRouter.replace`, lalu memastikan path berubah. Matcher `toHavePathname`, `toHaveSegments`, dan `toHaveSearchParams` ditambahkan otomatis oleh `expo-router/testing-library`. Referensi lengkapnya ada di [Testing configuration for Expo Router](https://docs.expo.dev/router/reference/testing/).
+
+## Snapshot test: pakai dengan hati-hati
+
+**Snapshot test** memotret hasil render, lalu menyimpannya ke file `__snapshots__/*.snap`. Di run berikutnya, hasil render dibandingkan dengan "foto" itu. Kalau berbeda sedikit saja, test gagal.
+
+```tsx title="contoh snapshot"
+test('Button cocok dengan snapshot', async () => {
+  await render(<Button title="Simpan" onPress={() => {}} />);
+  expect(screen.toJSON()).toMatchSnapshot();
+});
+```
+
+Kedengarannya praktis. Masalahnya, snapshot komponen RN berisi ratusan baris props dan style. Setiap perubahan warna atau padding membuat test merah. Lama-lama orang terbiasa menjalankan `jest -u` (perbarui semua snapshot) tanpa membaca perbedaannya. Test yang selalu diperbarui otomatis tidak lagi menjaga apa pun.
+
+Dokumentasi Expo sendiri lebih menganjurkan E2E daripada snapshot untuk menguji UI. Kalau tetap mau memakainya, pilih output kecil dan stabil, misalnya `expect(formatDeadline(null)).toMatchInlineSnapshot()`, bukan satu layar penuh.
+
+## E2E dengan Maestro
+
+**E2E** (*end-to-end*) berarti menguji aplikasi dari ujung ke ujung, persis seperti pengguna memakainya: buka aplikasi, login, isi form, lalu lihat hasilnya. Di analogi warung tadi, ini tahap "meminta teman datang sebagai pembeli". Lambat, tapi hanya cara ini yang membuktikan semua bagian benar-benar tersambung.
+
+**Maestro** adalah alat E2E yang menjalankan aplikasi **asli** di emulator atau simulator, lalu mengetuk dan mengetik seperti manusia. Langkah-langkahnya ditulis dalam YAML, sehingga mudah dibaca dosen maupun teman satu kelompok.
+
+### Kenapa Maestro, bukan Detox?
+
+**Detox** juga alat E2E populer untuk React Native. Perbedaannya ada pada cara keduanya melihat aplikasi.
+
+- Detox bersifat *gray-box*: ia mengintip bagian dalam aplikasi dan tahu kapan aplikasi sedang sibuk, sehingga waktunya sangat presisi. Akibatnya, kamu harus mengubah konfigurasi build native, menulis test JavaScript dengan runner khusus, dan merawat konfigurasi untuk tiap platform.
+- Maestro bersifat *black-box*: ia hanya melihat layar, sama seperti pengguna. Cukup pasang CLI-nya, siapkan aplikasi yang sudah terpasang di emulator, lalu tulis YAML.
+
+Maestro juga otomatis menunggu elemen muncul dan mengulang ketukan yang meleset. Karena itu test-nya jarang **flaky**, yaitu kadang lulus, kadang gagal, padahal kodenya tidak berubah. Untuk pemula dan proyek kuliah, Maestro jauh lebih cepat menghasilkan test yang berguna.
+
+### Menyiapkan aplikasi untuk Maestro
+
+Maestro mengenali aplikasi lewat **appId**, yaitu nama paket unik aplikasi: `android.package` untuk Android atau `ios.bundleIdentifier` untuk iOS. Kalau `kuliah-app/app.json` belum mengisinya, tambahkan:
+
+```json title="kuliah-app/app.json (cuplikan)"
+{
+  "expo": {
+    "ios": { "bundleIdentifier": "id.ac.kampus.tugaskuliah" },
+    "android": { "package": "id.ac.kampus.tugaskuliah" }
+  }
+}
+```
+
+Setelah itu, buat build yang sudah membawa kode JavaScript-nya sendiri (*bundle*), sehingga tidak bergantung pada Metro di laptop. Contohnya `npx expo run:android --variant release`, atau build `preview` dari EAS Build. Expo Go kurang cocok, karena appId-nya milik Expo Go, bukan aplikasimu. Jalankan juga API pendamping (`npm run dev` di `api/`) dan pastikan `EXPO_PUBLIC_API_URL` bisa dijangkau dari emulator.
+
+### Menulis flow
+
+**Flow** adalah satu skenario pengguna yang ditulis langkah demi langkah dalam file YAML. Flow berikut login, membuat tugas baru, lalu memastikan tugas itu muncul:
+
+```yaml title="kuliah-app/.maestro/buat-tugas.yaml"
+appId: id.ac.kampus.tugaskuliah
+---
+- launchApp:
+    clearState: true
+- tapOn: "Email"
+- inputText: "demo@kampus.ac.id"
+- tapOn: "Kata sandi"
+- inputText: "password123"
+- hideKeyboard
+- tapOn: "Masuk"
+- assertVisible: "Tugas"
+- tapOn:
+    id: "tambah-tugas"
+- tapOn: "Judul"
+- inputText: "Laporan Praktikum Basis Data"
+- hideKeyboard
+- tapOn: "Simpan"
+- assertVisible: "Laporan Praktikum Basis Data"
+- takeScreenshot: tugas-baru
+```
+
+Cara membaca flow ini:
+
+- **Sebelum `---`** ada konfigurasi, yaitu appId aplikasi yang diuji. **Sesudahnya** ada daftar langkah.
+- **`launchApp` dengan `clearState: true`** membuka aplikasi dalam keadaan bersih, seperti baru dipasang dan belum login.
+- **`tapOn: "Email"`** mencari elemen dengan teks atau label aksesibilitas "Email", lalu mengetuknya. Sesuaikan teks dan label ini dengan layar login dan form tugas di aplikasimu.
+- **`inputText`** mengetik teks ke kolom yang sedang aktif. **`hideKeyboard`** menutup keyboard supaya tidak menutupi tombol.
+- **`tapOn: { id: ... }`** mencari elemen lewat prop `testID`. Jadi tombol tambah di aplikasi perlu diberi `testID="tambah-tugas"`.
+- **`assertVisible`** memeriksa sebuah teks tampil. Kalau teks tidak muncul dalam beberapa detik, flow gagal.
+- **`takeScreenshot`** menyimpan tangkapan layar bernama `tugas-baru`, berguna sebagai bukti saat demo.
+
+Cara memasang Maestro dan menjalankan flow:
+
+<Tabs items={["macOS/Linux", "Windows"]}>
+<Tab>
+
+```bash
+curl -fsSL "https://get.maestro.mobile.dev" | bash
+maestro test .maestro/buat-tugas.yaml
+```
+
+</Tab>
+<Tab>
+
+Ikuti petunjuk instalasi Windows di [dokumentasi Maestro](https://docs.maestro.dev/getting-started/installing-maestro) (butuh Java 17+), lalu jalankan dari folder `kuliah-app`:
+
+```powershell
+maestro test .maestro\buat-tugas.yaml
+```
+
+</Tab>
+</Tabs>
+
+Kalau semua langkah lulus, Maestro mencetak tanda centang untuk tiap langkah:
+
+```txt
+ ║  > Flow buat-tugas
+ ║    ✅  Launch app "id.ac.kampus.tugaskuliah" with clear state
+ ║    ✅  Tap on "Email"
+ ║    ✅  Input text demo@kampus.ac.id
+ ║    ...
+ ║    ✅  Assert that "Laporan Praktikum Basis Data" is visible
+```
+
+Bingung teks atau ID apa yang harus ditulis? Jalankan `maestro studio`. Alat ini menampilkan semua elemen di layar emulator dan memungkinkan kamu mencoba perintah satu per satu sebelum menyalinnya ke YAML.
+
+## Menjalankan test di CI
+
+Test yang hanya dijalankan "kalau ingat" cepat atau lambat akan terlupakan. **CI** (*continuous integration*) menjalankannya otomatis di server GitHub setiap kali kamu push. Mirip pemeriksaan mutu di pabrik: setiap barang yang lewat dicek mesin, tanpa menunggu ada yang ingat. Untuk Jest cukup satu job di mesin Ubuntu biasa:
+
+```yaml title=".github/workflows/mobile-test.yml"
+name: Mobile test
+on:
+  push:
+  pull_request:
+
+jobs:
+  jest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kuliah-app
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: kuliah-app/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npx jest --ci --coverage
+```
+
+Isi workflow ini: setiap `push` atau `pull_request`, GitHub menyiapkan mesin Ubuntu, mengambil kode (`checkout`), memasang Node 22, lalu menjalankan tiga perintah di folder `kuliah-app`. `npm ci` memasang dependency persis sesuai `package-lock.json`. `npm run typecheck` memeriksa tipe TypeScript. Terakhir, `npx jest --ci --coverage` menjalankan semua test.
+
+Dua flag di perintah terakhir:
+
+- **`--ci`** membuat Jest **menolak** menulis snapshot baru. Snapshot yang belum ada dianggap gagal, bukan diam-diam dibuat.
+- **`--coverage`** mencetak tabel persentase baris kode yang tersentuh test.
+
+E2E Maestro butuh emulator, jadi lebih praktis dijalankan di **EAS Workflows**, layanan CI milik Expo yang punya job `type: maestro` bawaan. Panduannya ada di [E2E tests with EAS Workflows](https://docs.expo.dev/eas/workflows/examples/e2e-tests/), dan pipeline lengkapnya dibahas di [Deploy & CI](/belajar/expert/deploy-ci).
+
+## Kesalahan umum
+
+<Callout type="warning" title="Error yang paling sering muncul">
+
+- **`SyntaxError: Cannot use import statement outside a module`** (diawali `Jest encountered an unexpected token`). Artinya Jest bertemu kode yang belum ia pahami. Ada paket di `node_modules` yang dikirim dalam format ESM (`import`/`export`) tetapi tidak diterjemahkan dulu. Tambahkan nama paketnya ke `transformIgnorePatterns`, seperti kita menambahkan `@tanstack/.*` tadi.
+- **`Unable to find an element with role: button, name: Simpan`**. Artinya elemen yang dicari tidak ketemu. Mungkin elemennya memang tidak ada, belum muncul, atau tidak punya `accessibilityRole`/`accessibilityLabel`. Panggil `screen.debug()` untuk mencetak isi layar saat itu. Kalau datanya datang belakangan (async), ganti `getBy` dengan `findBy`.
+- **`An update to ... inside a test was not wrapped in act(...)`**. Artinya ada state yang berubah saat test tidak sedang menunggu. Biasanya karena lupa `await` pada `render`, `fireEvent`, atau `user.press`, atau state berubah setelah test selesai. Tunggu hasil akhirnya dengan `findBy`/`waitFor`.
+- **`Jest did not exit one second after the test run has completed`**. Artinya masih ada timer atau listener yang hidup setelah semua test selesai, misalnya QueryClient milik aplikasi. Pakai `createTestQueryClient()` dengan `gcTime: Infinity`.
+- **Test di dalam `src/app/`**. Expo Router menganggap setiap file di folder itu sebagai layar, lalu mengeluh karena file test tidak punya default export komponen React. Pindahkan test ke folder `__tests__`.
+- **Mock bocor antar test**. Artinya `mockResolvedValue` dari test sebelumnya masih aktif di test berikutnya. Tambahkan `"clearMocks": true` di konfigurasi `jest`, atau panggil `jest.clearAllMocks()` di `beforeEach`.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Unit test untuk endOfDayIn" difficulty="mudah" hints={["`endOfDayIn(days, now)` ada di `deadline.ts` dan mengembalikan string ISO.", "Ubah hasilnya kembali ke `Date` lalu periksa `getDate()`, `getHours()`, dan `getMinutes()` waktu lokal."]}>
+
+Tulis test untuk `endOfDayIn` di `kuliah-app/src/features/tasks/deadline.ts`. Pastikan `endOfDayIn(0, now)` menghasilkan pukul 23.59 di hari yang sama, dan `endOfDayIn(20, now)` dari 12 Mei 2025 jatuh pada 1 Juni 2025 (melewati pergantian bulan).
+
+<Solution>
+
+```ts title="kuliah-app/src/features/tasks/__tests__/deadline.test.ts (tambahan)"
+import { endOfDayIn } from '../deadline';
+
+describe('endOfDayIn', () => {
+  const now = new Date(2025, 4, 12, 10, 0);
+
+  test('hari ini pukul 23.59', () => {
+    const result = new Date(endOfDayIn(0, now));
+    expect([result.getDate(), result.getHours(), result.getMinutes()]).toEqual([12, 23, 59]);
+  });
+
+  test('melewati pergantian bulan', () => {
+    const result = new Date(endOfDayIn(20, now));
+    expect([result.getMonth(), result.getDate()]).toEqual([5, 1]); // bulan 0-based: 5 = Juni
+  });
+});
+```
+
+Kita membandingkan jam dan tanggal **lokal**, bukan string ISO. Alasannya, string ISO selalu ditulis dalam UTC, sehingga nilainya berbeda tergantung zona waktu laptop atau server CI.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Flow Maestro: menghapus tugas" difficulty="sedang" hints={["Mulai dari flow `buat-tugas.yaml`, lalu buka detail tugas dengan `tapOn` pada judulnya.", "Setelah hapus, pakai `assertNotVisible` untuk memastikan judul hilang dari daftar."]}>
+
+Tulis `kuliah-app/.maestro/hapus-tugas.yaml`: login dengan akun demo, buka tugas "Laporan Praktikum Basis Data", tekan **Hapus**, konfirmasi dialog, lalu pastikan tugas itu tidak ada lagi di daftar. Anggap tombolnya bertuliskan "Hapus" dan dialog konfirmasinya juga punya tombol "Hapus".
+
+<Solution>
+
+```yaml title="kuliah-app/.maestro/hapus-tugas.yaml"
+appId: id.ac.kampus.tugaskuliah
+---
+- runFlow: buat-tugas.yaml
+- tapOn: "Laporan Praktikum Basis Data"
+- tapOn: "Hapus"
+- tapOn:
+    text: "Hapus"
+    index: 1
+- assertNotVisible: "Laporan Praktikum Basis Data"
+```
+
+`runFlow` menjalankan flow lain di dalam flow ini. Jadi langkah login dan membuat tugas tidak perlu ditulis dua kali. Flow ini juga jadi mandiri, karena ia membuat sendiri data yang akan dihapus. Saat dialog terbuka, ada dua elemen bertuliskan "Hapus": tombol di layar dan tombol di dialog. `index: 1` memilih yang kedua (hitungan dimulai dari 0).
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Di RNTL 14, kenapa test berikut bisa gagal secara acak?",
+    code: "test('judul tampil', () => {\n  render(<Button title=\"Simpan\" onPress={() => {}} />);\n  expect(screen.getByText('Simpan')).toBeOnTheScreen();\n});",
+    options: ["`getByText` tidak bisa mencari teks tombol", "`render` sekarang async dan harus di-`await`", "`toBeOnTheScreen` hanya ada di Jest 30", "Button wajib dibungkus `QueryClientProvider`"],
+    answer: 1,
+    explain: "Sejak RNTL 14, `render` mengembalikan Promise. Tanpa `await`, query bisa berjalan sebelum render selesai. `getByText` bisa menemukan teks tombol, dan Button tidak memakai TanStack Query.",
+  },
+  {
+    q: "Kenapa test hook TanStack Query sebaiknya membuat QueryClient baru dengan `retry: false`?",
+    options: ["Agar cache tidak bocor antar test dan error langsung gagal tanpa diulang", "Karena QueryClient aplikasi tidak bisa di-import di Jest", "Karena `retry: false` membuat request asli ke server", "Agar snapshot test lebih kecil"],
+    answer: 0,
+    explain: "QueryClient bersama menyimpan cache dari test sebelumnya, dan `retry` membuat test error lambat atau timeout. QueryClient aplikasi tetap bisa di-import. Opsi `retry` tidak berhubungan dengan request asli maupun snapshot.",
+  },
+  {
+    q: "Kamu ingin memastikan pesan error **tidak** tampil sebelum tombol ditekan. Query yang tepat adalah…",
+    options: ["`getByText`", "`findByText`", "`queryByText`", "`getByTestId`"],
+    answer: 2,
+    explain: "`queryBy*` mengembalikan `null` jika elemen tidak ada, sehingga bisa diuji dengan `expect(...).toBeNull()`. `getBy*` melempar error, `findBy*` menunggu lalu gagal, dan `getByTestId` juga melempar error.",
+  },
+  {
+    q: "Apa alasan utama memilih Maestro daripada Detox untuk proyek kuliah?",
+    options: ["Maestro bisa berjalan tanpa emulator", "Maestro black-box dengan flow YAML dan setup minimal, sedangkan Detox butuh konfigurasi build native dan runner khusus", "Detox tidak mendukung Android", "Maestro menggantikan kebutuhan unit test"],
+    answer: 1,
+    explain: "Maestro cukup dipasang lalu dijalankan terhadap aplikasi yang sudah terpasang. Detox lebih presisi tetapi setup-nya berat. Keduanya butuh emulator atau perangkat, Detox mendukung Android, dan E2E tidak menggantikan unit test.",
+  },
+]} />
+
+## Ringkasan
+
+- Piramida mobile: banyak unit test dan test komponen di Jest, test integrasi secukupnya, dan sedikit E2E Maestro untuk alur paling penting.
+- Setup: `npx expo install jest-expo jest @types/jest --dev` (di PowerShell tambahkan `"--"`), `"jest": { "preset": "jest-expo" }`, dan `transformIgnorePatterns` untuk paket ESM seperti `@tanstack`.
+- Fungsi murni seperti `formatDeadline(deadline, now)` paling mudah diuji. Jadikan waktu "sekarang" sebagai parameter.
+- RNTL 14: `await render`, cari elemen dengan `getByRole`/`getByLabelText`, berinteraksi lewat `userEvent`, dan tunggu hasil async dengan `findBy*`/`waitFor`.
+- Hook TanStack Query diuji dengan QueryClient baru di setiap test (`retry: false`). API di-mock dengan `jest.mock` atau MSW.
+- Expo Router di-mock dengan `jest.mock('expo-router')`, atau diuji sungguhan dengan `renderRouter`.
+- Snapshot besar mudah rusak. Maestro menguji aplikasi asli lewat YAML, dan CI menjalankan semua test setiap push.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Tambahkan minimal tiga test ke aplikasimu:
+
+1. Satu unit test untuk helper label atau deadline.
+2. Satu test komponen untuk form tugas, misalnya memastikan judul kosong ditolak.
+3. Satu flow Maestro: login, buat tugas, lalu pastikan tugas tampil di daftar.
+
+Jalankan `npm test` sebelum setiap demo.
+
+</Callout>

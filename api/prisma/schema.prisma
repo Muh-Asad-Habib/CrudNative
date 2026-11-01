@@ -1,0 +1,88 @@
+// Skema database Aplikasi Tugas & Catatan Kuliah.
+// Setelah mengubah file ini jalankan: npm run db:migrate
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  // Import di kode hasil generate memakai ekstensi .ts (sama seperti kode kita sendiri).
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id            Int            @id @default(autoincrement())
+  name          String
+  email         String         @unique
+  passwordHash  String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  courses       Course[]
+  tasks         Task[]
+  refreshTokens RefreshToken[]
+}
+
+// Mata kuliah
+model Course {
+  id        Int      @id @default(autoincrement())
+  name      String
+  code      String?
+  lecturer  String?
+  color     String? // format hex, contoh: #4F46E5
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Task {
+  id          Int          @id @default(autoincrement())
+  title       String
+  description String?
+  deadline    DateTime?
+  // SQLite tidak punya tipe enum, jadi nilainya divalidasi dengan Zod:
+  status      String       @default("TODO") // TODO | IN_PROGRESS | DONE
+  priority    String       @default("MEDIUM") // LOW | MEDIUM | HIGH
+  userId      Int
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId    Int?
+  course      Course?      @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  attachments Attachment[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, deadline])
+  @@index([courseId])
+}
+
+model Attachment {
+  id        Int      @id @default(autoincrement())
+  taskId    Int
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  url       String
+  filename  String
+  mimeType  String
+  size      Int
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+}
+
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  // Yang disimpan hanya hash SHA-256, bukan token aslinya.
+  tokenHash String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}

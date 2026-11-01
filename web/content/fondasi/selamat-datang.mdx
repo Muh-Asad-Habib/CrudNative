@@ -1,0 +1,308 @@
+## Pengantar
+
+Coba buka aplikasi catatan, marketplace, atau aplikasi akademik kampusmu. Semuanya mengolah **data**, yaitu informasi yang disimpan aplikasi, misalnya judul tugas atau nama mata kuliah. Ada empat hal yang selalu dilakukan dengan data itu: membuat, membaca, mengubah, dan menghapus. Dalam bahasa Inggris: *Create, Read, Update, Delete*. Singkatannya [CRUD](/glosarium#crud).
+
+<Callout type="analogi" title="Seperti mengelola kontak di HP">
+
+Buka aplikasi Kontak di HP-mu. Kamu bisa menambah nomor teman baru (*Create*). Kamu bisa melihat daftar kontak (*Read*). Kamu bisa mengganti nomor yang sudah berubah (*Update*). Kamu juga bisa menghapus kontak lama (*Delete*). Hampir semua aplikasi bekerja dengan pola ini. Yang berbeda hanya isi datanya: kontak, tugas kuliah, pesanan makanan, atau postingan.
+
+</Callout>
+
+Kalau kamu bisa membuat CRUD dari layar HP sampai ke tempat penyimpanan datanya, kamu sudah menguasai dasar dari kebanyakan aplikasi yang kamu pakai sehari-hari.
+
+Kursus ini dimulai dari nol. Belum pernah menulis kode pun tidak masalah. Urutannya begini:
+
+1. Memahami cara kerja web dan **JavaScript**, bahasa pemrograman untuk memberi perintah ke komputer.
+2. Membuat [API](/glosarium#api), "pintu" tempat aplikasi meminta dan mengirim data ke server.
+3. Membuat aplikasi HP dengan **React Native**, alat untuk membuat aplikasi Android dan iPhone memakai JavaScript.
+4. Menyatukan semuanya menjadi satu proyek utuh.
+
+Istilah seperti API dan server dijelaskan lagi dengan contoh di bagian berikutnya. Tidak apa-apa kalau sekarang belum langsung paham.
+
+## Proyek akhir: Aplikasi Tugas & Catatan Kuliah
+
+Semua contoh di kursus ini mengarah ke satu proyek akhir, yang biasa disebut *capstone*. Namanya **Aplikasi Tugas & Catatan Kuliah**.
+
+Bayangkan Sari, mahasiswi semester 3. Ia sering lupa deadline laporan praktikum *Basis Data*. Aplikasi buatanmu akan membantunya lewat fitur berikut:
+
+| Fitur | Contoh di aplikasi |
+| --- | --- |
+| Akun pribadi | Daftar dan login; tiap mahasiswa hanya melihat datanya sendiri |
+| Mata kuliah | Tambah "Basis Data" atau "Pemrograman Mobile" lengkap dengan dosen dan warna |
+| Tugas ber-deadline | Judul, deskripsi, deadline, status (belum, dikerjakan, selesai), dan prioritas |
+| Lampiran foto | Foto soal atau papan tulis langsung dari kamera HP |
+| Cari & filter | Cari "laporan", atau tampilkan tugas berprioritas tinggi saja |
+| Terasa native | Tarik untuk memuat ulang, mode gelap, konfirmasi sebelum menghapus |
+
+<Callout type="analogi" title="Seperti warung makan">
+
+Aplikasi ini punya tiga bagian yang bekerja sama, mirip sebuah warung:
+
+- **Aplikasi di HP Sari = pembeli.** Sari menekan tombol "Tambah tugas", sama seperti pembeli menyebut pesanannya.
+- **API = pelayan.** Pelayan menerima pesanan, mengecek apakah pesanannya masuk akal, lalu meneruskannya ke belakang.
+- **Database = lemari arsip di belakang.** Semua tugas Sari disimpan rapi di sini, jadi tidak hilang walaupun HP-nya mati.
+
+Pembeli tidak masuk ke dapur atau membuka lemari sendiri. Ia selalu lewat pelayan. Aplikasi di HP juga begitu: ia tidak membuka database langsung, tetapi selalu lewat API.
+
+</Callout>
+
+Di kursus ini, tiap bagian dibuat dengan alat tertentu:
+
+- Aplikasi di HP dibuat dengan **Expo**, kumpulan alat yang memudahkan pembuatan aplikasi React Native.
+- API dibuat dengan **Express**, alat untuk membuat server dengan JavaScript. **Server** adalah komputer yang terus menyala dan melayani permintaan dari banyak HP sekaligus.
+- Aplikasi dan API berkirim pesan lewat **internet**, jaringan besar yang menghubungkan komputer dan HP di seluruh dunia. Anggap saja internet itu jalan raya yang dilewati kurir paket.
+
+Kamu membangun setiap bagiannya sendiri. Di track terakhir, aplikasinya dibuat siap dipakai orang sungguhan (istilahnya *production*). Kamu akan menambahkan TypeScript, pengujian otomatis, keamanan, mode offline, sampai memasangnya di server online (*deploy*).
+
+## Peta perjalanan: 5 track
+
+Kursus ini dibagi menjadi 5 **track**. Satu track adalah sekelompok pelajaran dengan satu tema.
+
+<Callout type="analogi" title="Seperti mata kuliah prasyarat">
+
+Di kampus, kamu tidak bisa mengambil *Basis Data Lanjut* sebelum lulus *Basis Data*. Track di sini mirip begitu. Track 1 memakai bekal dari Track 0, Track 2 memakai bekal dari Track 1, dan seterusnya. Bedanya, di sini tidak ada yang melarangmu melompat. Kalau melompat, kamu hanya akan sering bertemu istilah yang belum dijelaskan.
+
+</Callout>
+
+<Flow nodes={["0 · Fondasi", "1 · CRUD & Backend", "2 · React & RN", "3 · Full-stack", "4 · Expert"]} caption="Kerjakan berurutan: tiap track memakai bekal dari track sebelumnya" />
+
+| Track | Yang kamu pelajari | Hasil akhir |
+| --- | --- | --- |
+| 0 · Fondasi | Menyiapkan tools, cara kerja web, dasar JavaScript, dan cara meminta data lewat internet (`fetch`) | Nyaman menulis JavaScript dan paham alur "minta data → terima jawaban" (request–response) |
+| 1 · CRUD & Backend | CRUD, aturan penamaan alamat API (REST), bahasa database (SQL), Express, Prisma (penerjemah antara JavaScript dan database), pemeriksaan input (validasi), membagi data per halaman (pagination) | API `belajar-api` buatanmu sendiri |
+| 2 · React & RN | Menyusun tampilan dari potongan kecil (komponen), tata letak (Flexbox), daftar, pindah layar (navigasi), form | Aplikasi HP dengan beberapa layar, dibuat dengan Expo |
+| 3 · Full-stack | Menghubungkan aplikasi Expo ke API, TanStack Query (alat untuk mengambil dan mengingat data dari API), login, upload gambar | Capstone selesai dan berjalan di HP |
+| 4 · Expert | TypeScript (JavaScript yang diberi label jenis data), struktur kode yang rapi, kecepatan aplikasi, keamanan, testing, deploy | Aplikasi siap dipakai orang sungguhan |
+
+Banyak istilah di tabel ini masih asing, dan itu wajar. Tiap istilah dijelaskan saat pelajarannya tiba. Sekarang kamu ada di Track 0. Daftar semua pelajaran ada di halaman [Kurikulum](/belajar).
+
+## Cara memakai situs ini
+
+Situs ini kamu buka lewat **browser**, yaitu aplikasi untuk membuka halaman web. Contohnya Chrome, Edge, Firefox, dan Safari. Isi situsnya mirip satu mata kuliah: ada materi (pelajaran), praktikum (lab), kuis, kamus istilah (glosarium), dan lembar rangkuman (cheatsheet).
+
+Setiap pelajaran punya urutan yang sama: pengantar, konsep, praktik, latihan, kuis, lalu ringkasan. Durasi, level, dan tujuan belajar tampil di bagian atas halaman. Fitur pendukungnya:
+
+| Fitur | Di mana | Cara memakainya |
+| --- | --- | --- |
+| Lab interaktif | [Lab](/lab) | Alat latihan seperti Simulator CRUD, HTTP Explorer, SQL Playground, Flexbox, React, dan Expo Snack. Semuanya jalan di browser tanpa perlu memasang apa pun |
+| Latihan | Di dalam pelajaran | Kerjakan dulu. Buka **Butuh petunjuk?** satu per satu. Baru setelah itu buka **Lihat solusi** |
+| Kuis | Akhir pelajaran | 3–5 soal pilihan ganda beserta penjelasannya; skor terbaikmu dicatat |
+| Progres | [Progres](/progres) | Persentase pelajaran yang selesai, *streak* (jumlah hari belajar berturut-turut), dan bookmark (penanda pelajaran yang ingin kamu buka lagi) |
+| Cheatsheet | [Cheatsheet](/cheatsheet) | Contekan singkat cara menulis kode, bisa dicetak |
+| Glosarium | [Glosarium](/glosarium) | Kamus istilah, misalnya [endpoint](/glosarium#endpoint) dan [JSON](/glosarium#json) |
+| Pencarian | Tombol **Cari materi** atau <Kbd>Ctrl</Kbd> + <Kbd>K</Kbd> (macOS: <Kbd>⌘</Kbd> + <Kbd>K</Kbd>) | Cari pelajaran, lab, dan istilah dari halaman mana pun |
+| Tema | Tombol tema di header | Pilih Terang, Gelap, atau Ikuti sistem |
+
+Setelah selesai membaca, klik **Tandai selesai** di akhir pelajaran supaya progresmu tercatat.
+
+<Callout type="info" title="Progres tersimpan di browser, bukan di akun">
+
+Situs ini tidak memakai akun. Pelajaran yang selesai, skor kuis, bookmark, dan streak disimpan di *localStorage*. localStorage adalah tempat penyimpanan kecil di dalam browser, mirip laci di meja belajarmu.
+
+Laci itu hanya ada di satu browser di satu perangkat. Kalau kamu pindah ke laptop lain, isinya tidak ikut. Isinya juga hilang kalau kamu menghapus data browser atau belajar di mode penyamaran (*incognito*, mode browser yang tidak menyimpan apa pun).
+
+Supaya aman, buka halaman [Progres](/progres) dan tekan tombol ekspor. Kamu akan mendapat file cadangan berformat JSON (format teks untuk menyimpan data). File itu bisa kamu impor di laptop atau HP lain.
+
+</Callout>
+
+## Strategi belajar yang konsisten
+
+<Callout type="analogi" title="Seperti belajar naik motor">
+
+Kamu tidak jadi lancar naik motor dengan latihan 8 jam sekali lalu berhenti sebulan. Kamu lancar karena latihan sebentar tapi sering, sampai tangan dan kakimu hafal sendiri. Coding juga begitu. Belajar 30 menit setiap hari lebih menempel di kepala daripada begadang semalam sebelum ujian.
+
+</Callout>
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+- Belajar 8 jam di akhir pekan, lalu libur dua minggu.
+- Menyalin-tempel kode tanpa membacanya.
+- Langsung membuka solusi latihan.
+- Melompati Track 0 karena "kelihatannya mudah".
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+- 30–60 menit, 4–5 hari seminggu. Jaga streak di halaman Progres.
+- Mengetik ulang kode sambil menebak hasilnya.
+- Mencoba latihan minimal 15 menit sebelum melihat petunjuk.
+- Mengubah contoh, lalu bertanya: "Apa yang terjadi kalau baris ini kuganti?"
+
+</CompareItem>
+</Compare>
+
+Setelah tiap pelajaran, tulis catatan singkat dengan kata-katamu sendiri. Kalau kamu bisa menjelaskan suatu konsep ke teman, berarti kamu sudah paham.
+
+### Saat kamu macet
+
+Macet itu normal. Programmer berpengalaman pun macet setiap hari. Bedanya, mereka punya langkah yang jelas untuk keluar dari kebuntuan.
+
+Saat kode salah, komputer menampilkan **pesan error**. Pesan ini memberi tahu apa yang salah dan di mana letaknya.
+
+<Callout type="analogi" title="Seperti lampu indikator di motor">
+
+Saat lampu bensin di motor menyala, kamu langsung tahu harus mengisi bensin. Lampu itu tidak sedang memarahimu. Ia memberi tahu apa yang perlu dicek. Pesan error bekerja dengan cara yang sama: ia menyebut jenis masalahnya dan lokasinya.
+
+</Callout>
+
+Berikut langkah yang bisa kamu ikuti:
+
+<Steps>
+<Step title="Baca pesan error dengan tenang">
+
+Perhatikan tiga hal: **jenis error**, **pesannya**, dan **lokasinya**. Lokasi ditulis dengan pola `file:baris:kolom`. Baris adalah nomor baris di file. Kolom adalah posisi huruf di baris itu.
+
+```txt
+D:\belajar\hello.js:3
+console.log(tugsa.judul);
+            ^
+
+ReferenceError: tugsa is not defined
+    at Object.<anonymous> (D:\belajar\hello.js:3:13)
+```
+
+Cara membacanya:
+
+- `hello.js:3` artinya masalahnya ada di file `hello.js`, baris 3.
+- Tanda `^` menunjuk posisi yang bermasalah, yaitu kolom 13.
+- `ReferenceError` adalah jenis error saat kode memakai nama yang tidak dikenal. Nama yang tidak dikenal itu adalah `tugsa`.
+
+Jadi ada nama `tugsa` yang belum pernah dibuat. Ternyata itu salah ketik dari `tugas`.
+
+</Step>
+<Step title="Periksa kode di lokasi itu">
+
+Cari salah ketik, huruf besar-kecil (`Tugas` dan `tugas` dianggap berbeda), tanda kutip, atau kurung yang belum ditutup. Bandingkan dengan contoh di pelajaran.
+
+</Step>
+<Step title="Cari di dokumentasi resmi">
+
+**Dokumentasi resmi** adalah panduan yang ditulis oleh pembuat alatnya, seperti buku manual di dus HP baru. Salin bagian inti pesan error ke mesin pencari. Jangan ikut menyalin alamat folder pribadimu (misalnya `D:\belajar\`). Lalu utamakan sumber resmi: [MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/JavaScript) untuk JavaScript dan HTTP, [dokumentasi Node.js](https://nodejs.org/docs/latest-v22.x/api/), dan [dokumentasi Expo](https://docs.expo.dev/).
+
+</Step>
+<Step title="Jelaskan masalahnya, lalu istirahat">
+
+Jelaskan kodenya baris demi baris ke teman, atau ke boneka bebek di meja. Programmer menyebut cara ini *rubber duck debugging*. Solusi sering muncul saat kamu menjelaskan. Kalau sudah 30 menit tetap buntu, istirahat sebentar. Setelah itu, bertanyalah sambil menyertakan pesan error lengkap, potongan kode, dan apa saja yang sudah kamu coba.
+
+</Step>
+</Steps>
+
+## Prasyarat
+
+Kamu tidak perlu membeli apa pun. Yang dibutuhkan:
+
+- **Laptop atau PC** dengan Windows 10/11, macOS, atau Linux. RAM 8 GB sudah cukup. RAM itu ibarat luas meja belajar: makin luas, makin banyak program yang bisa dibuka bersamaan.
+- **Koneksi internet** untuk mengunduh tools dan paket. **Paket** adalah kode siap pakai buatan orang lain, mirip bumbu instan yang tinggal kamu tambahkan ke masakan.
+- **HP Android atau iPhone** dengan aplikasi Expo Go (*opsional*). Expo Go adalah aplikasi gratis untuk mencoba aplikasi buatanmu langsung di HP. HP baru dipakai di Track 2. Tanpa HP pun kamu tetap bisa mencoba React Native lewat browser.
+- **Pengalaman coding**: tidak perlu. Bahasa Inggris dasar membantu saat membaca pesan error dan dokumentasi.
+
+Di pelajaran berikutnya, [Menyiapkan Tools](/belajar/fondasi/setup-tools), kita memasang semua alat yang dibutuhkan.
+
+## Latihan
+
+<Exercise title="Susun rencana belajar mingguan" difficulty="mudah" hints={["Pilih jam yang realistis, misalnya setelah kuliah atau sebelum tidur.", "Satu pelajaran 25 menit biasanya butuh 45–60 menit kalau ditambah praktik."]}>
+
+Buat jadwal belajar untuk minggu pertama:
+
+1. Pilih hari dan jam belajar.
+2. Tentukan berapa lama tiap sesi.
+3. Tulis pelajaran Track 0 yang ingin diselesaikan di tiap sesi.
+4. Simpan jadwalnya di catatan atau kalender HP-mu.
+
+<Solution>
+
+Contoh rencana milik Andi:
+
+| Hari | Waktu | Target |
+| --- | --- | --- |
+| Senin | 19.00–19.45 | Selamat Datang + Menyiapkan Tools |
+| Selasa | 19.00–19.45 | Cara Kerja Web |
+| Kamis | 19.00–20.00 | JavaScript Modern 1 |
+| Sabtu | 09.00–10.00 | JavaScript Modern 2 + mengulang latihan |
+
+Targetnya kecil, jamnya tetap, dan ada satu sesi cadangan (Sabtu) untuk mengejar ketertinggalan.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Baca pesan error" difficulty="mudah" hints={["Baris yang diawali nama error biasanya paling penting.", "Angka setelah nama file adalah baris dan kolom."]}>
+
+Andi menjalankan programnya dan mendapat error di bawah. Jawab tiga pertanyaan:
+
+1. Apa jenis error-nya?
+2. Di file mana dan baris berapa?
+3. Kira-kira apa artinya?
+
+```txt
+D:\belajar\tugas.js:3
+console.log(ketiga.judul);
+                   ^
+
+TypeError: Cannot read properties of undefined (reading 'judul')
+    at Object.<anonymous> (D:\belajar\tugas.js:3:20)
+```
+
+<Solution>
+
+- **Jenis**: `TypeError`.
+- **Lokasi**: file `tugas.js`, baris 3, kolom 20.
+- **Arti**: kode mencoba membaca `judul` dari sesuatu yang nilainya `undefined`. `undefined` artinya "kosong, belum ada isinya". Jadi `ketiga` ternyata tidak berisi data. Misalnya kode mengambil data ketiga dari daftar yang isinya cuma dua. Ibaratnya kamu membuka laci nomor 3, padahal lemarinya hanya punya 2 laci.
+
+Kamu belum perlu tahu cara memperbaikinya sekarang. Cukup tahu *di mana* harus mencari.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Apa proyek akhir (capstone) yang dibangun di kursus ini?",
+    options: ["Website portofolio statis", "Aplikasi Tugas & Catatan Kuliah full-stack", "Game mobile 2D", "Toko online tanpa database"],
+    answer: 1,
+    explain: "Capstone-nya adalah Aplikasi Tugas & Catatan Kuliah: aplikasi Expo di HP, API Express, dan database. Pilihan lain tidak melatih CRUD dari layar HP sampai ke database.",
+  },
+  {
+    q: "Di mana progres belajarmu (pelajaran selesai, skor kuis, streak) disimpan?",
+    options: ["Di server kursus, terhubung ke akunmu", "Di Google Drive", "Di localStorage browser yang sedang kamu pakai", "Tidak disimpan sama sekali"],
+    answer: 2,
+    explain: "Situs ini tidak memakai akun. Progres disimpan di localStorage, laci kecil di dalam browser. Pakai tombol ekspor dan impor di halaman Progres untuk membuat cadangan atau memindahkannya ke perangkat lain.",
+  },
+  {
+    q: "Cara paling tepat mengerjakan latihan adalah…",
+    options: ["Langsung membuka solusi supaya cepat", "Mencoba sendiri dulu, membuka petunjuk satu per satu, baru melihat solusi", "Melewati latihan karena tidak dinilai", "Menyalin solusi dari teman"],
+    answer: 1,
+    explain: "Saat mencoba sendiri, otakmu ikut berlatih. Petunjuk yang dibuka satu per satu membantu tanpa langsung memberi jawaban. Menyalin solusi sama seperti menonton orang naik motor: kamu tidak jadi bisa.",
+  },
+  {
+    q: "Dari error `ReferenceError: tugsa is not defined at ... hello.js:3:13`, informasi apa yang paling berguna?",
+    options: ["Node.js perlu diinstal ulang", "Laptop kekurangan RAM", "Ada nama `tugsa` yang belum dibuat di baris 3 file `hello.js`", "Internet sedang putus"],
+    answer: 2,
+    explain: "Pesan error menyebut jenisnya (ReferenceError), penyebabnya (`tugsa` belum dibuat), dan lokasinya (`hello.js` baris 3 kolom 13). Jadi masalahnya ada di kode. Instalasi, RAM, dan internet tidak disebut sama sekali.",
+  },
+  {
+    q: "Kamu menghapus nomor teman lama dari aplikasi Kontak di HP. Ini termasuk operasi CRUD yang mana?",
+    options: ["Create", "Read", "Update", "Delete"],
+    answer: 3,
+    explain: "Menghapus data adalah Delete. Create = menambah kontak baru, Read = melihat daftar kontak, Update = mengganti nomor yang sudah ada.",
+  },
+]} />
+
+## Ringkasan
+
+- Kamu akan membangun **Aplikasi Tugas & Catatan Kuliah**: aplikasi Expo di HP, API Express, dan database, lengkap dengan login dan lampiran foto.
+- CRUD = Create, Read, Update, Delete. Polanya sama seperti mengelola kontak di HP.
+- Aplikasi di HP (pembeli) selalu meminta data lewat API (pelayan). API yang menyimpan dan mengambil data di database (lemari arsip).
+- Kursus terdiri dari 5 track berurutan: Fondasi → CRUD & Backend → React & RN → Full-stack → Expert.
+- Pakai lab, latihan, kuis, cheatsheet, glosarium, pencarian <Kbd>Ctrl</Kbd> + <Kbd>K</Kbd>, dan pilihan tema.
+- Progres tersimpan di browser. Ekspor ke file JSON supaya punya cadangan.
+- Belajar sedikit tapi rutin, ketik ulang kode, dan coba latihan sendiri sebelum membuka solusi. Saat macet: baca error, periksa lokasinya, cari di dokumentasi resmi, lalu jelaskan masalahnya ke orang lain.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Siapkan satu **folder** kerja bernama `kursus-crud`. Folder adalah wadah untuk mengelompokkan file, seperti map plastik di lemari. Taruh folder ini di folder *home* laptopmu, yaitu folder pribadi milik akunmu (mirip kamarmu sendiri di rumah kos). Contohnya `C:\Users\andi` di Windows atau `/Users/andi` di macOS. Caranya dibahas di pelajaran berikutnya.
+
+Nanti folder `kursus-crud` berisi latihan JavaScript, API `belajar-api` (Track 1), proyek `latihan-rn` (Track 2), dan aplikasi capstone `kuliah-app` (Track 3).
+
+</Callout>

@@ -1,0 +1,681 @@
+## Pengantar
+
+Bayangkan Sari sudah memakai aplikasi tugas kuliahnya selama dua semester. Daftarnya kini berisi lebih dari 500 tugas, dan banyak yang punya lampiran foto papan tulis. Di HP Android kelas menengah miliknya, scroll mulai patah-patah. Kolom pencarian terasa telat saat diketik. Layar pertama baru muncul setelah beberapa detik. Tidak ada error di console, tetapi aplikasinya terasa "berat".
+
+Di [Performa Backend](/belajar/expert/performa-backend) kamu sudah mempercepat API. Sekarang giliran aplikasi mobile. Prinsipnya sama: **ukur dulu, baru perbaiki**. Kalau hanya menebak ("pasti karena gambarnya"), kodemu sering jadi lebih rumit tetapi tidak lebih cepat.
+
+<Callout type="analogi" title="Seperti montir yang memeriksa motor">
+
+Motormu brebet. Montir yang baik tidak langsung mengganti busi, karburator, dan aki sekaligus. Ia menyalakan mesin, mendengarkan bunyinya, dan mengecek satu per satu. Setelah menemukan busi yang kotor, ia ganti busi saja, lalu mencoba motornya lagi.
+
+- mendengarkan mesin = mengukur dengan alat (Profiler, performance monitor)
+- busi kotor = penyebab lambat yang sebenarnya
+- ganti satu bagian = perbaiki satu hal
+- coba jalan lagi = ukur lagi dan bandingkan angkanya
+
+Kalau semua bagian diganti sekaligus, kamu tidak tahu mana yang sebenarnya menolong.
+
+</Callout>
+
+<Flow nodes={["Ukur", "Temukan penyebab", "Perbaiki satu hal", "Ukur lagi"]} labels={["Profiler + monitor", "re-render? list? gambar?", "bandingkan angka"]} caption="Siklus optimasi mobile: satu perubahan, satu pengukuran" />
+
+Pelajaran ini melanjutkan [List Performan dengan FlatList](/belajar/react-native/flatlist), [TanStack Query](/belajar/fullstack/tanstack-query), dan [Upload Gambar](/belajar/fullstack/upload-gambar). Contoh kode memakai `kuliah-app` versi TypeScript yang sudah kamu rapikan ke struktur `src/features/...` di Track 4. Bagian yang mungkin belum ada di proyekmu diberi label **saran pengembangan**.
+
+## Ukur dulu, di mode yang benar
+
+### Development build itu lebih lambat
+
+Saat kamu menjalankan `npx expo start` biasa, aplikasi berjalan dalam **development mode** (mode untuk menulis kode). Di mode ini ada pengecekan dan peringatan tambahan, hot reload, dan **bundle** (gabungan semua file JavaScript-mu) yang tidak di-*minify* (tidak dipadatkan). Menurut dokumentasi Expo, aplikasi memang berjalan lebih lambat di mode ini. Matikan mode ini setiap kali menguji performa. Kalau tidak, kamu akan sibuk "memperbaiki" lag yang tidak pernah dirasakan pengguna.
+
+Cara tercepat (sama di semua sistem operasi):
+
+```bash
+npx expo start --no-dev --minify
+```
+
+`--no-dev` mematikan development mode, dan `--minify` memadatkan bundle seperti di aplikasi sungguhan.
+
+Untuk angka paling jujur, buat **build release**, yaitu versi aplikasi yang sama dengan yang diunduh pengguna. Jalankan di emulator atau HP yang tersambung:
+
+<Tabs items={["Android", "iOS (khusus macOS)"]}>
+<Tab>
+
+```bash
+npx expo run:android --variant release
+```
+
+</Tab>
+<Tab>
+
+```bash
+npx expo run:ios --configuration Release
+```
+
+</Tab>
+</Tabs>
+
+<Callout type="tip" title="Uji di HP yang paling lemah">
+
+Laptop dan HP flagship menyembunyikan masalah. Kalau aplikasi lancar di HP Android lama milik teman, hampir pasti lancar di HP lain.
+
+</Callout>
+
+### Performance monitor: JS FPS vs UI FPS
+
+**FPS** (*frames per second*) adalah berapa kali layar digambar ulang tiap detik. Makin tinggi, makin mulus. Untuk melihatnya, buka dev menu: tekan `m` di terminal Expo, <Kbd>Ctrl</Kbd> + <Kbd>M</Kbd> di emulator Android, <Kbd>Cmd</Kbd> + <Kbd>D</Kbd> di simulator iOS, atau goyangkan HP fisik. Pilih **Toggle performance monitor**.
+
+Muncul panel kecil berisi pemakaian RAM, JS heap (memori JavaScript), jumlah view, dan dua angka FPS. Satu untuk **UI thread**, satu untuk **JS thread**. Keduanya dijelaskan di bagian berikutnya. Targetnya mendekati 60 di keduanya, atau 120 di layar dengan refresh rate tinggi.
+
+Monitor memberi tahu **jalur mana** yang kewalahan, tetapi tidak memberi tahu komponen mana yang salah. Untuk itu kita butuh profiler.
+
+### React DevTools Profiler
+
+**Profiler** adalah alat yang merekam komponen mana yang **dirender ulang** (*re-render*: fungsi komponennya dijalankan lagi untuk menghitung tampilan baru) dan berapa lama waktunya. React Native DevTools sudah terpasang bersama Expo. Langkahnya:
+
+1. Jalankan `npx expo start`, buka aplikasi, lalu tekan `j` di terminal.
+2. Buka tab **Profiler**, klik ikon roda gigi, lalu centang **Record why each component rendered while profiling**.
+3. Klik rekam, lakukan satu aksi yang terasa lambat (misalnya mengetik tiga huruf di kolom cari), lalu hentikan.
+4. Baca **Flamegraph** (grafik batang bertingkat). Setiap bar adalah satu komponen. Bar abu-abu berarti komponen itu tidak dirender ulang. Bar kuning atau oranye berarti lama. Tampilan **Ranked** mengurutkan dari yang paling lama.
+5. Klik sebuah komponen. Panel kanan menampilkan alasan ia dirender ulang, misalnya "Props changed: `onPress`". Petunjuk inilah yang paling berguna.
+
+Di tab **Components**, nyalakan pengaturan **Highlight updates when components render**. Setiap komponen yang dirender ulang akan berkedip di layar.
+
+Profiler hanya bekerja di debug build, sedangkan angka FPS paling jujur ada di release build. Jadi pakai profiler untuk mencari **penyebab**, dan release build untuk memastikan **hasil**.
+
+## JS thread vs UI thread
+
+**Thread** adalah jalur kerja yang berjalan sendiri-sendiri. React Native menjalankan kodemu di dua jalur utama:
+
+- **JS thread** menjalankan logika React: render, hook, pemanggilan API, dan handler sentuhan.
+- **UI thread** (main thread) menggambar view native, menangani scroll, dan gesture.
+
+Keduanya berjalan paralel, jadi gejalanya berbeda tergantung jalur mana yang sibuk.
+
+<Callout type="analogi" title="Koki dan pelayan di warung">
+
+Di warung, koki menyiapkan pesanan di dapur dan pelayan mengantar ke meja. Kalau koki kewalahan, pesanan baru telat diproses, tetapi pelayan masih bisa berjalan dan menyapa tamu. Kalau pelayan disuruh membawa nampan yang terlalu berat, langkahnya jadi tersendat walau dapur santai.
+
+- koki = JS thread (logika, render, panggil API)
+- pelayan = UI thread (menggambar layar, scroll, gesture)
+- pesanan telat = ketikan dan tombol lambat merespons
+- nampan terlalu berat = gambar besar atau view terlalu banyak, sehingga scroll patah
+
+</Callout>
+
+Tabel ini memetakan gejala ke penyebabnya:
+
+| Gejala | Angka di monitor | Kemungkinan penyebab | Arah perbaikan |
+| --- | --- | --- | --- |
+| Ketikan di kolom cari telat, tombol lambat merespons | JS FPS turun | Re-render besar, filter ribuan item tiap ketikan | `memo`, React Compiler, debounce, `select` |
+| Scroll patah walau JS FPS normal | UI FPS turun | Gambar besar didecode, terlalu banyak view | expo-image ukuran pas, FlashList |
+| Animasi tersendat saat data dimuat | JS FPS turun | Animasi dihitung di JS thread | Reanimated di UI thread |
+| Layar putih lama saat aplikasi dibuka | Tidak tampak di monitor | Bundle besar, kerja berat saat startup | Expo Atlas, lazy, splash screen |
+
+Aturan praktisnya: jaga JS thread tetap ringan, dan pindahkan apa pun yang harus mulus setiap frame (animasi, gesture) ke UI thread.
+
+## Re-render: penyebab dan perbaikan
+
+<Callout type="analogi" title="Seperti menulis ulang 500 kartu nama di papan">
+
+Asisten dosen menempel 500 kartu nama mahasiswa di papan kelas. Setiap kali satu mahasiswa ganti nomor HP, ia menulis ulang semua 500 kartu. Capek dan lama. Cara yang lebih hemat: ia bandingkan dulu lembar data lama dengan yang baru. Kalau lembarnya sama, kartu itu dibiarkan.
+
+Masalahnya, ia hanya mengecek "apakah ini lembar kertas yang sama?", bukan "apakah tulisannya sama?". Kalau setiap kali kamu memberinya fotokopi baru, walau isinya persis sama, ia tetap menganggapnya berbeda dan menulis ulang kartunya.
+
+- menulis ulang kartu = re-render
+- membandingkan lembar dulu = `memo`
+- fotokopi baru dengan isi sama = objek `{}` atau fungsi `() => {}` yang dibuat ulang di setiap render
+- memberi lembar yang sama terus = props stabil (`useCallback`, `StyleSheet.create`)
+
+Bedanya dengan dunia nyata: re-render tidak menghapus layar. React menghitung ulang tampilan, lalu hanya mengubah bagian layar yang memang berbeda. Tetapi hitungan itu tetap memakan waktu JS thread.
+
+</Callout>
+
+Sebuah komponen dirender ulang dalam tiga keadaan:
+
+- state miliknya berubah,
+- **parent** (komponen pembungkusnya) dirender ulang,
+- **context** (data bersama yang dibagikan ke banyak komponen) yang dipakainya berubah.
+
+Re-render itu normal. Masalah baru muncul kalau ratusan item list ikut dirender ulang padahal datanya sama.
+
+Penyebab paling umum adalah **props yang selalu baru**. Di JavaScript, `{}` dan `() => {}` membuat objek baru setiap kali baris itu dijalankan. **`memo`** (pembungkus komponen yang melewati render bila props-nya sama) membandingkan setiap prop lama dan baru satu per satu, mirip operator `===`. Objek baru tidak pernah `===` objek lama, jadi `memo` menganggap props berubah walau isinya identik.
+
+Contoh referensi berikut membungkus kartu mata kuliah di `kuliah-app` dengan `memo`:
+
+```jsx title="kuliah-app/src/features/courses/components/CourseCard.tsx"
+// `memo`: kartu hanya dirender ulang bila datanya berubah, penting untuk FlatList panjang.
+export const CourseCard = memo(function CourseCard({ course, onPress }: CourseCardProps) {
+  const { colors, radius, spacing, fontSize } = useTheme();
+  // ...
+  return (
+    <Pressable
+      onPress={() => onPress(course)}
+      // ...
+    >
+```
+
+Cara membacanya:
+
+- `memo(function CourseCard ...)` artinya: sebelum menggambar kartu, cek dulu apakah `course` dan `onPress` sama dengan sebelumnya. Kalau sama, lewati.
+- Kartu menerima `onPress` umum, lalu memanggilnya dengan datanya sendiri: `onPress(course)`. Jadi parent cukup membuat **satu** fungsi untuk semua kartu.
+- Fungsi panah `() => onPress(course)` di dalam kartu tidak merusak `memo`. Fungsi itu dibuat di dalam kartu yang memang sedang digambar, bukan dikirim sebagai props.
+
+`memo` hanya berguna kalau parent mengirim props yang stabil. Contoh berikut adalah tab daftar tugas yang merusak `memo`, beserta perbaikannya. Ini **saran pengembangan**: kalau `kuliah-app` belum punya tab daftar tugas dan `TaskCard`, anggap ini rancangannya.
+
+```diff title="kuliah-app/src/app/(app)/(tabs)/index.tsx (saran pengembangan)"
+ export default function TasksScreen() {
+   const router = useRouter();
+   const { data } = useTasks(filters);
+
+-  const renderItem = ({ item }: { item: Task }) => (
+-    <TaskCard
+-      task={item}
+-      style={{ marginHorizontal: 16 }}
+-      onPress={() => router.push(`/tasks/${item.id}`)}
+-    />
+-  );
++  const openTask = useCallback((id: number) => router.push(`/tasks/${id}`), [router]);
++
++  const renderItem = useCallback(
++    ({ item }: { item: Task }) => <TaskCard task={item} onPress={openTask} />,
++    [openTask],
++  );
+```
+
+Baris merah adalah kode lama, baris hijau kode baru. Ada dua perubahan:
+
+1. `style={{ marginHorizontal: 16 }}` dihapus. Gaya itu pindah ke `StyleSheet.create` di dalam `TaskCard`, jadi tidak ada objek baru di setiap render.
+2. `onPress` kini satu fungsi `openTask` dari **`useCallback`** (hook yang menyimpan fungsi supaya tetap sama di antara render). Kartu memanggilnya dengan `onPress(task.id)`.
+
+<Compare>
+<CompareItem title="Hindari: props baru di setiap render" tone="bad">
+
+```jsx
+<TaskCard
+  task={item}
+  style={{ marginHorizontal: 16 }}
+  onPress={() => openTask(item.id)}
+/>
+```
+
+Dengan 500 kartu, satu ketikan di kolom cari membuat 500 kartu digambar ulang.
+
+</CompareItem>
+<CompareItem title="Lebih baik: props stabil" tone="good">
+
+```jsx
+<TaskCard task={item} onPress={openTask} />
+```
+
+Kartu yang datanya tidak berubah dilewati `memo`. Di Profiler, kartu itu tampil sebagai bar abu-abu.
+
+</CompareItem>
+</Compare>
+
+Tiga hal lain yang sering membuat banyak komponen dirender ulang sekaligus:
+
+- **Context yang terlalu besar.** Misalnya satu context menyimpan user, tema, dan filter sekaligus. Saat filter berubah, semua komponen yang hanya butuh tema ikut dirender ulang. Pecah context sesuai kebutuhan.
+- **Hitungan berat di dalam render.** Mengurutkan ribuan item di setiap render membebani JS thread. Pindahkan ke `select` TanStack Query atau **`useMemo`** (hook yang menyimpan hasil hitungan dan baru menghitung ulang kalau datanya berubah).
+- **State diletakkan terlalu tinggi.** Simpan state sedekat mungkin dengan komponen yang memakainya. Contohnya, teks kolom cari cukup disimpan di komponen kolom cari, bukan di layar utama, supaya satu ketikan tidak merender ulang seluruh layar.
+
+### React Compiler: memoization otomatis
+
+**Memoization** artinya mengingat hasil kerja sebelumnya supaya tidak dikerjakan ulang. `memo`, `useCallback`, dan `useMemo` adalah alat memoization manual. **React Compiler** adalah alat yang membaca kodemu saat build, lalu menambahkan memoization itu sendiri. Kamu tidak perlu menulis `memo` dan `useCallback` di mana-mana.
+
+Sejak SDK 54, Expo sudah menyiapkan pengaturan Babel untuk compiler ini. Kamu cukup menyalakannya di `app.json`. Template SDK 58 sudah menyalakannya. Kalau `kuliah-app` belum, tambahkan opsi `reactCompiler`:
+
+```json title="kuliah-app/app.json (potongan)"
+{
+  "expo": {
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
+```
+
+Jadi sebagian besar `useCallback` di atas sebenarnya sudah ditangani compiler. Kamu tetap perlu paham `memo`, karena compiler punya batas:
+
+- Compiler hanya memproses kode aplikasimu, bukan library di `node_modules`. Class component juga tidak dioptimalkan.
+- Compiler melewati komponen yang melanggar **Rules of React** (aturan main React, misalnya jangan mengubah props atau membaca ref saat render). Aturan lint untuk ini sudah ikut di `eslint-config-expo` sejak SDK 55. Jalankan `npx expo lint` dan baca peringatannya.
+- Kalau sebuah komponen berperilaku aneh setelah dikompilasi, tulis `'use no memo'` di baris pertama fungsinya. Compiler akan melewati komponen itu sementara kamu mencari penyebabnya.
+
+Untuk mengecek apakah proyek lama siap memakai compiler, jalankan:
+
+```bash
+npx react-compiler-healthcheck@latest
+```
+
+Perintah ini memindai kodemu dan melaporkan berapa komponen yang bisa dikompilasi. Setelah compiler aktif, pakai Profiler dan pesan "Props changed" untuk memastikan compiler benar-benar bekerja.
+
+## List besar: FlatList dan FlashList
+
+Di pelajaran FlatList, kamu sudah tahu bahwa FlatList hanya menggambar item yang terlihat, seperti pelayan yang hanya melayani meja yang kelihatan dari tempatnya berdiri. Kamu juga sudah memakai `keyExtractor` dan `memo` pada item. Untuk 500+ tugas, kenali juga props yang mengatur **berapa banyak** item yang digambar:
+
+| Prop | Default | Fungsi |
+| --- | --- | --- |
+| `keyExtractor` | `item.key`, `item.id`, lalu index | Memberi tiap item kunci tetap (pakai `String(item.id)`), supaya item tidak dibuat ulang saat urutan data bergeser |
+| `getItemLayout` | tidak ada | Memberi tahu tinggi item yang pasti, jadi FlatList tidak perlu mengukur dan bisa langsung lompat ke item mana pun |
+| `windowSize` | `21` | Jumlah "layar" yang tetap digambar (10 di atas, 10 di bawah, 1 yang terlihat). Kecilkan untuk menghemat memori |
+| `initialNumToRender` | `10` | Jumlah item yang digambar pertama kali. Cukup untuk mengisi satu layar |
+| `maxToRenderPerBatch` | `10` | Jumlah item per gelombang saat scroll. Lebih kecil berarti JS thread lebih cepat bebas untuk merespons sentuhan |
+| `removeClippedSubviews` | `true` di Android, `false` di iOS | Melepas view di luar layar dari tampilan native. Hemat untuk list panjang, tetapi uji dulu karena kadang item tampak kosong sesaat |
+
+`getItemLayout` hanya boleh dipakai kalau tinggi setiap item benar-benar sama:
+
+```ts
+const ITEM_HEIGHT = 88;
+
+const getItemLayout = (_data: unknown, index: number) => ({
+  length: ITEM_HEIGHT,
+  offset: ITEM_HEIGHT * index,
+  index,
+});
+```
+
+Artinya: setiap item tingginya 88 piksel, jadi item ke-10 pasti dimulai di piksel `88 × 10 = 880`. FlatList bisa menghitung posisi itu tanpa menggambar item 0 sampai 9 lebih dulu.
+
+Kalau list lambat, FlatList sendiri akan memberi peringatan di terminal:
+
+```txt
+VirtualizedList: You have a large list that is slow to update - make sure your renderItem function renders components that follow React performance best practices like PureComponent, shouldComponentUpdate, etc.
+```
+
+Terjemahan bebasnya: "List besarmu lambat diperbarui, pastikan item-nya mengikuti praktik performa React." Peringatan ini hampir selalu berarti item belum dibungkus `memo` atau props-nya tidak stabil.
+
+### FlashList v2: mendaur ulang view
+
+<Callout type="analogi" title="Seperti kursi di bus Transjakarta">
+
+Saat penumpang turun, kursinya langsung dipakai penumpang yang baru naik. Bus tidak memasang kursi baru untuk setiap penumpang. Itu jauh lebih hemat.
+
+- kursi = view kartu di layar
+- penumpang = data satu tugas
+- penumpang turun dan naik = item keluar layar di atas, item baru masuk dari bawah
+
+Ada satu risiko. Kalau penumpang lama meninggalkan tas di kursi, penumpang baru seolah "mewarisi" tas itu. Di FlashList, "tas tertinggal" itu adalah `useState` di dalam item atau gambar lama yang belum diganti.
+
+</Callout>
+
+FlatList membuat komponen baru untuk setiap item yang masuk layar dan membuang item yang keluar. **FlashList** dari Shopify **mendaur ulang** (*recycle*) view: kartu yang keluar dari atas dipakai lagi untuk item yang masuk dari bawah, hanya datanya yang diganti. Membuat view baru itu mahal, jadi daur ulang membuat scroll lebih ringan.
+
+Bagian ini **saran pengembangan**. Pasang FlashList di `kuliah-app`:
+
+```bash
+npx expo install @shopify/flash-list
+```
+
+Versi 2 dibuat untuk **New Architecture** (arsitektur baru React Native, default di SDK 58). Kamu juga tidak perlu lagi menebak ukuran item. Pindah dari FlatList hampir cukup dengan mengganti nama komponen:
+
+```diff title="kuliah-app/src/app/(app)/(tabs)/index.tsx (saran pengembangan)"
+-import { FlatList } from 'react-native';
++import { FlashList } from '@shopify/flash-list';
+
+-<FlatList
++<FlashList
+   data={tasks}
+   keyExtractor={(item) => String(item.id)}
+   renderItem={renderItem}
+-  getItemLayout={getItemLayout}
+-  windowSize={7}
+-  removeClippedSubviews
+   onEndReached={() => hasNextPage && fetchNextPage()}
+-  contentContainerStyle={{ padding: 16 }}
++  contentContainerStyle={styles.listContent}
+ />
+```
+
+Yang berubah: import diganti, tiga props khusus FlatList (`getItemLayout`, `windowSize`, `removeClippedSubviews`) dihapus karena FlashList mengatur sendiri, dan padding pindah ke `styles.listContent`.
+
+Tiga aturan penting saat memakai FlashList:
+
+- **Jangan simpan `useState` lokal di item.** View didaur ulang, jadi state milik tugas A bisa terbawa ke tugas B (ingat "tas tertinggal" tadi). Simpan state di data, misalnya `task.status`. Atau pakai hook `useRecyclingState` dari FlashList, yang otomatis kembali ke nilai awal saat item berganti.
+- **Padding ditulis di `contentContainerStyle`, bukan `style`.** `style` mengatur kotak luar list, sedangkan `contentContainerStyle` mengatur isi yang di-scroll.
+- **List campuran pakai `getItemType`.** Kalau list berisi judul bagian dan kartu tugas, beri tahu tipe tiap item. Dengan begitu, view kartu hanya didaur ulang menjadi kartu, bukan menjadi judul.
+
+## Gambar: ukuran pas dan cache
+
+<Callout type="analogi" title="Seperti minta pas foto 3×4 tapi dikirimi file baliho">
+
+Kamu butuh pas foto kecil untuk kartu mahasiswa. Tukang foto malah mengirim file seukuran baliho. Setiap kali mau menempel foto, kamu harus mengecilkannya sendiri dulu. Itu boros waktu dan tenaga.
+
+- file baliho = foto papan tulis 4000 piksel dari kamera HP
+- mengecilkan sendiri setiap kali = HP mengunduh dan **decode** gambar besar (mengubah file JPG menjadi titik-titik warna yang siap digambar)
+- minta file ukuran kecil dari awal = kompres saat upload, atau minta thumbnail dari backend
+- menyimpan cetakan foto di laci = **cache** (salinan yang disimpan supaya tidak perlu diunduh ulang)
+
+</Callout>
+
+Foto papan tulis dari kamera HP bisa selebar 4000 piksel. Di daftar tugas, foto itu hanya tampil sebagai **thumbnail** (gambar kecil pratinjau) 64 piksel. Tetapi file utuhnya tetap diunduh dan di-decode. Akibatnya jaringan, UI thread, dan memori ikut terbebani.
+
+**Sisi upload.** Kompres gambar sebelum dikirim, seperti di [Upload Gambar](/belajar/fullstack/upload-gambar):
+
+```ts title="kuliah-app/src/features/tasks/attachments.ts (potongan)"
+quality: 0.7,
+```
+
+`quality: 0.7` artinya gambar disimpan dengan kualitas 70%. Bedanya hampir tidak terlihat mata, tetapi ukuran filenya jauh lebih kecil. Ditambah batas `MAX_ATTACHMENT_BYTES` 5 MB dari pelajaran itu, ukuran file tetap wajar. Kalau nanti backend menyediakan thumbnail, minta versi kecil itu untuk list.
+
+**Sisi tampilan.** Pakai `Image` dari `expo-image`, bukan `Image` bawaan React Native. Pasang dengan `npx expo install expo-image` kalau belum ada. `expo-image` punya cache di disk dan memori, gambar sementara (placeholder), efek transisi, dan dukungan daur ulang:
+
+```jsx title="src/features/tasks/components/AttachmentThumb.tsx (saran pengembangan)"
+import { Image } from 'expo-image';
+
+import { resolveFileUrl } from '@/lib/api';
+
+export function AttachmentThumb({ attachment }) {
+  return (
+    <Image
+      source={{ uri: resolveFileUrl(attachment.url) }}
+      style={{ width: 64, height: 64, borderRadius: 8 }}
+      contentFit="cover"
+      cachePolicy="memory-disk"
+      recyclingKey={String(attachment.id)}
+      transition={150}
+    />
+  );
+}
+```
+
+Arti setiap prop penting:
+
+- **Selalu beri `width` dan `height` yang jelas.** Tanpa ukuran, gambar bisa tampil 0×0, atau tata letak bergeser setelah gambar selesai dimuat.
+- **`cachePolicy`** default-nya `'disk'`. Nilai `'memory-disk'` juga menyimpan salinan di memori, jadi thumbnail yang sering muncul tidak perlu dibaca ulang dari disk saat kamu scroll bolak-balik.
+- **`recyclingKey`** wajib di FlashList. Tanpa prop ini, saat view didaur ulang, gambar tugas lama sempat terlihat sekilas sebelum gambar baru muncul.
+- **`transition={150}`** membuat gambar muncul perlahan selama 150 milidetik, bukan tiba-tiba.
+- **`Image.prefetch(url)`** mengunduh gambar ke cache lebih dulu, misalnya sebelum layar detail tugas dibuka.
+
+## Animasi di UI thread dengan Reanimated
+
+Ingat lagi contoh warung tadi. Animated API bawaan React Native menghitung setiap langkah animasi di JS thread (si koki), kecuali kamu memakai `useNativeDriver`. Kalau koki sedang sibuk mengolah data, animasi ikut tersendat.
+
+**Reanimated** (versi 4) menyerahkan animasi langsung ke UI thread (si pelayan). Kode animasinya ditulis sebagai **worklet**, yaitu fungsi kecil yang dijalankan di UI thread. Jadi animasi tetap mulus walau JS thread sedang sibuk. Pasang dengan `npx expo install react-native-reanimated` kalau belum ada.
+
+```jsx title="src/components/ui/PressScale.tsx (saran pengembangan)"
+import { Pressable } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+
+export function PressScale({ children, onPress }) {
+  const scale = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.get() }],
+  }));
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onPressIn={() => scale.set(withSpring(0.96))}
+      onPressOut={() => scale.set(withSpring(1))}
+    >
+      <Animated.View style={animatedStyle}>{children}</Animated.View>
+    </Pressable>
+  );
+}
+```
+
+Cara kerja komponen ini:
+
+- `useSharedValue(1)` membuat nilai `scale` yang bisa dibaca langsung oleh UI thread. Nilai awalnya 1 (ukuran normal).
+- `useAnimatedStyle` mengubah nilai itu menjadi gaya `transform`. Fungsi di dalamnya adalah worklet.
+- Saat jari menekan (`onPressIn`), `scale` bergerak ke 0,96 dengan efek pegas (`withSpring`). Saat jari diangkat, kembali ke 1. Hasilnya kartu tampak "mengecil" sedikit saat ditekan.
+
+Dua aturan tambahan:
+
+- Animasikan hanya `transform` dan `opacity`. Mengubah `width`, `height`, atau `margin` memaksa tata letak dihitung ulang di setiap frame.
+- Pakai `.get()` dan `.set()`, bukan menulis langsung ke `.value`. React Compiler menganggap nilai dari hook tidak boleh diubah langsung. Kalau kamu menulis ke `.value`, compiler bisa melewati komponen itu.
+
+## Startup yang cepat
+
+**Startup** adalah waktu dari ikon aplikasi diketuk sampai layar pertama bisa dipakai. Bayangkan warung yang baru buka pagi hari. Warung yang baik membuka pintu dulu dan menyajikan menu yang paling sering dipesan. Menu yang jarang dipesan baru dimasak saat ada yang memesan. Tiga kebiasaan berikut menerapkan ide yang sama:
+
+- **Tidak ada kerja berat di top-level module.** Top-level adalah kode di luar fungsi, yang langsung jalan saat file dimuat. Contohnya memproses JSON besar atau menyiapkan library yang belum dibutuhkan. Semua itu berjalan sebelum layar pertama tampil. Pindahkan ke fungsi yang dipanggil saat memang dibutuhkan.
+- **Layar digambar saat dibutuhkan.** Di contoh referensi, `kuliah-app/src/app/(app)/(tabs)/_layout.tsx` memakai `Tabs` dari `expo-router/js-tabs`. Tab "Mata Kuliah" dan "Profil" baru digambar ketika pertama kali dibuka.
+- **Splash ditahan sampai siap.** **Splash screen** adalah layar logo yang tampil saat aplikasi dibuka. Tahan splash sampai sesi login yang tersimpan selesai dipulihkan. Dengan begitu, layar login tidak sempat berkedip sebelum pengguna dibawa ke beranda:
+
+```jsx title="kuliah-app/src/app/_layout.tsx (potongan)"
+// Splash tetap tampil sampai sesi yang tersimpan selesai dipulihkan (lihat RootNavigator).
+void SplashScreen.preventAutoHideAsync();
+
+function RootNavigator() {
+  const { status } = useAuth();
+  // ...
+  const isLoading = status === 'loading';
+
+  useEffect(() => {
+    if (!isLoading) SplashScreen.hide();
+  }, [isLoading]);
+```
+
+Alurnya: `preventAutoHideAsync()` mencegah splash hilang otomatis. `RootNavigator` membaca status login dari `useAuth()`. Selama status masih `'loading'`, splash tetap tampil. Begitu status bukan lagi `'loading'`, `useEffect` memanggil `SplashScreen.hide()`.
+
+`preventAutoHideAsync` sengaja dipanggil di top-level karena ringan: ia hanya mengirim satu perintah ke sisi native. Yang perlu dihindari di top-level adalah kerja berat.
+
+**Hermes** adalah mesin yang menjalankan JavaScript di HP, dan menjadi default di Expo. Saat build release (dan saat `npx expo export`), JavaScript diubah lebih dulu menjadi **bytecode**, yaitu bentuk kode yang sudah siap dijalankan mesin. HP tidak perlu lagi membaca dan menerjemahkan kode sumber saat aplikasi dibuka. Startup jadi lebih cepat dan memori lebih hemat, terutama di Android kelas bawah. Jadi biarkan pengaturan `jsEngine` tetap default.
+
+## Jaringan: hindari refetch storm
+
+<Callout type="analogi" title="Seperti jadwal kuliah di papan tulis kelas">
+
+Ketua kelas menulis jadwal minggu ini di papan tulis. Kalau setiap mahasiswa yang masuk kelas tetap menelepon bagian akademik untuk menanyakan jadwal yang sama, telepon akademik sibuk terus. Lebih masuk akal kalau kelas sepakat: tulisan di papan dianggap masih benar selama 30 menit.
+
+- papan tulis = cache TanStack Query
+- menelepon akademik = request ke API
+- "masih benar selama 30 menit" = `staleTime: 30_000`
+- mahasiswa masuk kelas = layar dibuka lagi, atau aplikasi kembali dari background
+
+</Callout>
+
+**Refetch** artinya mengambil ulang data dari server. Tanpa pengaturan, TanStack Query menganggap data langsung **basi** (*stale*, perlu dicek ulang) begitu selesai diambil. Akibatnya, setiap kali layar dibuka ulang atau aplikasi kembali dari background, query yang aktif diambil ulang. Satu kali pindah tab bisa memicu "badai" request (*refetch storm*). Cegah dengan `staleTime` di query client `kuliah-app`:
+
+```ts title="kuliah-app/src/lib/query-client.ts"
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Data dianggap segar 30 detik: berpindah tab tidak langsung memicu fetch ulang.
+      staleTime: 30_000,
+```
+
+`30_000` adalah 30.000 milidetik alias 30 detik. Garis bawah hanya pemisah ribuan supaya angka mudah dibaca. Selama 30 detik itu, data di cache langsung dipakai tanpa request baru.
+
+**`select`** juga membantu. `select` adalah fungsi yang mengubah bentuk data sebelum diberikan ke komponen. TanStack Query hanya menjalankan ulang `select` kalau data atau fungsinya berubah. Komponen juga hanya dirender ulang kalau hasil `select` berubah:
+
+```ts title="kuliah-app/src/features/tasks/hooks.ts"
+function selectTaskList(data: TaskListData) {
+  return {
+    tasks: data.pages.flatMap((page) => page.data),
+    total: data.pages[0]?.meta.total ?? 0,
+  };
+}
+
+export function useTasks(filters: TaskFilters) {
+  return useInfiniteQuery({
+    queryKey: taskKeys.list(filters),
+    // ...
+    select: selectTaskList,
+    placeholderData: keepPreviousData,
+  });
+}
+```
+
+Cara membaca kode di atas:
+
+- `selectTaskList` menggabungkan semua halaman hasil pagination menjadi satu array `tasks`, lalu mengambil `total` dari halaman pertama.
+- Fungsi ini sengaja ditulis di luar komponen. Kalau ditulis langsung di dalam (`select: (data) => ...`), fungsinya jadi baru di setiap render, sehingga penggabungan data diulang terus.
+- `placeholderData: keepPreviousData` membuat daftar lama tetap tampil saat filter berganti. List tidak sempat berkedip kosong sambil menunggu data baru.
+
+Untuk kolom pencarian, hook di `kuliah-app/src/lib/use-debounced-value.ts` melakukan **debounce**: menunggu 400 ms sampai kamu berhenti mengetik, baru nilai pencarian dipakai. Mirip menunggu temanmu selesai mendikte nama mata kuliah sebelum kamu mencarinya, bukan mencari ulang setiap ia menyebut satu huruf. Tanpa debounce, mengetik "basis data" mengirim sepuluh request dan membuat list dirender ulang sepuluh kali. Dengan debounce, cukup satu.
+
+## Ukuran bundle dengan Expo Atlas
+
+Bundle JavaScript yang besar memperlambat startup dan memperbesar ukuran update. Mirip tas ransel saat mudik: makin banyak barang yang tidak perlu, makin berat kamu berjalan. **Expo Atlas** adalah alat yang menampilkan isi bundle seperti peta: modul mana yang paling besar dan file mana yang mengimpornya. Nyalakan dengan **variabel lingkungan** (pengaturan yang dibaca perintah saat dijalankan):
+
+<Tabs items={["Windows (PowerShell)", "macOS/Linux"]}>
+<Tab>
+
+```powershell
+$env:EXPO_ATLAS = "true"; npx expo start --no-dev
+```
+
+</Tab>
+<Tab>
+
+```bash
+EXPO_ATLAS=true npx expo start --no-dev
+```
+
+</Tab>
+</Tabs>
+
+Langkah selanjutnya:
+
+1. Buka aplikasi sekali supaya bundle dibuat.
+2. Tekan <Kbd>Shift</Kbd> + <Kbd>M</Kbd> di terminal, lalu pilih **expo-atlas**.
+3. Cari kotak terbesar di peta. Itulah modul yang paling banyak makan tempat.
+
+Flag `--no-dev` membuat ukuran yang terlihat mendekati versi production. Cara lain: jalankan `npx expo export` dengan variabel yang sama, lalu buka hasilnya dengan `npx expo-atlas .expo/atlas.jsonl`.
+
+Temuan yang sering muncul: library besar diimpor utuh padahal hanya satu fungsinya yang dipakai, atau file JSON besar ikut masuk bundle. Hati-hati, file `atlas.jsonl` berisi source code dan nilai `EXPO_PUBLIC_` yang sudah ditulis langsung ke bundle. Jangan dibagikan sembarangan.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Jebakan yang sering muncul">
+
+- **Mengukur di development mode.** Lag di mode development belum tentu ada di release. Selalu pastikan dengan `--no-dev --minify` atau build release.
+- **"No compatible apps connected. JavaScript Debugging can only be used with the Hermes engine."** Artinya: tidak ada aplikasi yang bisa di-debug. Pesan ini muncul saat kamu menekan `j` di release build atau tanpa Hermes. Profiler hanya ada di debug build.
+- **`memo` yang tidak pernah berhasil.** Item sudah dibungkus `memo`, tetapi parent masih mengirim `style={{...}}` atau fungsi panah baru. Cek alasan render di Profiler.
+- **Gambar berkedip atau tertukar di FlashList.** Biasanya karena lupa `recyclingKey` pada `expo-image`, atau item menyimpan `useState`.
+- **Optimasi tanpa angka.** Menaburkan `useMemo` di mana-mana menambah kode tanpa bukti manfaat, apalagi kalau React Compiler sudah aktif. Ukur dulu.
+
+</Callout>
+
+## Checklist performa
+
+Pakai tabel ini sebagai daftar periksa sebelum merilis aplikasi. Kolom terakhir menunjukkan alat untuk membuktikan bahwa perbaikanmu berhasil.
+
+| Area | Cek | Alat ukur |
+| --- | --- | --- |
+| Pengukuran | Uji di release build dan HP kelas bawah | `--no-dev --minify`, performance monitor |
+| Re-render | Item list tidak dirender ulang saat mengetik di kolom cari | Profiler, Highlight updates |
+| React Compiler | `reactCompiler: true` aktif, lint bersih | `npx expo lint` |
+| List | Key stabil, item dibungkus `memo`, FlashList untuk list ratusan item | JS FPS dan UI FPS saat scroll |
+| Gambar | `expo-image`, ukuran jelas, `recyclingKey`, upload dikompres | UI FPS, memori di monitor |
+| Animasi | Reanimated, hanya `transform` dan `opacity` | UI FPS saat JS sibuk |
+| Startup | Splash ditahan sampai siap, tidak ada kerja berat di top-level | Stopwatch, buka aplikasi dari keadaan tertutup di release build |
+| Jaringan | `staleTime`, `select` stabil, debounce pencarian | Tab Network di DevTools |
+| Bundle | Tidak ada library besar yang tidak perlu | Expo Atlas |
+
+## Latihan
+
+<Exercise title="Hentikan re-render massal di daftar tugas" difficulty="sedang" hints={["Rekam dengan Profiler sambil mengetik di kolom cari, lalu klik salah satu `TaskCard`.", "Cari props yang berupa objek atau fungsi yang dibuat di dalam `renderItem`."]}>
+
+1. Buat `TaskCard` yang menerima `task` dan `onPress`.
+2. Tampilkan 500 tugas dari `useTasks` dengan FlatList.
+3. Dari parent, sengaja kirim `style={{ marginHorizontal: 16 }}` dan `onPress={() => router.push(...)}`.
+4. Rekam Profiler sambil mengetik di kolom cari. Catat berapa kartu yang dirender ulang.
+5. Perbaiki sampai kartu yang datanya tidak berubah tidak ikut dirender.
+
+<Solution>
+
+Profiler menunjukkan alasan render "Props changed: `style`, `onPress`". Perbaikannya:
+
+```diff title="src/features/tasks/components/TaskCard.tsx"
+-export function TaskCard({ task, style, onPress }) {
++export const TaskCard = memo(function TaskCard({ task, onPress }) {
+   return (
+-    <Pressable style={style} onPress={onPress}>
++    <Pressable style={styles.card} onPress={() => onPress(task.id)}>
+       <Text>{task.title}</Text>
+     </Pressable>
+   );
+-}
++});
++
++const styles = StyleSheet.create({
++  card: { marginHorizontal: 16 },
++});
+```
+
+Di parent, kirim `onPress={openTask}` yang dibuat dengan `useCallback`. Rekam ulang. Sekarang hanya kartu yang datanya berubah yang berwarna di Profiler. Kalau React Compiler aktif, `memo` dan `useCallback` manual mungkin tidak lagi mengubah angka, tetapi kodenya tetap lebih jelas dibaca.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Migrasi ke FlashList dengan thumbnail" difficulty="sulit" hints={["Pasang dengan `npx expo install @shopify/flash-list`.", "Hapus props khusus FlatList yang tidak dikenal FlashList, dan perhatikan `recyclingKey`."]}>
+
+1. Ubah daftar tugas dari FlatList menjadi FlashList.
+2. Tampilkan thumbnail lampiran pertama setiap tugas dengan `expo-image`.
+3. Jalankan release build, lalu scroll cepat bolak-balik.
+4. Pastikan tidak ada gambar milik tugas lain yang muncul sekilas.
+5. Bandingkan UI FPS sebelum dan sesudah.
+
+<Solution>
+
+Ganti import dan komponen seperti diff di bagian FlashList. Hapus `getItemLayout`, `windowSize`, dan `removeClippedSubviews`, lalu pindahkan padding ke `contentContainerStyle`. Di kartu, tampilkan thumbnail hanya kalau tugas punya lampiran:
+
+```jsx
+{task.attachments[0] ? (
+  <Image
+    source={{ uri: resolveFileUrl(task.attachments[0].url) }}
+    style={{ width: 48, height: 48, borderRadius: 6 }}
+    cachePolicy="memory-disk"
+    recyclingKey={String(task.attachments[0].id)}
+  />
+) : null}
+```
+
+`task.attachments[0] ? ... : null` artinya: kalau ada lampiran pertama, tampilkan gambarnya. Kalau tidak ada, jangan tampilkan apa-apa. Tanpa `recyclingKey`, view yang didaur ulang masih menampilkan gambar lama sampai gambar baru selesai dimuat. Kartu juga tidak boleh menyimpan `useState`, karena state itu ikut pindah ke tugas lain.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Scroll daftar tugas terasa patah, tetapi angka JS FPS di performance monitor tetap sekitar 60. Apa penyebab yang paling mungkin?",
+    options: ["Filter pencarian dijalankan di setiap ketikan", "Gambar ukuran penuh di-decode untuk thumbnail kecil", "`staleTime` terlalu kecil", "Komponen `TaskCard` tidak dibungkus `memo`"],
+    answer: 1,
+    explain: "JS FPS normal berarti JS thread (si koki) tidak kewalahan. Masalahnya ada di UI thread (si pelayan), misalnya decode gambar besar atau view terlalu banyak. Filter, re-render, dan refetch membebani JS thread, jadi yang turun seharusnya JS FPS.",
+  },
+  {
+    q: "`TaskCard` sudah dibungkus `memo`, tetapi Profiler tetap menunjukkan semua kartu dirender ulang dengan alasan \"Props changed: onPress\". Apa perbaikannya?",
+    options: ["Ganti FlatList dengan ScrollView", "Naikkan `windowSize` menjadi 50", "Kirim satu fungsi stabil (`useCallback`) dan biarkan kartu memanggil `onPress(task.id)`", "Hapus `keyExtractor`"],
+    answer: 2,
+    explain: "Fungsi panah di `renderItem` dibuat baru di setiap render, seperti fotokopi baru dengan isi sama. `memo` menganggap props berubah. Satu fungsi stabil membuat props tetap sama, jadi kartu dilewati. ScrollView dan `windowSize` besar justru menambah beban, dan `keyExtractor` tidak ada hubungannya dengan `onPress`.",
+  },
+  {
+    q: "Kenapa item di FlashList sebaiknya tidak menyimpan `useState` lokal seperti `isExpanded`?",
+    options: ["View didaur ulang, jadi state milik satu tugas bisa terbawa ke tugas lain", "FlashList sama sekali tidak mendukung hooks", "`useState` membuat bundle lebih besar", "State lokal mematikan React Compiler"],
+    answer: 0,
+    explain: "FlashList memakai ulang view yang sama untuk item berbeda, seperti kursi bus yang dipakai penumpang berikutnya. Simpan state di data, atau pakai `useRecyclingState` yang kembali ke nilai awal saat item berganti. Hooks tetap boleh dipakai, dan `useState` tidak memengaruhi ukuran bundle atau React Compiler.",
+  },
+  {
+    q: "Kamu ingin tahu seberapa mulus scroll aplikasimu bagi pengguna sungguhan. Cara mana yang paling tepat?",
+    options: ["`npx expo start` biasa lalu lihat performance monitor", "Rekam Profiler di React Native DevTools", "Membaca ukuran bundle di Expo Atlas", "Jalankan release build (atau `--no-dev --minify`) di HP kelas bawah"],
+    answer: 3,
+    explain: "Development mode memang lebih lambat, jadi angkanya menyesatkan. Profiler berguna untuk mencari penyebab re-render, dan Atlas untuk ukuran bundle. Rasa scroll yang sebenarnya hanya terlihat di build release.",
+  },
+]} />
+
+## Ringkasan
+
+- Ukur dulu. Performance monitor menunjukkan thread mana yang sibuk. Profiler menunjukkan komponen yang dirender ulang beserta alasannya. Release build memberi angka yang jujur.
+- JS thread menjalankan React dan logika. UI thread menggambar layar dan menangani scroll. Gejala dan perbaikannya berbeda.
+- Re-render massal biasanya berasal dari props yang selalu baru. `memo` dan props stabil memperbaikinya. React Compiler (dinyalakan lewat `reactCompiler` di `app.json`) mengerjakan sebagian besar memoization secara otomatis.
+- List besar butuh key stabil dan item yang ringan. FlashList v2 mendaur ulang view tanpa perlu tebakan ukuran, asalkan item tidak menyimpan state lokal.
+- Tampilkan gambar dengan `expo-image` berukuran jelas, cache `memory-disk`, dan `recyclingKey`. Jalankan animasi di UI thread lewat Reanimated.
+- Jaga startup dengan splash screen dan tanpa kerja berat di top-level. Hermes membantu lewat bytecode. Pantau ukuran bundle dengan Expo Atlas.
+- `staleTime`, `select` yang stabil, dan debounce mencegah refetch storm yang membebani jaringan dan JS thread.
+
+<Callout type="capstone" title="Langkah capstone">
+
+1. Isi ribuan tugas lewat `seed-banyak.ts` dari pelajaran performa backend.
+2. Buka daftar tugas di release build, di HP paling lemah yang kamu punya.
+3. Catat JS FPS dan UI FPS saat scroll dan saat mengetik di kolom cari.
+4. Terapkan satu perbaikan dari checklist, lalu ukur lagi.
+
+Tabel "sebelum dan sesudah" ini cocok untuk README dan presentasi portofolio.
+
+</Callout>

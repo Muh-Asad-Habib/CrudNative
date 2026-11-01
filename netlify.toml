@@ -1,0 +1,31 @@
+# Konfigurasi deploy Netlify.
+# Situs dibangun dari folder web/ sebagai static export Next.js (output: "export").
+# Folder api/ tidak ikut di-deploy ke Netlify.
+
+[build]
+  base = "web"
+  command = "npm run build"
+  # Relatif terhadap base, jadi hasil akhirnya web/out
+  publish = "out"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NEXT_TELEMETRY_DISABLED = "1"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    # 'unsafe-inline' dibutuhkan skrip tema dan data RSC yang disisipkan Next.js ke HTML statis.
+    # 'wasm-unsafe-eval' dibutuhkan SQLite (sql.js) di SQL Playground.
+    # Sandpack (React Playground) dan Expo Snack dimuat lewat iframe dari domain mereka.
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://codesandbox.io https://*.codesandbox.io; frame-src https://*.codesandbox.io https://snack.expo.dev; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://codesandbox.io; frame-ancestors 'none'"
+
+[[headers]]
+  for = "/sql-wasm.wasm"
+  [headers.values]
+    Content-Type = "application/wasm"
+    Cache-Control = "public, max-age=86400"

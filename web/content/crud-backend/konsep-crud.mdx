@@ -1,0 +1,228 @@
+## Pengantar
+
+Coba buka aplikasi apa saja di HP-mu: catatan, kontak, keranjang belanja, atau media sosial. Tampilannya beda-beda. Tapi hampir semuanya melakukan empat hal yang sama terhadap data (informasi yang disimpan aplikasi, misalnya judul tugas atau nomor telepon). Empat hal itu adalah **menambah**, **melihat**, **mengubah**, dan **menghapus**. Singkatannya **CRUD**: Create, Read, Update, Delete.
+
+<Callout type="analogi" title="Seperti mengelola kontak di HP">
+
+Buka aplikasi Kontak di HP-mu. Kamu menyimpan nomor teman baru: itu Create. Kamu mencari nama "Sari" lalu membaca nomornya: itu Read. Sari ganti nomor, jadi kamu mengeditnya: itu Update. Kontak lama yang sudah tidak aktif kamu hapus: itu Delete.
+
+Bedanya, di aplikasi yang akan kita buat, data tidak hanya disimpan di HP. Data dikirim ke komputer lain bernama **server**, supaya tetap aman walau HP-mu hilang.
+
+</Callout>
+
+Di kursus ini kamu akan membangun proyek akhir (**capstone**) bernama *Aplikasi Tugas & Catatan Kuliah*. Setiap tombol di aplikasi itu nanti menjalankan salah satu operasi CRUD. Tombol "Tambah tugas" menjalankan Create. Kotak centang "selesai" menjalankan Update. Ikon tempat sampah menjalankan Delete. Kalau pola ini sudah kamu pahami sekarang, materi API, SQL, dan React Native berikutnya akan lebih mudah diikuti.
+
+## Empat operasi, satu buku catatan
+
+<Callout type="analogi" title="Buku tulis khusus tugas kuliah">
+
+Bayangkan kamu punya satu buku tulis khusus untuk mencatat tugas kuliah. Dengan buku itu kamu hanya melakukan empat hal: menulis tugas baru, membaca daftarnya, membetulkan tulisan atau memberi tanda selesai, dan mencoret tugas yang batal.
+
+</Callout>
+
+Tabel ini menyandingkan buku tulis itu dengan aplikasi:
+
+| Huruf | Operasi | Di buku catatan | Di aplikasi |
+| --- | --- | --- | --- |
+| **C** | Create (membuat) | Menulis tugas baru di baris kosong | Menekan tombol "Tambah tugas" |
+| **R** | Read (membaca) | Membuka buku dan membaca daftarnya | Membuka layar daftar atau detail tugas |
+| **U** | Update (mengubah) | Memberi tanda selesai atau membetulkan tulisan | Mencentang tugas, mengganti judul |
+| **D** | Delete (menghapus) | Mencoret habis satu baris tugas | Menekan ikon tempat sampah |
+
+Untuk mengubah atau menghapus, kamu harus tahu dulu *baris mana* yang dimaksud. Di buku, kamu cukup menunjuk dengan jari. Aplikasi memakai **ID**.
+
+<Callout type="analogi" title="Seperti NIM di kampus">
+
+Di satu angkatan bisa ada dua mahasiswa bernama Andi. Supaya nilai tidak tertukar, kampus memakai NIM, nomor yang tidak pernah sama untuk dua orang. ID di aplikasi bekerja seperti NIM.
+
+</Callout>
+
+**ID** adalah nomor unik milik setiap data, misalnya "tugas nomor 3". Dengan ID, server tahu persis data mana yang diubah atau dihapus. Create tidak butuh ID karena datanya belum ada. ID baru dibuat saat data pertama kali disimpan, sama seperti NIM yang keluar setelah kamu resmi terdaftar.
+
+<Callout type="info" title="CRUD ada di mana-mana">
+
+Keranjang belanja: masukkan barang (C), lihat isi (R), ubah jumlah (U), keluarkan barang (D). Grup WhatsApp kelas: kirim, baca, edit, dan hapus pesan. Definisi singkatnya ada di [glosarium CRUD](/glosarium#crud).
+
+</Callout>
+
+## Peta CRUD, HTTP, dan SQL
+
+<Callout type="analogi" title="Seperti memesan makanan di warung">
+
+Kamu bilang ke pelayan, "Bu, nasi goreng satu." Pelayan menulisnya di nota dengan singkatan untuk dapur, misalnya "NG 1". Dapur membaca nota itu lalu memasak. Satu pesanan ditulis dalam tiga "bahasa": bahasa pembeli, bahasa nota, dan bahasa dapur.
+
+- Pembeli = aplikasi di HP (**client**)
+- Pelayan = **server API**
+- Dapur dan gudang bahan = **database**
+
+Bedanya, pelayan warung masih bisa menebak maksudmu kalau kamu salah sebut. Server hanya mengerti pesan yang formatnya tepat.
+
+</Callout>
+
+Di aplikasi sungguhan, satu operasi CRUD juga melewati tiga lapisan:
+
+- **Client** (aplikasi yang kamu pegang) mengirim **request HTTP**, yaitu pesan permintaan lewat internet.
+- **Server API** (program di komputer lain yang melayani permintaan) menerjemahkan pesan itu menjadi **query SQL**, yaitu perintah dalam bahasa database.
+- **Database** (tempat data disimpan rapi, seperti lemari arsip) menjalankan perintah itu.
+
+Client dan server sudah kamu kenal di [Cara Kerja Web](/belajar/fondasi/cara-kerja-web). Yang baru di sini: tiap lapisan punya kosakata sendiri untuk empat operasi yang sama.
+
+<Flow nodes={["Aplikasi (client)", "Server API", "Database"]} labels={["request HTTP", "query SQL"]} caption="Satu operasi CRUD melewati tiga lapisan" />
+
+Tabel di bawah memakai istilah **method HTTP**. Method adalah kata kerja di awal request yang memberi tahu server mau melakukan apa. Perintah SQL adalah kata pertama di query database.
+
+| CRUD | Method HTTP | Perintah SQL | Contoh di aplikasi capstone |
+| --- | --- | --- | --- |
+| Create | `POST` | `INSERT` | Menambah tugas "Laporan praktikum Basis Data" |
+| Read | `GET` | `SELECT` | Membuka daftar tugas atau detail satu tugas |
+| Update | `PUT` / `PATCH` | `UPDATE` | Mencentang tugas selesai, menaikkan prioritas jadi "tinggi" |
+| Delete | `DELETE` | `DELETE` | Menghapus tugas yang batal dikumpulkan |
+
+Misalnya kamu mencentang tugas nomor 2 sebagai selesai. Kira-kira inilah yang terjadi di balik layar:
+
+```txt
+Aplikasi  →  PATCH /api/tasks/2      body: { "done": true }
+Server    →  UPDATE tasks SET done = 1 WHERE id = 2;
+Database  →  1 baris berubah
+Server    →  200 OK + data tugas yang terbaru
+```
+
+Baca baris demi baris:
+
+1. Aplikasi mengirim request `PATCH` ke alamat `/api/tasks/2`. Angka `2` adalah ID tugasnya. Isi pesannya (**body**) ditulis dalam **JSON**, format teks berisi pasangan nama dan nilai, seperti formulir dengan kolom tetap. `{ "done": true }` artinya "isi kolom selesai dengan: ya".
+2. Server mengubah request itu menjadi query `UPDATE`. `done = 1` berarti selesai, karena database ini menyimpan ya/tidak sebagai angka 1/0.
+3. Database melapor bahwa satu baris berubah.
+4. Server membalas dengan **status code** `200 OK` dan data tugas terbaru. Status code adalah angka yang menandakan hasil request, mirip status resi paket ("terkirim", "gagal antar").
+
+Kamu belum perlu menghafal sintaksnya. Method dan status code dibahas tuntas di [REST API, Method & Status Code](/belajar/crud-backend/rest-api-http). Perintah SQL dibahas di [Dasar SQL & Database](/belajar/crud-backend/dasar-sql).
+
+## Siklus hidup sebuah data
+
+<Callout type="analogi" title="Seperti pengumuman tugas di papan tulis kelas">
+
+Ketua kelas menulis "Tugas Basis Data bab 3, kumpul Jumat" di papan tulis. Menulisnya cukup sekali. Selama seminggu, puluhan teman membacanya berkali-kali. Dosen memundurkan deadline, jadi ketua kelas menghapus "Jumat" dan menulis "Senin". Setelah tugas dikumpulkan, tulisan itu dihapus.
+
+</Callout>
+
+Data di aplikasi punya riwayat hidup yang sama. Ambil contoh tugas "Kerjakan tugas Basis Data bab 3":
+
+<Flow nodes={["Create: tugas dicatat", "Read: tampil di daftar", "Update: dicentang selesai", "Delete: dihapus"]} labels={["dibuka berkali-kali", "progres berubah", "tidak dibutuhkan lagi"]} caption="Siklus hidup satu tugas kuliah" />
+
+1. **Lahir (Create)**: terjadi sekali, saat kamu menekan "Tambah". Database memberi ID baru dan mencatat waktu pembuatannya.
+2. **Dibaca (Read)**: terjadi berkali-kali. Setiap kali kamu membuka aplikasi, memuat ulang daftar, atau membuka detail, terjadi satu Read.
+3. **Berubah (Update)**: bisa nol, satu, atau banyak kali. Judul diganti, prioritas dinaikkan, lalu ditandai selesai. Setiap kali berubah, waktu terakhir diubah ikut diperbarui.
+4. **Berakhir (Delete)**: terjadi sekali. Setelah itu data tidak bisa dibaca lagi.
+
+Dari daftar itu terlihat bahwa Read terjadi jauh lebih sering daripada operasi lain. Karena itu, nanti kamu akan belajar membuat Read yang hemat. Salah satu caranya **pagination**: daftar dibagi per halaman, seperti katalog yang dibagi per halaman. Dengan begitu aplikasi tidak memuat ribuan tugas sekaligus.
+
+<Callout type="tip" title="Hapus permanen atau diarsipkan?">
+
+Beberapa aplikasi tidak benar-benar menghapus data. Data hanya diberi tanda "diarsipkan" supaya masih bisa dipulihkan, mirip folder Sampah di Gmail. Teknik ini disebut *soft delete*. Karena yang terjadi hanya mengganti tanda, soft delete sebenarnya operasi **Update**. Di kursus ini kita memakai hapus permanen supaya konsepnya jelas.
+
+</Callout>
+
+## Coba di simulator CRUD
+
+Sekarang coba sendiri. Simulator di bawah ini juga tersedia di halaman lab [Simulator CRUD](/lab/crud-simulator). Ada dua panel:
+
+- **Aplikasi (client)** di kiri: layar aplikasi tugas yang bisa kamu klik.
+- **Di balik layar** di kanan: request yang dikirim, query SQL yang dijalankan, dan **response** (balasan server) dari aksi terakhirmu.
+
+Kartu CRUD di bagian atas menyala sesuai operasi yang baru terjadi.
+
+<CrudSimulator />
+
+Lakukan percobaan berikut secara berurutan. Setiap selesai satu aksi, buka tab **1 · Request**, **2 · SQL**, lalu **3 · Response**.
+
+1. **Read**: tekan **Muat ulang**. Kamu akan melihat request `GET /api/tasks`, query `SELECT … FROM tasks`, dan response `200 OK` berisi empat tugas awal.
+2. **Create**: ketik "Laporan praktikum Basis Data" di kotak *Tugas baru…*, lalu tekan **Tambah**. Muncul `POST /api/tasks` dengan body JSON, query `INSERT INTO tasks`, dan status `201 Created` (artinya data baru berhasil dibuat).
+3. **Create yang gagal**: kosongkan kotak, lalu tekan **Tambah**. Response-nya `400 Bad Request`, dan tab SQL menulis bahwa query tidak dijalankan. Server menolak data yang tidak valid *sebelum* menyentuh database. Pemeriksaan ini disebut **validasi**, mirip petugas yang mengecek formulirmu sebelum menerimanya.
+4. **Update**: klik kotak centang di depan tugas yang belum selesai. Lihat `PATCH /api/tasks/<id>` dengan body `{ "done": true }` dan query `UPDATE tasks SET done = 1 … WHERE id = …`. Coba juga ikon pensil untuk mengganti judul, lalu tekan <Kbd>Enter</Kbd>.
+5. **Delete**: klik ikon tempat sampah. Request `DELETE /api/tasks/<id>` dibalas `204 No Content`, artinya berhasil tanpa isi balasan.
+6. Tekan **Lihat isi tabel tasks** untuk mengintip isi database. Buka **Riwayat** untuk melihat semua operasi yang sudah kamu lakukan. Tombol **Reset** di pojok kanan atas mengembalikan data awal.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Jebakan yang sering muncul">
+
+- **Membuat data baru padahal maksudnya mengubah.** Kalau form "Edit" ternyata menjalankan Create, daftar tugasmu akan berisi tugas kembar. Edit harus selalu membawa ID data yang lama.
+- **Lupa bahwa Update dan Delete harus menunjuk data tertentu.** Di SQL, `UPDATE` atau `DELETE` tanpa syarat `WHERE id = …` akan mengenai *semua* baris. Bahayanya dibahas di pelajaran SQL.
+- **Menghapus tanpa konfirmasi.** Delete biasanya tidak bisa dibatalkan. Aplikasi yang baik bertanya "Yakin hapus?" lebih dulu.
+- **Mengira CRUD hanya urusan database.** CRUD muncul di setiap lapisan: tombol di layar, alamat di API, dan query SQL.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Petakan fitur catatan kuliah" difficulty="mudah" hints={["Tanyakan: apakah datanya bertambah, berubah, berkurang, atau hanya dilihat?", "Mencari dan menyaring data juga termasuk membaca.", "Lihat lagi tabel peta CRUD, HTTP, dan SQL di atas."]}>
+
+Selain tugas, aplikasi capstone juga punya fitur **catatan kuliah**. Untuk setiap aksi berikut, tentukan tiga hal: operasi CRUD, method HTTP, dan perintah SQL-nya.
+
+1. Sari menulis catatan baru untuk mata kuliah Basis Data.
+2. Sari membuka daftar semua catatannya.
+3. Sari membetulkan salah ketik di judul sebuah catatan.
+4. Sari membuang catatan semester lalu.
+5. Sari mencari catatan yang berisi kata "normalisasi".
+
+<Solution>
+
+| No | CRUD | Method HTTP | SQL |
+| --- | --- | --- | --- |
+| 1 | Create | `POST` | `INSERT` |
+| 2 | Read | `GET` | `SELECT` |
+| 3 | Update | `PATCH` (hanya judul yang berubah) | `UPDATE` |
+| 4 | Delete | `DELETE` | `DELETE` |
+| 5 | Read | `GET` dengan query string, mis. `?q=normalisasi` | `SELECT … WHERE …` |
+
+Nomor 5 sering menjebak. Mencari tidak mengubah data apa pun, jadi tetap termasuk **Read**. Bedanya hanya ada syarat penyaring. `?q=normalisasi` disebut **query string**: tambahan di ujung alamat untuk memberi syarat, mirip bilang ke penjaga perpustakaan "cari buku yang judulnya ada kata normalisasi". Kamu akan menulis pencarian seperti ini di pelajaran SQL dan di [Pagination, Filter, Search & Sort](/belajar/crud-backend/pagination-filter-search).
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Andi mencentang tugas \"Setup Expo di HP\" sebagai selesai. Operasi CRUD apa yang terjadi?",
+    options: ["Create", "Read", "Update", "Delete"],
+    answer: 2,
+    explain: "Tugasnya sudah ada. Yang berubah hanya satu kolom (`done`), jadi ini Update. Create membuat data baru, Read hanya melihat, dan Delete membuang data.",
+  },
+  {
+    q: "Pasangan method HTTP dan perintah SQL yang tepat untuk operasi Create adalah…",
+    options: ["`GET` + `SELECT`", "`POST` + `INSERT`", "`PATCH` + `UPDATE`", "`DELETE` + `DELETE`"],
+    answer: 1,
+    explain: "Create dikirim dengan `POST` dan disimpan ke database dengan `INSERT`. Tiga pasangan lain milik Read, Update, dan Delete.",
+  },
+  {
+    q: "Di simulator, kamu menekan Tambah dengan judul kosong. Apa yang terjadi?",
+    options: [
+      "Server membalas `400 Bad Request` dan query `INSERT` tidak dijalankan",
+      "Server membalas `201 Created` dan tugas tanpa judul muncul",
+      "Server membalas `204 No Content`",
+      "Database menolak datanya dan server membalas `500`",
+    ],
+    answer: 0,
+    explain: "Server mengecek isian lebih dulu (validasi). Judul kosong tidak lolos, jadi server langsung membalas 400 tanpa menyentuh database. 201 hanya untuk data yang berhasil dibuat. 204 untuk sukses tanpa isi balasan, seperti DELETE. 500 berarti ada error di server.",
+  },
+  {
+    q: "Ketua kelas menulis pengumuman tugas di papan tulis, lalu puluhan teman membacanya berkali-kali. Di aplikasi, operasi mana yang biasanya paling sering terjadi?",
+    options: ["Delete", "Create", "Update", "Read"],
+    answer: 3,
+    explain: "Sama seperti pengumuman di papan tulis, tugas dibuat sekali dan dihapus paling banyak sekali. Tapi tugas dibaca setiap kali daftar dibuka atau dimuat ulang. Karena itu operasi Read perlu dibuat cepat.",
+  },
+]} />
+
+## Ringkasan
+
+- **CRUD** = Create, Read, Update, Delete. Ini empat operasi dasar terhadap data, seperti menambah, melihat, mengedit, dan menghapus kontak di HP.
+- Update dan Delete selalu menunjuk satu data lewat **ID**, nomor unik seperti NIM. Create tidak butuh ID karena ID dibuat saat data disimpan.
+- Setiap operasi punya pasangan di HTTP (`POST`, `GET`, `PUT`/`PATCH`, `DELETE`) dan di SQL (`INSERT`, `SELECT`, `UPDATE`, `DELETE`).
+- Data dibuat sekali, dibaca berkali-kali, diubah sesekali, lalu dihapus.
+- Server mengecek isian lebih dulu. Data yang tidak valid ditolak dengan `400` sebelum menyentuh database.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Tulis daftar fitur *Aplikasi Tugas & Catatan Kuliah* versimu. Contohnya: tambah mata kuliah, lihat tugas per mata kuliah, tandai tugas selesai, hapus tugas. Beri label C, R, U, atau D di samping setiap fitur. Simpan daftar ini. Di pelajaran berikutnya kamu akan mengubahnya menjadi daftar **endpoint** REST, yaitu alamat-alamat API yang bisa dipanggil aplikasi.
+
+</Callout>

@@ -1,0 +1,734 @@
+## Pengantar
+
+Saat kamu menekan **Simpan** di aplikasi tugas kuliah, data dikirim ke server. Jawabannya bisa datang dalam 0,2 detik lewat Wi-Fi kampus, atau 3 detik kalau sinyal lemah. Selama menunggu, aplikasi tidak boleh membeku. Tombol lain harus tetap bisa ditekan, dan ikon loading harus tetap berputar.
+
+Kemampuan "menunggu tanpa berhenti" ini disebut **asynchronous** (asinkron): pekerjaan dimulai sekarang, hasilnya diurus nanti. Di pelajaran ini kamu belajar:
+
+1. Cara JavaScript mengatur antrean pekerjaan (*event loop*).
+2. Tiga cara menulis kode yang menunggu: callback, Promise, dan `async`/`await`.
+3. Mengambil data sungguhan dari internet dengan `fetch`.
+
+Hampir setiap layar aplikasi yang kamu bangun nanti memuat data dengan pola ini.
+
+### Menyiapkan proyek latihan
+
+Proyek ini memakai ES Modules (`"type": "module"`) seperti di [JavaScript Modern 2](/belajar/fondasi/javascript-modern-2). Alasannya, di ESM kamu boleh menulis `await` langsung di badan file tanpa membungkusnya dalam function. Arti `await` dibahas di bawah. Ketik perintah ini di terminal:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+mkdir latihan-async
+cd latihan-async
+npm init -y
+npm pkg set type=module
+New-Item index.js
+code .
+```
+
+</Tab>
+<Tab>
+
+```bash
+mkdir latihan-async
+cd latihan-async
+npm init -y
+npm pkg set type=module
+touch index.js
+code .
+```
+
+</Tab>
+</Tabs>
+
+Urutannya sama seperti pelajaran sebelumnya: buat folder, buat `package.json`, aktifkan ESM, buat `index.js`, lalu buka di VS Code. Tempel contoh kode ke `index.js`, lalu jalankan dengan `node index.js`. Bagian `fetch` butuh koneksi internet.
+
+## Synchronous vs asynchronous
+
+<Callout type="analogi" title="Seperti antre fotokopi vs pesan nasi goreng">
+
+Di tempat fotokopi kampus, kamu berdiri di depan mesin sampai semua lembar selesai. Orang di belakangmu ikut menunggu. Itu **synchronous**: satu pekerjaan harus selesai dulu sebelum pekerjaan berikutnya dimulai.
+
+Di warung nasi goreng, kamu memesan, lalu duduk sambil membalas chat grup kelas. Penjual memanggilmu saat pesanan siap. Itu **asynchronous**.
+
+- Memesan = memulai pekerjaan yang butuh waktu, misalnya mengambil data dari server.
+- Membalas chat sambil menunggu = baris kode berikutnya tetap jalan.
+- Dipanggil saat pesanan siap = kode lanjutan dijalankan begitu hasilnya ada.
+
+</Callout>
+
+Kode **synchronous** berjalan baris demi baris. Baris berikutnya menunggu baris sebelumnya selesai. Kode **asynchronous** memulai sebuah pekerjaan, lalu langsung lanjut ke baris berikutnya tanpa menunggu hasilnya. Hasilnya diurus nanti, saat sudah siap.
+
+`setTimeout` adalah cara paling sederhana untuk melihatnya. Ia menjadwalkan sebuah function untuk dijalankan setelah sekian milidetik (1000 milidetik = 1 detik), mirip memasang timer masak di HP:
+
+```js
+console.log("1. Mulai menyimpan tugas");
+
+setTimeout(() => {
+  console.log("3. Server menjawab: tersimpan");
+}, 1000);
+
+console.log("2. Layar tetap bisa dipakai");
+// → 1. Mulai menyimpan tugas
+// → 2. Layar tetap bisa dipakai
+// → 3. Server menjawab: tersimpan   (1 detik kemudian)
+```
+
+Baris "2" tercetak sebelum "3", walaupun ditulis setelahnya. JavaScript tidak diam selama satu detik itu. Ia menitipkan pekerjaan ke timer, lalu lanjut ke baris berikutnya. Satu detik kemudian, barulah function di dalam `setTimeout` dijalankan.
+
+### Event loop, versi sederhana
+
+<Callout type="analogi" title="Seperti satu pelayan di warung yang ramai">
+
+Bayangkan warung dengan **satu** pelayan dan satu dapur.
+
+- Pelayan = JavaScript. Ia hanya bisa melayani satu pembeli dalam satu waktu.
+- Pembeli yang sedang dilayani = kode di **call stack**.
+- Dapur yang memasak = Node atau browser, yang mengurus pekerjaan lama seperti timer atau mengambil data.
+- Meja tempat makanan matang menunggu diantar = **antrian** (*queue*).
+- Kebiasaan pelayan melirik meja itu setiap kali tangannya kosong = **event loop**.
+
+Pelayan tidak pernah meninggalkan pembeli di tengah pesanan untuk mengantar makanan. Ia menyelesaikan pembeli di depannya dulu, baru mengantar makanan yang sudah matang. Ada satu aturan yang tidak ada di warung sungguhan: hasil Promise selalu diantar lebih dulu daripada hasil timer. Aturan ini dibahas di bawah.
+
+</Callout>
+
+JavaScript hanya punya **satu jalur kerja** (*single-threaded*). Artinya ia hanya bisa mengerjakan satu hal pada satu waktu. Ia tetap bisa "menunggu banyak hal" karena pembagian kerjanya seperti ini:
+
+<Flow nodes={["Call stack menjalankan kode", "Node/browser menunggu", "Antrian callback", "Kembali ke call stack"]} labels={["titip timer atau fetch", "selesai, masuk antrian", "event loop: stack kosong?"]} caption="Perjalanan sebuah callback asynchronous" />
+
+1. Kode dijalankan di **call stack**, yaitu tumpukan pekerjaan yang sedang dikerjakan sekarang, baris demi baris.
+2. Pekerjaan yang butuh waktu (timer, request ke internet, membaca file) dititipkan ke Node atau browser. Mereka yang menunggu di belakang layar.
+3. Setelah pekerjaan itu selesai, function lanjutannya masuk ke **antrian**. Function lanjutan ini disebut **callback**, dibahas di bagian berikutnya.
+4. **Event loop** terus memeriksa. Begitu call stack kosong, callback terdepan di antrian diambil lalu dijalankan.
+
+Akibatnya, callback tidak pernah memotong kode yang sedang berjalan.
+
+Ada satu detail lagi. Hasil dari Promise (dibahas sebentar lagi) punya antrian sendiri, dan antrian itu selalu didahulukan. Karena itu, urutan output kode ini sering mengejutkan pemula:
+
+```js
+console.log("A");
+setTimeout(() => console.log("B (setTimeout 0)"), 0);
+Promise.resolve().then(() => console.log("C (promise)"));
+console.log("D");
+// → A
+// → D
+// → C (promise)
+// → B (setTimeout 0)
+```
+
+- A dan D adalah kode synchronous, jadi selesai lebih dulu.
+- Setelah call stack kosong, antrian Promise (C) dijalankan duluan.
+- Baru setelah itu antrian timer (B).
+
+Waktu `0` ms tidak berarti "langsung". Artinya "secepatnya, setelah kode yang sedang berjalan selesai dan antrian Promise kosong".
+
+## Callback: cara lama
+
+Bayangkan kamu menitipkan HP rusak ke tukang servis, sekalian nomor WhatsApp-mu. Kamu pulang, lalu tukang servis mengabari nanti: "sudah jadi" atau "maaf, mesinnya tidak bisa diperbaiki". Nomor WA yang kamu titipkan itu mirip **callback**: function yang kamu titipkan ke pekerjaan lain, untuk dipanggil saat pekerjaan itu selesai.
+
+Sebelum ada Promise, hasil pekerjaan asynchronous diterima lewat callback. Node punya kebiasaan (konvensi) untuk callback: argumen pertama berisi error, atau `null` kalau berhasil. Argumen kedua berisi hasilnya. Mirip tukang servis yang selalu menyebut ada masalah atau tidak dulu, baru menyebut hasilnya.
+
+```js
+const tasks = [
+  { id: 1, title: "Laporan Basis Data", done: false },
+  { id: 2, title: "Kuis Pemrograman Mobile", done: true },
+];
+
+function ambilTugas(id, callback) {
+  setTimeout(() => {
+    const task = tasks.find((t) => t.id === id);
+    if (!task) {
+      callback(new Error(`Tugas ${id} tidak ditemukan`));
+      return;
+    }
+    callback(null, task);
+  }, 500);
+}
+
+ambilTugas(1, (error, task) => {
+  if (error) {
+    console.log("✗", error.message);
+    return;
+  }
+  console.log("✓", task.title);
+});
+console.log("Menunggu...");
+// → Menunggu...
+// → ✓ Laporan Basis Data
+```
+
+Cara membaca kode di atas:
+
+- `ambilTugas` pura-pura mencari tugas selama 500 ms dengan `setTimeout`.
+- Kalau tugas tidak ketemu, ia memanggil `callback` dengan error. `return` menghentikan function di situ.
+- Kalau ketemu, ia memanggil `callback(null, task)`, artinya "tidak ada error, ini tugasnya".
+- "Menunggu..." tercetak duluan, karena `ambilTugas` tidak menahan baris berikutnya.
+
+Masalah muncul saat langkah-langkahnya saling bergantung: ambil tugas, lalu ambil mata kuliahnya, lalu ambil dosennya. Bayangkan pesan ke tukang servis: "kalau HP sudah jadi, antar ke toko casing; kalau casing ada, bawa ke tukang sablon; kalau sablon selesai, kabari aku". Setiap langkah bersarang di dalam langkah sebelumnya. Kodenya makin menjorok ke kanan, dan setiap tingkat harus memeriksa error sendiri. Bentuk ini dijuluki **callback hell**:
+
+```js
+// Sketsa, tidak untuk dijalankan
+ambilTugas(1, (err, task) => {
+  if (err) return tampilkanError(err);
+  ambilMataKuliah(task.courseId, (err, course) => {
+    if (err) return tampilkanError(err);
+    ambilDosen(course.lecturerId, (err, dosen) => {
+      if (err) return tampilkanError(err);
+      console.log(dosen.name);
+    });
+  });
+});
+```
+
+Kamu masih akan memakai callback untuk *event handler*, yaitu function yang dijalankan saat sesuatu terjadi. Contohnya `onPress` di React Native (dijalankan saat tombol ditekan) dan `setTimeout`. Untuk data yang harus ditunggu, JavaScript modern memakai Promise.
+
+## Promise
+
+<Callout type="analogi" title="Seperti nota laundry kiloan">
+
+Kamu menitipkan baju kotor ke laundry dekat kos. Bajunya belum bersih sekarang, tapi kamu langsung mendapat **nota**. Nota itu janji bahwa bajumu akan kembali nanti.
+
+- Nota = **Promise**. Nota bukan bajunya, tapi pegangan untuk hasil yang akan datang.
+- "Masih dicuci" = **pending**.
+- "Sudah selesai, silakan ambil" = **fulfilled**, membawa hasil (baju bersih).
+- "Maaf, bajunya luntur" = **rejected**, membawa alasan gagal (error).
+
+Status yang sudah selesai tidak berubah lagi. Baju yang sudah diambil tidak kembali menjadi "masih dicuci".
+
+</Callout>
+
+**Promise** (janji) adalah object yang mewakili hasil yang *belum ada sekarang*, tapi akan datang nanti. Sebuah Promise selalu berada di salah satu dari tiga keadaan:
+
+| Keadaan | Arti | Contoh |
+| --- | --- | --- |
+| pending | masih menunggu | request sedang dikirim |
+| fulfilled | berhasil, membawa nilai | data tugas sudah datang |
+| rejected | gagal, membawa error | server mati, tugas tidak ditemukan |
+
+Setelah fulfilled atau rejected, keadaannya tetap begitu selamanya.
+
+### Membuat Promise: helper delay
+
+Kamu jarang membuat Promise sendiri, karena `fetch` dan banyak library sudah mengembalikan Promise. Tapi ada satu *helper* (function kecil pembantu) yang berguna untuk latihan, yaitu `delay`. Function ini membuat kode menunggu sekian milidetik. Dengan `delay`, kamu bisa meniru **latensi jaringan**, yaitu jeda sampai jawaban server datang:
+
+```js
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+console.log("Menyimpan...");
+await delay(1000);
+console.log("Tersimpan!"); // muncul 1 detik kemudian
+```
+
+Baris pertama membuat Promise yang baru selesai setelah `ms` milidetik. `await delay(1000)` artinya "tunggu di sini 1 detik, lalu lanjut". Kata `await` dibahas lengkap di bagian async/await.
+
+`new Promise` menerima sebuah function dengan dua parameter:
+
+- `resolve`, dipanggil untuk menandai berhasil (nota: "silakan ambil").
+- `reject`, dipanggil untuk menandai gagal (nota: "bajunya luntur").
+
+Di `delay`, `resolve` dipanggil oleh timer setelah waktunya habis. Contoh berikut memakai keduanya. Ini versi Promise dari `ambilTugas` tadi:
+
+```js
+function getTask(id) {
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      const task = tasks.find((t) => t.id === id);
+      if (task) resolve(task);
+      else reject(new Error(`Tugas ${id} tidak ditemukan`));
+    }, 500);
+  });
+}
+```
+
+Kalau tugasnya ketemu, Promise berakhir fulfilled dan membawa tugas itu. Kalau tidak, Promise berakhir rejected dan membawa error.
+
+### Memakai Promise: then, catch, finally
+
+Untuk memakai hasil Promise, sambungkan method `then`, `catch`, dan `finally`. Di laundry, ini seperti pesan: "kalau sudah jadi, langsung setrika", "kalau rusak, minta ganti rugi", dan "apa pun hasilnya, kabari aku".
+
+```js
+getTask(2)
+  .then((task) => {
+    console.log("✓", task.title);
+    return task.done; // nilai ini diteruskan ke then berikutnya
+  })
+  .then((done) => console.log("Sudah selesai?", done))
+  .catch((error) => console.log("✗", error.message))
+  .finally(() => console.log("Loading selesai"));
+// → ✓ Kuis Pemrograman Mobile
+// → Sudah selesai? true
+// → Loading selesai
+```
+
+- `then` dijalankan saat berhasil. Nilai yang di-`return` di `then` pertama diteruskan ke `then` berikutnya. Rangkaian seperti ini disebut *chaining* (menyambung).
+- `catch` dijalankan kalau ada yang gagal di langkah mana pun.
+- `finally` selalu dijalankan, berhasil atau gagal.
+
+Coba ganti menjadi `getTask(99)`. Kedua `then` dilewati, lalu tercetak `✗ Tugas 99 tidak ditemukan` dan `Loading selesai`.
+
+## async/await: Promise yang mudah dibaca
+
+<Callout type="analogi" title="Seperti resep yang punya langkah menunggu">
+
+Resep mi rebus berbunyi: "Rebus air. **Tunggu** sampai mendidih. Masukkan mi." Kamu membacanya dari atas ke bawah, walaupun ada langkah menunggu di tengahnya.
+
+- Resep = function `async`.
+- "Tunggu sampai mendidih" = `await`.
+- Selama air belum mendidih, kamu boleh memotong sayur untuk masakan lain = JavaScript menjalankan kode lain.
+- Air mendidih = Promise selesai. Resep dilanjutkan tepat dari langkah berikutnya.
+
+</Callout>
+
+`async`/`await` adalah cara menulis kode Promise supaya terbaca seperti kode biasa, dari atas ke bawah. Tiga aturannya:
+
+- `await` menunggu Promise selesai, lalu memberikan isinya. Kalau Promise-nya gagal, `await` melempar error. Error itu bisa ditangkap dengan `try`/`catch`, yang sudah kamu pelajari di JavaScript Modern 2.
+- `await` hanya boleh ditulis di dalam function yang diberi kata `async`, atau langsung di badan file ESM.
+- Function `async` **selalu mengembalikan Promise**. Nilai `return` menjadi isi Promise yang berhasil, dan `throw` membuat Promise itu gagal.
+
+Sekarang buat "API palsu" dengan `delay`, yaitu function yang berpura-pura mengambil data dari server. Cara ini bagus untuk latihan sebelum kamu punya server sungguhan. Kosongkan `index.js` dulu, karena nama `getTask` dipakai ulang:
+
+```js
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const db = [
+  { id: 1, title: "Laporan Basis Data", done: false, priority: "tinggi" },
+  { id: 2, title: "Kuis Pemrograman Mobile", done: true, priority: "sedang" },
+  { id: 3, title: "Rangkuman Jaringan Komputer", done: false, priority: "rendah" },
+];
+
+async function getTask(id) {
+  await delay(500); // pura-pura menunggu jaringan
+  const task = db.find((t) => t.id === id);
+  if (!task) {
+    throw new Error(`Tugas ${id} tidak ditemukan`);
+  }
+  return task;
+}
+
+async function tampilkanTugas(id) {
+  console.log("Memuat...");
+  try {
+    const task = await getTask(id);
+    console.log(`✓ ${task.title}`);
+  } catch (error) {
+    console.log(`✗ ${error.message}`);
+  } finally {
+    console.log("Loading selesai");
+  }
+}
+
+await tampilkanTugas(1);
+await tampilkanTugas(99);
+// → Memuat...
+// → ✓ Laporan Basis Data
+// → Loading selesai
+// → Memuat...
+// → ✗ Tugas 99 tidak ditemukan
+// → Loading selesai
+```
+
+Urutan untuk `tampilkanTugas(1)`:
+
+1. Cetak "Memuat...".
+2. `await getTask(1)` menunggu 500 ms, lalu `task` berisi tugas id 1.
+3. Cetak judulnya, lalu `finally` mencetak "Loading selesai".
+
+Untuk id 99, `getTask` melempar error. `await` meneruskan error itu, sehingga kode lompat ke `catch`.
+
+Pola **memuat → berhasil atau gagal → selesai** ini sama persis dengan yang nanti kamu tulis di layar React. Tampilkan *spinner* (ikon loading yang berputar), lalu tampilkan data atau pesan error, lalu matikan spinner di `finally`. Contoh-contoh berikutnya memakai `delay`, `db`, dan `getTask` versi `async` ini.
+
+## Menunggu banyak Promise sekaligus
+
+<Callout type="analogi" title="Seperti memesan konsumsi rapat himpunan">
+
+Kamu memesan nasi, ayam, dan es teh dari tiga warung berbeda untuk rapat himpunan.
+
+- Pesan satu, tunggu datang, baru pesan berikutnya = `await` berurutan. Lama.
+- Pesan ketiganya sekaligus = menjalankan semua Promise bersamaan.
+- **`Promise.all`** = aturan "konsumsi harus lengkap". Kalau satu warung tutup, seluruh pesanan dianggap gagal.
+- **`Promise.allSettled`** = laporan per warung: "nasi datang, ayam datang, es teh habis". Yang datang tetap dibagikan.
+
+</Callout>
+
+Kalau beberapa request **tidak saling bergantung**, jalankan semuanya bersamaan. Request kedua tidak butuh hasil request pertama, jadi tidak perlu menunggu.
+
+`Promise.all` menerima array berisi Promise dan menunggu semuanya selesai. Hasilnya array berisi nilai, dengan urutan yang sama seperti array masukan. Kalau **satu saja** gagal, seluruhnya dianggap gagal:
+
+```js
+const [t1, t2] = await Promise.all([getTask(1), getTask(2)]);
+console.log(t1.title, "|", t2.title);
+// → Laporan Basis Data | Kuis Pemrograman Mobile
+
+try {
+  await Promise.all([getTask(1), getTask(99)]);
+} catch (error) {
+  console.log("Gagal:", error.message); // → Gagal: Tugas 99 tidak ditemukan
+}
+```
+
+Baris pertama memakai destructuring array: hasil pertama masuk ke `t1`, hasil kedua ke `t2`. Di bagian `try`, `getTask(99)` gagal, jadi seluruh `Promise.all` gagal dan kode lompat ke `catch`.
+
+`Promise.allSettled` menunggu semuanya selesai, berhasil maupun gagal, lalu melaporkan status masing-masing. Cocok untuk *dashboard* (layar ringkasan berisi beberapa bagian) yang tetap harus tampil walaupun satu bagian gagal:
+
+```js
+const hasil = await Promise.allSettled([getTask(1), getTask(99)]);
+
+for (const r of hasil) {
+  if (r.status === "fulfilled") console.log("✓", r.value.title);
+  else console.log("✗", r.reason.message);
+}
+// → ✓ Laporan Basis Data
+// → ✗ Tugas 99 tidak ditemukan
+```
+
+Tiap laporan punya `status`. Kalau isinya `"fulfilled"`, nilainya ada di `value`. Kalau `"rejected"`, error-nya ada di `reason`.
+
+| | `Promise.all` | `Promise.allSettled` |
+| --- | --- | --- |
+| Satu gagal | langsung gagal semua (masuk `catch`) | tetap menunggu yang lain |
+| Hasil | array nilai | array `{ status, value }` atau `{ status, reason }` |
+| Cocok untuk | data yang wajib lengkap | bagian-bagian yang boleh gagal sendiri-sendiri |
+
+## fetch: mengambil data dari internet
+
+<Callout type="analogi" title="Seperti memesan lewat GoFood">
+
+- `fetch(url)` = mengirim pesanan ke warung tertentu. URL = alamat warungnya.
+- `await fetch(...)` = menunggu driver tiba di depan pintu. Kamu sudah melihat kantong dan notanya (status), tapi belum membuka isinya.
+- `await res.json()` = membuka kantong dan menata makanan di piring, supaya siap dipakai kodemu.
+- Status 404 = driver datang membawa nota "menu habis". Pesananmu tetap *dijawab*, hanya isinya bukan makanan.
+- `fetch` gagal total = driver tidak bisa sampai sama sekali, misalnya jalan ditutup (internet mati).
+
+</Callout>
+
+`fetch` adalah function bawaan untuk mengirim **request HTTP**, yaitu permintaan data ke server lewat internet (dibahas di [Cara Kerja Web](/belajar/fondasi/cara-kerja-web)). `fetch` tersedia di semua browser modern, di React Native, dan di Node sejak versi 18. Jadi di Node 22 kamu tidak perlu memasang apa pun.
+
+Untuk latihan, kita pakai [JSONPlaceholder](https://jsonplaceholder.typicode.com), sebuah [API](/glosarium#api) palsu gratis. API adalah "pelayan" di server yang menerima permintaan lalu mengirim data balik.
+
+Tiap contoh di bagian ini berdiri sendiri. Ganti isi `index.js` dengan contoh yang sedang kamu coba. Kalau semua contoh ditempel bertumpuk, Node menolak dengan error `Identifier 'res' has already been declared` karena nama `res` dibuat dua kali.
+
+```js
+const res = await fetch("https://jsonplaceholder.typicode.com/todos/1");
+console.log(res.status, res.ok); // → 200 true
+
+const todo = await res.json();
+console.log(todo);
+// → { userId: 1, id: 1, title: 'delectus aut autem', completed: false }
+```
+
+Ada **dua `await`**:
+
+1. `await fetch(...)` menunggu kepala jawaban (*header*) tiba. Hasilnya object `Response`, disimpan di `res`. Di titik ini status sudah bisa dibaca.
+2. `await res.json()` menunggu isi jawaban (*body*) selesai diunduh, lalu mengubah teks [JSON](/glosarium#json) menjadi object JavaScript. JSON adalah format teks untuk data, mirip formulir dengan kolom tetap.
+
+Bagian `Response` yang paling sering dipakai:
+
+| Bagian | Isi |
+| --- | --- |
+| `res.status` | [status code](/glosarium#status-code), angka hasil request seperti status resi paket: 200 berhasil, 201 dibuat, 404 tidak ditemukan |
+| `res.ok` | `true` kalau status antara 200 dan 299 (berhasil) |
+| `res.json()` | Promise berisi body yang sudah diubah dari JSON menjadi object |
+| `res.text()` | Promise berisi body sebagai teks biasa |
+
+### fetch tidak melempar error untuk 404
+
+Banyak pemula terjebak di sini. `fetch` hanya gagal (rejected) kalau **request-nya tidak sampai**, misalnya internet mati atau alamat server salah. Kalau server menjawab 404 (tidak ditemukan) atau 500 (server error), bagi `fetch` itu tetap "berhasil mendapat jawaban". Ingat driver yang membawa nota "menu habis" tadi:
+
+```js
+const res = await fetch("https://jsonplaceholder.typicode.com/todos/9999");
+console.log(res.status, res.ok); // → 404 false
+
+const todo = await res.json();
+console.log(todo.title); // → undefined, tanpa error apa pun
+```
+
+Tidak ada error sama sekali. `res.ok` bernilai `false`, body-nya berupa object kosong, jadi `todo.title` berisi `undefined`.
+
+Karena itu, selalu periksa `res.ok`, lalu lempar error sendiri kalau nilainya `false`. Bungkus pengecekan ini dalam satu helper supaya kamu tidak lupa:
+
+```js
+async function getJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} untuk ${url}`);
+  }
+  return res.json();
+}
+
+try {
+  const todo = await getJson("https://jsonplaceholder.typicode.com/todos/9999");
+  console.log(todo.title);
+} catch (error) {
+  console.log("✗", error.message);
+  // → ✗ HTTP 404 untuk https://jsonplaceholder.typicode.com/todos/9999
+}
+```
+
+`getJson` mengambil data, lalu memeriksa `res.ok`. Kalau gagal, ia melempar error berisi status code. Kalau berhasil, ia mengembalikan hasil `res.json()`. Kode yang memanggilnya cukup memakai satu `try`/`catch`.
+
+### Mengirim data dengan POST
+
+Untuk membuat data baru, kirim request dengan method **POST** (jenis request HTTP untuk membuat data). Tambahkan argumen kedua berisi tiga hal:
+
+- `method: "POST"`, jenis request-nya.
+- `headers`, keterangan tambahan untuk server. `"Content-Type": "application/json"` memberi tahu server bahwa isinya JSON.
+- `body`, isi yang dikirim. Body harus berupa teks, jadi object diubah dulu menjadi teks JSON dengan `JSON.stringify`.
+
+```js
+const res = await fetch("https://jsonplaceholder.typicode.com/todos", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ title: "Laporan Basis Data", completed: false, userId: 1 }),
+});
+
+console.log(res.status); // → 201
+console.log(await res.json());
+// → { title: 'Laporan Basis Data', completed: false, userId: 1, id: 201 }
+```
+
+Status 201 berarti "data berhasil dibuat". JSONPlaceholder hanya pura-pura menyimpan. Id-nya selalu 201, dan datanya tidak benar-benar tersimpan.
+
+### Saat jaringan gagal
+
+Kalau server tidak bisa dihubungi sama sekali, `fetch` melempar `TypeError: fetch failed` di Node. Pesannya berbeda di browser.
+
+Masalah lain muncul kalau server lambat sekali: request bisa menggantung lama. Beri batas waktu (*timeout*) dengan `AbortSignal.timeout`. Artinya kira-kira "kalau 5 detik belum datang, batalkan pesanan":
+
+```js
+try {
+  await fetch("https://jsonplaceholder.typicode.com/todos/1", {
+    signal: AbortSignal.timeout(5000), // batalkan setelah 5 detik
+  });
+} catch (error) {
+  console.log(error.name); // → TimeoutError (kalau melebihi 5 detik)
+}
+```
+
+Opsi `signal` menyambungkan request dengan pembatal otomatis. Kalau lewat 5 detik, request dibatalkan dan `error.name` berisi `TimeoutError`.
+
+<Callout type="tip" title="Coba juga di browser">
+
+1. Buka https://jsonplaceholder.typicode.com di browser.
+2. Tekan F12 untuk membuka DevTools (alat developer bawaan browser), lalu pilih tab **Console**.
+3. Ketik `await (await fetch("/todos/1")).json()` lalu tekan Enter.
+
+Kode `fetch` yang sama berjalan di browser, di Node, dan di aplikasi React Native.
+
+</Callout>
+
+## Kesalahan umum
+
+### Lupa await
+
+```js
+const task = getTask(1); // lupa await
+console.log(task); // → Promise { <pending> }
+console.log(task.title); // → undefined
+```
+
+Kalau kamu melihat `Promise { <pending> }` atau `undefined` di tempat yang seharusnya berisi data, hampir pasti ada `await` yang terlewat. Kamu memegang notanya, bukan bajunya. Hal yang sama terjadi kalau kamu lupa `await` di `res.json()`.
+
+### Tidak memeriksa res.ok
+
+Seperti contoh 404 tadi, kodenya tidak error, tapi datanya kosong. Bug ini sering baru ketahuan saat layar menampilkan tulisan "undefined". Pakai helper seperti `getJson` di atas.
+
+### Menunggu satu per satu padahal bisa bersamaan
+
+<Compare>
+<CompareItem title="Berurutan: sekitar 1,5 detik" tone="bad">
+
+```js
+console.time("berurutan");
+const a = await getTask(1);
+const b = await getTask(2);
+const c = await getTask(3);
+console.timeEnd("berurutan");
+// → berurutan: 1.541s
+```
+
+</CompareItem>
+<CompareItem title="Paralel: sekitar 0,5 detik" tone="good">
+
+```js
+console.time("paralel");
+const [a, b, c] = await Promise.all([
+  getTask(1),
+  getTask(2),
+  getTask(3),
+]);
+console.timeEnd("paralel");
+// → paralel: 514.258ms
+```
+
+</CompareItem>
+</Compare>
+
+Di kiri, setiap `await` menunggu request sebelumnya selesai, jadi waktunya dijumlahkan: 3 × 0,5 detik. Di kanan, ketiga request dimulai bersamaan, jadi totalnya kira-kira selama satu request saja. `console.time` dan `console.timeEnd` mengukur waktu di antara keduanya. Angka waktumu akan sedikit berbeda.
+
+Pakai cara berurutan hanya kalau request berikutnya **butuh** hasil request sebelumnya. Contohnya, ambil tugas dulu, lalu ambil mata kuliah berdasarkan `courseId` tugas itu.
+
+### await di function biasa
+
+```js
+function muatTugas() {
+  const task = await getTask(1); // ✗ function ini tidak async
+}
+```
+
+Node menolak menjalankan file ini. Di file ESM pesannya `SyntaxError: Unexpected reserved word`, artinya kata `await` dipakai di tempat yang tidak boleh. Di CommonJS dan di Chrome pesannya lebih jelas: `await is only valid in async functions and the top level bodies of modules`. Perbaikannya, tambahkan `async` di depan function: `async function muatTugas()`.
+
+### forEach tidak menunggu
+
+```js
+[1, 2].forEach(async (id) => {
+  const task = await getTask(id);
+  console.log(task.title);
+});
+console.log("Selesai?");
+// → Selesai?   ← tercetak duluan
+// → Laporan Basis Data
+// → Kuis Pemrograman Mobile
+```
+
+`forEach` memanggil callback untuk tiap item, tapi tidak menunggu callback `async` selesai. Jadi "Selesai?" tercetak duluan. Kalau perlu berurutan, pakai `for (const id of ids)` dengan `await` di dalamnya. Kalau boleh bersamaan, pakai `await Promise.all(ids.map((id) => getTask(id)))`.
+
+<Callout type="warning" title="Promise gagal tanpa catch membuat Node berhenti">
+
+Misalnya kamu memanggil `getTask(99)` tanpa `try`/`catch` di sekitar `await`, dan tanpa `.catch()`. Promise itu gagal, dan tidak ada yang menangkap error-nya. Node lalu mencetak error beserta *stack trace* (daftar baris yang dilewati sampai error terjadi), kemudian **menghentikan program** dengan exit code 1, kode angka yang berarti "berhenti karena gagal". Di server, itu berarti API mati. Jadi setiap Promise harus punya penanganan error di suatu tempat.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Dashboard yang tahan gagal" difficulty="mudah" hints={["Pakai `getTask` versi `async` dan `delay` dari bagian async/await.", "`ids.map((id) => getTask(id))` menghasilkan array Promise.", "Pisahkan hasil `allSettled` dengan `filter` berdasarkan `r.status`."]}>
+
+Buat function `muatDashboard(ids)` yang memuat beberapa tugas sekaligus.
+
+1. Pakai `getTask` dan `delay` dari bagian async/await.
+2. Muat semua tugas **bersamaan**. Kalau satu gagal, tugas lain tetap tampil.
+3. Cetak jumlah yang berhasil dan yang gagal.
+4. Cetak judul tugas yang berhasil dan pesan error yang gagal.
+5. Ukur waktunya dengan `console.time`. Coba dengan `[1, 99, 3]`: waktunya harus sekitar 0,5 detik, bukan 1,5 detik.
+
+<Solution>
+
+```js
+async function muatDashboard(ids) {
+  console.time("dashboard");
+  const hasil = await Promise.allSettled(ids.map((id) => getTask(id)));
+  console.timeEnd("dashboard");
+
+  const berhasil = hasil.filter((r) => r.status === "fulfilled").map((r) => r.value);
+  const gagal = hasil.filter((r) => r.status === "rejected");
+
+  console.log(`${berhasil.length} berhasil, ${gagal.length} gagal`);
+  berhasil.forEach((t) => console.log(`- ${t.title}`));
+  gagal.forEach((r) => console.log(`! ${r.reason.message}`));
+}
+
+await muatDashboard([1, 99, 3]);
+// → dashboard: 505.112ms
+// → 2 berhasil, 1 gagal
+// → - Laporan Basis Data
+// → - Rangkuman Jaringan Komputer
+// → ! Tugas 99 tidak ditemukan
+```
+
+`ids.map((id) => getTask(id))` memulai semua request sekaligus dan menghasilkan array Promise. `allSettled` menunggu semuanya, lalu `filter` memisahkan yang berhasil dan yang gagal. `Promise.all` tidak cocok di sini, karena satu tugas yang gagal akan membuat seluruh dashboard gagal.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Helper fetch dengan pengecekan status" difficulty="sedang" hints={["Simpan alamat dasar di konstanta `BASE_URL`, lalu gabungkan dengan path memakai template literal.", "Di dalam helper: `fetch`, cek `res.ok`, lalu `return res.json()`.", "Query string `?userId=1&_limit=3` membatasi hasil menjadi 3 todo."]}>
+
+1. Buat konstanta `BASE_URL = "https://jsonplaceholder.typicode.com"`.
+2. Buat helper `getJson(path)` yang melempar error kalau `res.ok` bernilai `false`.
+3. Ambil `/todos?userId=1&_limit=3`. Bagian setelah `?` disebut *query string*, yaitu filter tambahan di URL. Di sini artinya "todo milik user 1, maksimal 3".
+4. Cetak setiap judul dengan tanda `✓` (selesai) atau `○` (belum).
+5. Di dalam `try` yang sama, ambil `/todos/9999`, lalu pastikan pesan error-nya tercetak.
+
+<Solution>
+
+```js
+const BASE_URL = "https://jsonplaceholder.typicode.com";
+
+async function getJson(path) {
+  const res = await fetch(`${BASE_URL}${path}`);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} untuk ${path}`);
+  }
+  return res.json();
+}
+
+try {
+  const todos = await getJson("/todos?userId=1&_limit=3");
+  for (const todo of todos) {
+    console.log(`${todo.completed ? "✓" : "○"} ${todo.title}`);
+  }
+  await getJson("/todos/9999");
+} catch (error) {
+  console.log(`✗ ${error.message}`);
+}
+// → ○ delectus aut autem
+// → ○ quis ut nam facilis et officia qui
+// → ○ fugiat veniam minus
+// → ✗ HTTP 404 untuk /todos/9999
+```
+
+Memisahkan `BASE_URL` dari path memudahkan pindah server, karena alamatnya cukup diganti di satu tempat. Di aplikasi mobile nanti, alamat dasar ini diambil dari *environment variable*, yaitu pengaturan yang disimpan di luar kode.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Apa urutan output kode berikut?",
+    code: "console.log(\"A\");\nsetTimeout(() => console.log(\"B\"), 0);\nPromise.resolve().then(() => console.log(\"C\"));\nconsole.log(\"D\");",
+    options: ["A B C D", "A D C B", "A C D B", "A D B C"],
+    answer: 1,
+    explain: "A dan D adalah kode synchronous, jadi jalan duluan. Setelah call stack kosong, antrian Promise (C) didahulukan, baru antrian timer (B). Timer 0 ms tetap harus menunggu giliran.",
+  },
+  {
+    q: "Di dalam function `async`, apa output kode berikut? `getTask` adalah function async yang mengembalikan tugas setelah 500 ms.",
+    code: "const task = getTask(1);\nconsole.log(task.title);",
+    options: ["`Laporan Basis Data`", "TypeError", "`Promise { <pending> }`", "`undefined`"],
+    answer: 3,
+    explain: "Tanpa `await`, `task` berisi Promise (notanya), bukan object tugas (bajunya). Promise tidak punya property `title`, jadi hasilnya `undefined`. Tidak muncul error, sehingga bug ini mudah terlewat.",
+  },
+  {
+    q: "Apa yang terjadi saat `await fetch(url)` menerima respons 404?",
+    options: ["Tidak ada error. `res.ok` bernilai `false`, jadi kamu harus memeriksanya sendiri", "`fetch` melempar `TypeError: fetch failed`", "`fetch` mengulang request otomatis", "`res.status` tetap 200"],
+    answer: 0,
+    explain: "`fetch` hanya gagal kalau request tidak sampai ke server. Jawaban 404 atau 500 tetap dianggap jawaban, seperti driver yang membawa nota \"menu habis\". Jadi periksa `res.ok`, lalu lempar error sendiri.",
+  },
+  {
+    q: "`getTask` butuh 500 ms. Mana yang selesai dalam sekitar 500 ms untuk tiga tugas yang tidak saling bergantung?",
+    options: ["Tiga baris `await getTask(...)` berurutan", "`[1, 2, 3].forEach(async (id) => await getTask(id))`", "`await Promise.all([getTask(1), getTask(2), getTask(3)])`", "`for (const id of [1, 2, 3]) await getTask(id)`"],
+    answer: 2,
+    explain: "`Promise.all` memulai ketiga request bersamaan, jadi totalnya sekitar 500 ms. Tiga `await` berurutan dan `for...of` dengan `await` butuh sekitar 1,5 detik. `forEach` memang memulai semuanya, tapi kodenya tidak menunggu sama sekali.",
+  },
+  {
+    q: "Dashboard memuat tiga bagian. Kalau satu gagal, dua lainnya tetap harus tampil. Apa yang paling tepat?",
+    options: ["`Promise.all`", "`Promise.allSettled`", "`setTimeout` dengan jeda lebih panjang", "Callback bersarang"],
+    answer: 1,
+    explain: "`Promise.allSettled` menunggu semua selesai dan melaporkan status masing-masing, seperti laporan per warung. `Promise.all` langsung gagal begitu ada satu yang gagal. `setTimeout` dan callback bersarang tidak menyelesaikan masalah ini.",
+  },
+]} />
+
+## Ringkasan
+
+- JavaScript mengerjakan satu hal dalam satu waktu. Pekerjaan yang butuh waktu dititipkan ke Node atau browser, lalu event loop menjalankan callback-nya saat call stack kosong.
+- Callback adalah function titipan yang dipanggil nanti. Callback yang bersarang (callback hell) sulit dibaca.
+- Promise mirip nota laundry: pending, fulfilled, atau rejected. Pakai hasilnya dengan `then`/`catch`/`finally` atau dengan `await`.
+- `async`/`await` dengan `try`/`catch`/`finally` adalah cara utama menulis kode yang menunggu. Function `async` selalu mengembalikan Promise. Helper `delay(ms)` meniru jeda jaringan untuk latihan.
+- `Promise.all` untuk data yang wajib lengkap. `Promise.allSettled` untuk bagian yang boleh gagal sendiri-sendiri.
+- `fetch` butuh dua `await` (respons, lalu `res.json()`). Ia tidak melempar error untuk 404 atau 500, jadi selalu cek `res.ok`. Untuk POST, kirim body dengan `JSON.stringify` dan header `Content-Type`.
+- Waspadai lupa `await`, lupa cek `res.ok`, `await` berurutan yang tidak perlu, dan `forEach` dengan `async`.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Helper `getJson` di latihan adalah bentuk awal `apiFetch` di `src/lib/api.js`, yang akan kamu bangun di [Menghubungkan Expo ke API](/belajar/fullstack/menghubungkan-expo-api). Versi lengkapnya menambahkan alamat dasar dari environment variable, timeout, dan error yang membawa status code. Setiap layar aplikasi tugas kuliah akan memuat datanya dengan pola yang kamu latih hari ini: memuat, berhasil atau gagal, lalu selesai.
+
+</Callout>

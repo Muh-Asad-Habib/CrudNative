@@ -1,0 +1,1053 @@
+## Pengantar
+
+Bayangkan dosenmu minta fitur baru untuk *Aplikasi Tugas & Catatan Kuliah*: "Tugas yang deadline-nya lewat
+tidak boleh diubah lagi." Ini sebuah **aturan bisnis**, yaitu aturan tentang cara aplikasi bekerja menurut
+pemakainya. Sekarang bayangkan semua kodemu menumpuk di satu file route. Kamu harus mencari setiap tempat yang
+mengubah tugas. Kode itu tercampur dengan `req.body`, query Prisma, dan `res.status(...)`. Satu aturan kecil
+memaksamu mengubah lima tempat, dan kamu tidak yakin ada yang terlewat.
+
+Masalah inilah yang diselesaikan **arsitektur**, yaitu cara membagi kode ke file dan folder beserta aturan siapa
+boleh memakai siapa. Tujuannya satu: **ongkos perubahan** tetap murah. Kalau ada yang berubah, kamu cukup
+menyentuh sedikit file, dan kamu tahu persis file yang mana.
+
+<Callout type="analogi" title="Seperti dapur warung yang dibagi per stasiun">
+
+Di warung yang ramai, tiap orang punya tugas sendiri. Pelayan mencatat pesanan dan mengantar makanan. Koki
+memasak sesuai resep. Penjaga gudang menyimpan dan mengambilkan bahan. Pelayan tidak masuk gudang, dan koki
+tidak menagih pembeli.
+
+- pelayan = lapisan HTTP (route): menerima request, mengirim response
+- koki dan resepnya = logika bisnis (service)
+- gudang = akses data (Prisma dan database)
+
+Kalau gudang pindah ke ruko sebelah, resep tidak perlu ditulis ulang. Begitu juga kode: ganti database tidak
+perlu mengubah aturan bisnis.
+
+</Callout>
+
+Diagram berikut menunjukkan jalur satu request di API pendamping:
+
+<Flow
+  nodes={["Route + validate()", "Service", "Prisma", "SQLite"]}
+  labels={["input bersih + userId", "query bertipe", "SQL"]}
+  caption="Satu request di API pendamping: setiap lapisan hanya berbicara dengan lapisan di sebelahnya"
+/>
+
+Pelajaran ini melanjutkan [TypeScript End-to-End](/belajar/expert/typescript-end-to-end) dan
+[Struktur Proyek Backend](/belajar/crud-backend/struktur-proyek-backend). Contoh backend diambil dari API
+pendamping `api/`. Contoh mobile adalah struktur yang disarankan untuk `kuliah-app` versi TypeScript. Itu
+proyek Expo milikmu dari Track 3 yang dipindah ke TypeScript di Track 4. Kode backend yang **tidak** ada di
+`api/` diberi label **saran pengembangan**.
+
+## Kenapa arsitektur: menghitung ongkos perubahan
+
+<Callout type="analogi" title="Seperti instalasi listrik di kamar kos">
+
+Ada dua kos. Di kos pertama, semua lampu dan stopkontak disambung ke satu kabel yang melilit ke mana-mana.
+Mengganti satu saklar berarti membongkar plafon. Di kos kedua, tiap kamar punya kabel dan sekring sendiri.
+Mengganti saklar cukup membuka satu kotak. Kedua kos sama-sama menyala, tetapi biaya perbaikannya jauh berbeda.
+
+Kode juga begitu. Dua proyek bisa sama-sama berjalan, tetapi yang satu jauh lebih mahal untuk diubah.
+
+</Callout>
+
+Cara paling jujur menilai arsitektur: hitung berapa file yang harus kamu ubah untuk satu perubahan yang wajar.
+Tabel ini membandingkan "satu file route gemuk" dengan struktur berlapis seperti di `api/src/modules/tasks/`:
+
+| Perubahan | Route gemuk | Berlapis (pendamping) |
+| --- | --- | --- |
+| Aturan bisnis baru (deadline lewat tidak boleh diedit) | cari di semua handler yang mengubah tugas | satu fungsi di `tasks.service.ts` |
+| Pesan validasi judul diganti | setiap `if (!title)` di beberapa handler | satu baris di `tasks.schemas.ts` |
+| Format error `{ error: { ... } }` berubah | puluhan `res.status(...).json(...)` | satu file `middleware/error-handler.ts` |
+| Ganti SQLite ke PostgreSQL | semua handler (query tercampur) | `lib/prisma.ts` + konfigurasi Prisma |
+| Menulis unit test logika bisnis | harus menyalakan server + database | panggil fungsi service langsung |
+
+Tabel ini bekerja karena dua prinsip dari **SOLID**, yaitu lima prinsip desain kode yang populer. Kita cukup
+memakai dua:
+
+- **S**ingle Responsibility: setiap modul (file atau fungsi) hanya punya satu alasan untuk berubah. Skema
+  validasi berubah kalau aturan input berubah, bukan kalau database berubah.
+- **D**ependency Inversion: kode inti bergantung pada "kebutuhan" yang ditulis sebagai **antarmuka**
+  (`interface`, daftar fungsi yang harus tersedia), bukan pada detail teknis seperti Prisma.
+
+## Lapisan dan aturan dependensi
+
+Ada beberapa gaya arsitektur terkenal: *layered* (berlapis), *hexagonal*, dan *clean architecture*. Semuanya
+berbagi ide yang sama: pisahkan kode menjadi tiga kelompok tanggung jawab, yang disebut **lapisan** (*layer*).
+
+| Lapisan | Tanggung jawab | Di API pendamping |
+| --- | --- | --- |
+| **Presentasi / HTTP** | baca request, validasi bentuk input, tentukan status code, kirim JSON | `tasks.routes.ts`, `middleware/validate.ts`, `middleware/auth.ts` |
+| **Domain / logika bisnis** | aturan aplikasi: kepemilikan data, relasi yang sah, alur hapus | `tasks.service.ts` |
+| **Akses data** | bicara dengan database dan file | `lib/prisma.ts`, `lib/storage.ts`, Prisma Client |
+
+"Domain" artinya dunia yang diurus aplikasi, di sini tugas kuliah dan mata kuliah.
+
+<Callout type="analogi" title="Koki hanya membaca kertas pesanan">
+
+Koki di warung tidak perlu tahu pesanan datang dari mana. Bisa dari pembeli yang makan di tempat, dari GoFood,
+atau dari pesanan katering via telepon. Semua pesanan sampai ke koki dalam bentuk yang sama: kertas pesanan
+berisi menu dan jumlah. Karena itu, koki yang sama bisa melayani semua jalur.
+
+- koki = service (logika bisnis)
+- kertas pesanan = data biasa yang diterima service (`userId`, `input`)
+- jalur pesanan (makan di tempat, GoFood, telepon) = HTTP, *cron job*, skrip seed
+
+</Callout>
+
+Analogi itu menggambarkan **dependency rule** (aturan arah ketergantungan). Panah `import` hanya
+boleh mengarah **ke dalam**: dari HTTP ke domain, dari domain ke akses data. Domain tidak tahu apa pun soal
+HTTP. Contoh konkretnya, `tasks.service.ts` tidak boleh meng-import `Request` atau `Response` dari Express.
+
+Hasilnya terasa saat tugas dibuat dari jalur lain. Misalnya dari **cron job** (program yang jalan otomatis
+sesuai jadwal, seperti pengingat deadline tiap pagi) atau dari skrip seed. Service yang sama tetap bisa dipakai
+karena ia hanya menerima data biasa.
+
+### Membaca layering nyata di pendamping
+
+Route di pendamping sengaja tipis. **Handler** (fungsi yang dijalankan saat request masuk) hanya menerjemahkan
+HTTP menjadi pemanggilan fungsi:
+
+```ts title="api/src/modules/tasks/tasks.routes.ts"
+tasksRouter.post("/", validate({ body: createTaskSchema }), async (req, res) => {
+  const task = await tasksService.createTask(getUserId(req), req.body);
+  res.status(201).json({ data: task });
+});
+```
+
+Baca handler ini seperti kalimat: "Untuk `POST /`, cek dulu bentuk body dengan `createTaskSchema`. Kalau lolos,
+minta service membuat tugas untuk user yang sedang login, lalu kirim hasilnya dengan status 201."
+
+Perhatikan apa yang **tidak** ada di sana: `try/catch`, query, dan `if` validasi. Validasi bentuk data
+dikerjakan `validate()` dengan skema Zod. Error diteruskan otomatis oleh Express 5 ke **error handler** (satu
+fungsi khusus yang mengubah error menjadi respons JSON). Aturan bisnis tinggal di service:
+
+```ts title="api/src/modules/tasks/tasks.service.ts"
+// courseId boleh kosong, tapi kalau diisi harus mata kuliah milik user sendiri.
+async function assertCourseOwned(userId: number, courseId: number | null | undefined) {
+  if (courseId == null) return;
+  const course = await prisma.course.findFirst({ where: { id: courseId, userId }, select: { id: true } });
+  if (!course) {
+    throw HttpError.validation([{ field: "courseId", message: "Mata kuliah tidak ditemukan" }]);
+  }
+}
+
+export async function createTask(userId: number, input: CreateTaskInput) {
+  await assertCourseOwned(userId, input.courseId);
+  return prisma.task.create({ ...taskQueryArgs, data: { ...input, userId } });
+}
+```
+
+Isinya dalam bahasa sehari-hari:
+
+- `assertCourseOwned()` mengecek mata kuliah. Kalau `courseId` kosong, tidak ada yang dicek. Kalau diisi, ia
+  mencari mata kuliah dengan `id` itu **dan** milik user ini. Kalau tidak ketemu, ia melempar error validasi.
+- `createTask()` menjalankan pengecekan itu dulu, baru menyimpan tugas dengan `userId` pemiliknya.
+
+Service menerima `userId` dan `input` yang sudah bersih, bukan `req`. Itulah dependency rule dalam praktik.
+
+<Callout type="note" title="Pendamping tidak punya controller dan repository, dan itu disengaja">
+
+Banyak tutorial memakai empat lapisan: route → controller → service → repository. **Controller** adalah fungsi
+penerjemah HTTP, dan **repository** adalah objek khusus untuk akses data. Pendamping hanya memakai
+route → service → Prisma. Handler tiga baris di `tasks.routes.ts` sudah berperan sebagai controller. Prisma
+Client sendiri sudah menjadi lapisan akses data yang bertipe. Lapisan baru hanya layak ditambah kalau ada
+manfaat nyata, misalnya untuk testing atau karena sumber data bisa diganti. Kita bahas kapan itu terjadi di
+bagian repository di bawah.
+
+</Callout>
+
+## Refactor: dari route gemuk ke kode berlapis
+
+Sekarang kita praktik **refactor**, yaitu merapikan susunan kode tanpa mengubah perilakunya. Di bawah ini versi
+"semua di satu tempat" dari `POST /api/tasks`. Kode ini berjalan, tetapi mencampur lima urusan sekaligus:
+autentikasi, validasi, aturan bisnis, query, dan format error.
+
+```ts title="api/src/app.ts (versi gemuk, jangan ditiru)"
+app.post("/api/tasks", async (req, res) => {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) {
+    res.status(401).json({ error: { message: "Silakan login terlebih dahulu", code: "UNAUTHORIZED" } });
+    return;
+  }
+  const { userId } = verifyAccessToken(header.slice("Bearer ".length));
+
+  const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+  if (!title) {
+    res.status(400).json({
+      error: {
+        message: "Data yang dikirim tidak valid",
+        code: "VALIDATION_ERROR",
+        details: [{ field: "title", message: "Judul wajib diisi" }],
+      },
+    });
+    return;
+  }
+
+  const courseId = typeof req.body.courseId === "number" ? req.body.courseId : null;
+  if (courseId !== null) {
+    const course = await prisma.course.findFirst({ where: { id: courseId, userId } });
+    if (!course) {
+      res.status(400).json({
+        error: {
+          message: "Data yang dikirim tidak valid",
+          code: "VALIDATION_ERROR",
+          details: [{ field: "courseId", message: "Mata kuliah tidak ditemukan" }],
+        },
+      });
+      return;
+    }
+  }
+
+  try {
+    const task = await prisma.task.create({ data: { title, courseId, userId } });
+    res.status(201).json({ data: task });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: { message: "Terjadi kesalahan pada server", code: "INTERNAL_ERROR" } });
+  }
+});
+```
+
+Urutan kerjanya dari atas ke bawah:
+
+1. Baris-baris awal membaca header `Authorization` dan mengecek token login. Kalau tidak ada, balas 401.
+2. Blok berikutnya mengecek `title` secara manual. Kalau kosong, balas 400.
+3. Kalau `courseId` dikirim, cari mata kuliahnya. Kalau bukan milik user, balas 400.
+4. Terakhir, simpan tugas. Kalau database error, balas 500.
+
+Masalahnya baru terasa saat endpoint `PATCH` butuh pengecekan `courseId` yang sama. Kamu akan menyalin blok itu.
+Suatu hari kamu mengubah satu salinan dan lupa salinan lainnya. Kita refactor dalam empat langkah.
+
+<Steps>
+<Step title="Pindahkan autentikasi ke middleware">
+
+Blok `Bearer` pindah menjadi `requireAuth` di `api/src/middleware/auth.ts`. **Middleware** adalah fungsi yang
+berjalan sebelum handler, mirip satpam di gerbang kampus. Pasang sekali dengan `tasksRouter.use(requireAuth)`.
+Handler cukup memanggil `getUserId(req)` untuk tahu siapa yang login.
+
+</Step>
+<Step title="Pindahkan validasi bentuk ke skema Zod">
+
+Semua `typeof ... === "string"` diganti `createTaskSchema` di `tasks.schemas.ts`. Skema ini seperti petugas
+yang mengecek formulir sebelum diproses. Pasang lewat `validate({ body: createTaskSchema })`. Setelah lolos,
+`req.body` sudah bersih dari spasi berlebih (di-*trim*) dan bertipe `CreateTaskInput`.
+
+</Step>
+<Step title="Pindahkan aturan bisnis dan query ke service">
+
+Pengecekan kepemilikan mata kuliah menjadi `assertCourseOwned()`. Pembuatan tugas menjadi `createTask()`.
+Fungsi pengecekan ini sekarang bisa dipakai ulang oleh `updateTask()`.
+
+</Step>
+<Step title="Serahkan semua respons error ke satu error handler">
+
+Ganti setiap `res.status(4xx).json(...)` dengan `throw HttpError...`, lalu hapus `try/catch`. Express 5
+meneruskan error dari handler async ke `errorHandler` secara otomatis.
+
+</Step>
+</Steps>
+
+Hasilnya, dilihat sebagai diff terhadap handler di atas. Baris berawalan `-` dihapus, baris berawalan `+`
+ditambahkan:
+
+```diff title="POST /api/tasks: sebelum → sesudah"
+-app.post("/api/tasks", async (req, res) => {
+-  const header = req.headers.authorization;
+-  if (!header?.startsWith("Bearer ")) { /* 401 manual */ }
+-  const { userId } = verifyAccessToken(header.slice("Bearer ".length));
+-  const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+-  if (!title) { /* 400 manual */ }
+-  const courseId = typeof req.body.courseId === "number" ? req.body.courseId : null;
+-  if (courseId !== null) { /* query course + 400 manual */ }
+-  try {
+-    const task = await prisma.task.create({ data: { title, courseId, userId } });
+-    res.status(201).json({ data: task });
+-  } catch (error) { /* 500 manual */ }
+-});
++tasksRouter.use(requireAuth);
++
++tasksRouter.post("/", validate({ body: createTaskSchema }), async (req, res) => {
++  const task = await tasksService.createTask(getUserId(req), req.body);
++  res.status(201).json({ data: task });
++});
+```
+
+Jumlah kodenya tidak hilang. Kode itu **pindah ke tempat yang tepat** dan bisa dipakai ulang, seperti baju
+yang masuk lemari dan buku yang masuk rak.
+
+Pastikan perilaku tidak berubah setelah refactor. Caranya, jalankan **integration test** (test yang mengirim
+request sungguhan ke API) dari pelajaran [Testing Backend](/belajar/expert/testing-backend):
+
+```bash
+npm test -- tests/tasks.test.ts
+```
+
+## Error domain dipetakan di satu tempat
+
+<Callout type="analogi" title="Koki melapor, customer service yang bicara ke pembeli">
+
+Bahan ayam habis. Koki cukup berteriak ke depan, "Ayam habis!" Ia tidak memikirkan kalimat sopan untuk pembeli.
+Petugas di meja customer service yang memutuskan cara menyampaikannya: "Maaf, ayam goreng habis. Mau ganti
+lele?" Semua kabar buruk lewat satu meja, jadi cara menyampaikannya selalu seragam.
+
+- koki = service
+- teriakan "Ayam habis!" = error yang dilempar (`throw`)
+- meja customer service = error handler
+- kalimat sopan untuk pembeli = status HTTP + JSON `{ error: { message, code } }`
+
+</Callout>
+
+Lihat lagi `assertCourseOwned()`. Service melempar error, tetapi **tidak** memilih bentuk JSON-nya. Itu tugas
+`api/src/middleware/error-handler.ts`. Di sana fungsi `toHttpError()` mengubah berbagai jenis error menjadi satu
+format respons:
+
+```ts title="api/src/middleware/error-handler.ts"
+function toHttpError(error: unknown): HttpError | null {
+  if (error instanceof HttpError) return error;
+
+  if (error instanceof z.ZodError) {
+    return HttpError.validation(
+      error.issues.map((issue) => ({ field: issue.path.join("."), message: issue.message })),
+    );
+  }
+
+  if (error instanceof multer.MulterError) {
+    if (error.code === "LIMIT_FILE_SIZE") {
+      return new HttpError(413, "PAYLOAD_TOO_LARGE", "Ukuran file maksimal 5 MB");
+    }
+    // ...
+  }
+  // ...
+  return null;
+}
+```
+
+Fungsi ini memeriksa jenis error satu per satu:
+
+- `HttpError` sudah siap pakai, langsung dikembalikan.
+- `ZodError` (input tidak sesuai skema) diubah menjadi error validasi 400, lengkap dengan field yang salah.
+- `MulterError` dari upload file, misalnya file terlalu besar, diubah menjadi 413.
+
+Error yang tidak dikenali (hasilnya `null`) dicatat di log, lalu dibalas `500 INTERNAL_ERROR` dengan pesan umum.
+Dengan begitu, detail internal server tidak bocor ke client.
+
+Pendamping mengambil jalan praktis: service langsung melempar `HttpError.notFound(...)` dari
+`api/src/lib/http-error.ts`. Ini masih aman terhadap dependency rule karena `HttpError` hanyalah kelas biasa
+tanpa import Express. Kekurangannya, service jadi "tahu" angka status HTTP. Kalau service mulai dipakai dari
+luar HTTP (misalnya *job* pengingat), kamu bisa memakai **error domain**. Error domain adalah error yang
+namanya memakai bahasa bisnis ("tidak ditemukan", "aturan dilanggar"), tanpa angka HTTP. Pemetaannya ke HTTP
+dilakukan di error handler:
+
+```ts title="api/src/lib/domain-errors.ts (saran pengembangan)"
+export class NotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NotFoundError";
+  }
+}
+
+export class RuleViolationError extends Error {
+  readonly field: string;
+
+  constructor(field: string, message: string) {
+    super(message);
+    this.name = "RuleViolationError";
+    this.field = field;
+  }
+}
+```
+
+```diff title="api/src/middleware/error-handler.ts (saran pengembangan)"
+ function toHttpError(error: unknown): HttpError | null {
+   if (error instanceof HttpError) return error;
++  if (error instanceof NotFoundError) return HttpError.notFound(error.message);
++  if (error instanceof RuleViolationError) {
++    return HttpError.validation([{ field: error.field, message: error.message }]);
++  }
+```
+
+File pertama membuat dua jenis error baru. `NotFoundError` berarti "datanya tidak ada". `RuleViolationError`
+berarti "aturan bisnis dilanggar" dan menyimpan nama field yang bermasalah. Diff kedua menambahkan dua baris
+pemetaan di error handler.
+
+Service cukup berkata "tugas tidak ditemukan". Hanya satu file yang memutuskan bahwa itu berarti
+`404 NOT_FOUND`. Aplikasi mobile tidak merasakan bedanya karena format JSON yang diterimanya tetap sama.
+
+## Repository pattern dan dependency injection
+
+Di [Testing Backend](/belajar/expert/testing-backend) kamu menguji `tasks.service.ts` dengan `vi.mock`, yaitu
+fitur Vitest untuk memalsukan modul `prisma`. Cara itu berhasil, tetapi mudah rusak. Test harus tahu persis
+method Prisma mana yang dipanggil. Kalau service ganti dari `findFirst` ke `findUnique`, test ikut gagal padahal
+perilakunya sama. Dua pola berikut menyelesaikannya.
+
+<Callout type="analogi" title="Seperti stopkontak dan charger">
+
+Laptopmu butuh listrik lewat colokan dengan bentuk tertentu. Laptop tidak peduli listriknya dari PLN, genset,
+atau power bank. Asal colokannya cocok, laptop menyala. Kamu juga tidak menyolder kabel PLN langsung ke
+laptop. Kamu mencolokkannya dari luar, jadi sumber listrik bisa diganti kapan saja.
+
+- bentuk colokan yang diminta laptop = **port** (antarmuka `TaskRepository`)
+- PLN = **adapter** Prisma (database sungguhan)
+- power bank kecil untuk uji coba = adapter in-memory untuk test
+- mencolokkan dari luar, bukan menyolder = **dependency injection**
+
+Bedanya: colokan listrik hanya mengalirkan satu hal. Port di kode biasanya berisi beberapa fungsi sekaligus.
+
+</Callout>
+
+**Repository pattern**: kumpulkan semua akses data sebuah fitur di satu objek. Nama method-nya memakai bahasa
+bisnis, seperti `findOwned` ("cari yang dimiliki user") atau `courseBelongsTo` ("apakah mata kuliah ini milik
+user"), bukan `findFirst({ where: ... })`.
+
+**Dependency injection (DI)**: service tidak meng-import repository sendiri. Service **menerimanya sebagai
+parameter** dari luar. Di TypeScript, cara paling ringan adalah *factory function*: fungsi yang menerima
+dependensi lalu mengembalikan objek berisi fungsi-fungsi service. Kamu tidak butuh library tambahan atau
+*decorator* (sintaks `@Something` yang dipakai framework seperti NestJS).
+
+Kedua pola ini adalah inti dari **ports & adapters** (nama lain arsitektur heksagonal). *Port* adalah antarmuka
+yang ditentukan kode inti. *Adapter* adalah implementasi nyatanya: Prisma, atau in-memory (data di array biasa)
+untuk test.
+
+```ts title="api/src/modules/tasks/tasks.repository.ts (saran pengembangan)"
+import type { Prisma } from "../../generated/prisma/client.ts";
+import { prisma } from "../../lib/prisma.ts";
+
+export type TaskDto = { id: number; title: string; courseId: number | null; createdAt: Date };
+export type NewTask = { title: string; courseId?: number | null };
+
+// Port: apa yang dibutuhkan service, tanpa menyebut Prisma sama sekali.
+export interface TaskRepository {
+  findOwned(userId: number, id: number): Promise<TaskDto | null>;
+  courseBelongsTo(userId: number, courseId: number): Promise<boolean>;
+  create(userId: number, input: NewTask): Promise<TaskDto>;
+  remove(id: number): Promise<void>;
+}
+
+const taskSelect = { id: true, title: true, courseId: true, createdAt: true } satisfies Prisma.TaskSelect;
+
+// Adapter: implementasi port dengan Prisma.
+export const prismaTaskRepository: TaskRepository = {
+  findOwned: (userId, id) => prisma.task.findFirst({ where: { id, userId }, select: taskSelect }),
+  async courseBelongsTo(userId, courseId) {
+    const course = await prisma.course.findFirst({ where: { id: courseId, userId }, select: { id: true } });
+    return course !== null;
+  },
+  create: (userId, input) => prisma.task.create({ data: { ...input, userId }, select: taskSelect }),
+  async remove(id) {
+    await prisma.task.delete({ where: { id } });
+  },
+};
+```
+
+File ini punya tiga bagian:
+
+- `TaskDto` dan `NewTask` adalah bentuk data yang keluar dan masuk. **DTO** (*data transfer object*) artinya
+  bentuk data yang dikirim antarbagian kode.
+- `interface TaskRepository` adalah port: daftar empat kemampuan yang dibutuhkan service. Tidak ada kata
+  "Prisma" di sana.
+- `prismaTaskRepository` adalah adapter: tiap kemampuan diisi dengan query Prisma sungguhan.
+
+Service sekarang hanya bergantung pada **port**:
+
+```ts title="api/src/modules/tasks/tasks.service.ts (saran pengembangan)"
+import { HttpError } from "../../lib/http-error.ts";
+import type { NewTask, TaskRepository } from "./tasks.repository.ts";
+
+export type TaskServiceDeps = { repo: TaskRepository };
+
+export function makeTaskService({ repo }: TaskServiceDeps) {
+  async function getTask(userId: number, id: number) {
+    const task = await repo.findOwned(userId, id);
+    if (!task) throw HttpError.notFound("Tugas tidak ditemukan");
+    return task;
+  }
+
+  async function createTask(userId: number, input: NewTask) {
+    if (input.courseId != null && !(await repo.courseBelongsTo(userId, input.courseId))) {
+      throw HttpError.validation([{ field: "courseId", message: "Mata kuliah tidak ditemukan" }]);
+    }
+    return repo.create(userId, input);
+  }
+
+  async function deleteTask(userId: number, id: number) {
+    await getTask(userId, id);
+    await repo.remove(id);
+  }
+
+  return { getTask, createTask, deleteTask };
+}
+
+export type TaskService = ReturnType<typeof makeTaskService>;
+```
+
+`makeTaskService` menerima `repo` dari luar, lalu mengembalikan tiga fungsi. Di dalamnya tidak ada
+`import { prisma }`. Service tidak tahu repo itu bicara dengan SQLite atau hanya array di memori.
+
+Lalu siapa yang menyambungkan service dengan adapter Prisma? Satu tempat yang disebut **composition root**
+(tempat merakit semua bagian aplikasi), biasanya `createApp()`. Router juga dibuat lewat factory supaya
+menerima service dari luar:
+
+```ts title="api/src/app.ts (saran pengembangan, potongan)"
+const tasksService = makeTaskService({ repo: prismaTaskRepository });
+app.use("/api/tasks", makeTasksRouter({ service: tasksService }));
+```
+
+Manfaatnya terasa di test. Tidak ada `vi.mock` dan tidak ada database. Cukup objek palsu biasa:
+
+```ts title="api/tests/unit/tasks.service.di.test.ts (saran pengembangan)"
+import { describe, expect, it } from "vitest";
+import type { TaskDto, TaskRepository } from "../../src/modules/tasks/tasks.repository.ts";
+import { makeTaskService } from "../../src/modules/tasks/tasks.service.ts";
+
+// Adapter in-memory: mata kuliah 1 ("Basis Data") milik Andi (userId 1).
+function makeInMemoryRepo(): TaskRepository {
+  const rows: (TaskDto & { userId: number })[] = [];
+  const courses = [{ id: 1, userId: 1 }];
+  let nextId = 1;
+
+  return {
+    async findOwned(userId, id) {
+      const row = rows.find((task) => task.id === id && task.userId === userId);
+      if (!row) return null;
+      const { userId: _owner, ...task } = row;
+      return task;
+    },
+    async courseBelongsTo(userId, courseId) {
+      return courses.some((course) => course.id === courseId && course.userId === userId);
+    },
+    async create(userId, input) {
+      const task = { id: nextId++, title: input.title, courseId: input.courseId ?? null, createdAt: new Date() };
+      rows.push({ ...task, userId });
+      return task;
+    },
+    async remove(id) {
+      const index = rows.findIndex((task) => task.id === id);
+      if (index >= 0) rows.splice(index, 1);
+    },
+  };
+}
+
+describe("makeTaskService", () => {
+  it("menolak mata kuliah milik user lain", async () => {
+    const service = makeTaskService({ repo: makeInMemoryRepo() });
+    await expect(service.createTask(2, { title: "Kuis Basis Data", courseId: 1 })).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+    });
+  });
+
+  it("tugas milik Andi tidak bisa dihapus oleh Sari", async () => {
+    const service = makeTaskService({ repo: makeInMemoryRepo() });
+    const task = await service.createTask(1, { title: "Laporan praktikum", courseId: 1 });
+    await expect(service.deleteTask(2, task.id)).rejects.toMatchObject({ status: 404 });
+    expect(await service.getTask(1, task.id)).toMatchObject({ title: "Laporan praktikum" });
+  });
+});
+```
+
+```txt
+✓ tests/unit/tasks.service.di.test.ts (2 tests) 4ms
+  ✓ makeTaskService > menolak mata kuliah milik user lain
+  ✓ makeTaskService > tugas milik Andi tidak bisa dihapus oleh Sari
+```
+
+Cara membaca test ini:
+
+- `makeInMemoryRepo()` adalah adapter palsu. Datanya disimpan di array `rows`. Mata kuliah 1 dimiliki user 1
+  (Andi).
+- Test pertama: Sari (user 2) mencoba membuat tugas di mata kuliah milik Andi. Service harus menolak dengan 400.
+- Test kedua: Andi membuat tugas, lalu Sari mencoba menghapusnya. Hasilnya 404, dan tugas Andi masih ada.
+
+<Callout type="tip" title="Kapan repository layak ditambahkan?">
+
+Tambahkan kalau minimal satu hal ini benar:
+
+- kamu ingin **unit test** (test satu fungsi secara terpisah) untuk logika bisnis tanpa database,
+- query yang sama dipakai banyak service,
+- sumber data memang bisa berganti, misalnya cache atau API pihak ketiga.
+
+Untuk CRUD sederhana yang sudah diuji lewat integration test, gaya pendamping (service memanggil Prisma langsung)
+sudah cukup.
+
+</Callout>
+
+## Folder per fitur vs folder per jenis
+
+<Callout type="analogi" title="Seperti menyusun catatan kuliah">
+
+Cara pertama: semua slide dari semua mata kuliah di satu map, semua catatan di map lain, semua tugas di map
+ketiga. Menjelang UTS Basis Data, kamu harus membongkar tiga map. Cara kedua: satu map per mata kuliah. Map
+"Basis Data" berisi slide, catatan, dan tugas Basis Data. Belajar untuk satu ujian cukup membuka satu map.
+
+- map per jenis dokumen = folder per jenis (*type-based*)
+- map per mata kuliah = folder per fitur (*feature folder*)
+- alat tulis yang dipakai semua mata kuliah = folder bersama `lib/` dan `middleware/`
+
+</Callout>
+
+Dua cara ini sudah disinggung di [Struktur Proyek Backend](/belajar/crud-backend/struktur-proyek-backend).
+Bandingkan hasilnya untuk fitur tugas:
+
+<Compare>
+<CompareItem title="Per jenis" tone="bad">
+
+`controllers/tasks.ts`, `services/tasks.ts`, `schemas/tasks.ts`, `routes/tasks.ts` tersebar di empat folder.
+Satu fitur baru menyentuh empat tempat. Saat proyek tumbuh, setiap folder berisi puluhan file yang tidak saling
+berhubungan.
+
+</CompareItem>
+<CompareItem title="Per fitur" tone="good">
+
+`modules/tasks/` berisi routes, schemas, dan service tugas. Mengubah fitur tugas berarti membuka satu folder.
+Menghapus fitur cukup menghapus satu folder. Kode yang dipakai bersama tinggal di `lib/` dan `middleware/`.
+
+</CompareItem>
+</Compare>
+
+Pendamping memakai pola per fitur:
+
+<FileTree title="api/src" tree={`
+app.ts # composition root: createApp()
+server.ts # listen di port 3000
+config/
+  env.ts # validasi variabel lingkungan
+lib/ # kode bersama tanpa logika fitur
+  http-error.ts
+  pagination.ts
+  * prisma.ts # adapter database
+  storage.ts
+  tokens.ts
+middleware/ # lapisan HTTP bersama
+  auth.ts
+  * error-handler.ts # satu-satunya tempat error → JSON
+  not-found.ts
+  validate.ts
+modules/
+  auth/
+    auth.routes.ts
+    auth.schemas.ts
+    auth.service.ts
+  courses/
+    courses.routes.ts
+    courses.schemas.ts
+    courses.service.ts
+  tasks/
+    * tasks.routes.ts # HTTP
+    * tasks.schemas.ts # bentuk input (Zod)
+    * tasks.service.ts # logika bisnis + query
+`} />
+
+Aturan dependensinya: `modules/*` boleh meng-import `lib/` dan `middleware/`. Sebaliknya, `lib/` tidak boleh
+meng-import dari `modules/`, karena alat bersama tidak boleh bergantung pada satu fitur. Antarmodul sebisa
+mungkin tidak saling import. Kalau terpaksa, impor fungsi publiknya saja, bukan detail di dalamnya.
+
+## Sisi mobile: layar tipis, hook per fitur, API client sebagai adapter
+
+Prinsip yang sama berlaku di aplikasi Expo. Lapisannya hanya berganti nama. Kalau memakai analogi warung tadi,
+layar adalah pelayan yang menyajikan makanan ke meja. Hook per fitur adalah dapur yang mengolah. File
+`lib/api.ts` adalah satu-satunya orang yang belanja ke pasar (server). Pelayan tidak pernah belanja sendiri.
+
+Tabel berikut membandingkan struktur yang disarankan untuk `kuliah-app` versi TypeScript dengan `kuliah-app`
+versi JavaScript dari Track 3:
+
+| Lapisan | `kuliah-app` versi TS (struktur disarankan) | `kuliah-app` Track 3 |
+| --- | --- | --- |
+| Adapter HTTP | `src/lib/api.ts` (base URL, timeout, refresh token, `ApiError`) | `src/lib/api.js` |
+| Endpoint per fitur | `src/features/tasks/api.ts` (`tasksApi.list`, `create`, ...) | di dalam `queries.js` |
+| State server per fitur | `src/features/tasks/hooks.ts` + `query-keys.ts` | `src/features/tasks/queries.js` |
+| UI bersama tanpa data | `src/components/ui/` (`Button`, `ErrorState`, `Screen`, ...) | `src/components/` |
+| Layar (presentasi) | `src/app/` | `src/app/` |
+
+`src/lib/api.ts` adalah **adapter**. Hanya file ini yang tahu soal `fetch`, header `Authorization`, dan cara
+mengubah body `{ error: { ... } }` menjadi `ApiError`. Di atasnya, `tasksApi` di `src/features/tasks/api.ts`
+hanya berisi daftar endpoint:
+
+```ts title="kuliah-app/src/features/tasks/api.ts"
+export const tasksApi = {
+  async get(id: number, signal?: AbortSignal) {
+    const res = await api.get<ApiResponse<Task>>(`/api/tasks/${id}`, { signal });
+    return res.data;
+  },
+
+  async create(input: TaskInput) {
+    const res = await api.post<ApiResponse<Task>>('/api/tasks', input);
+    return res.data;
+  },
+  // list, update, remove, uploadAttachment, removeAttachment ...
+};
+```
+
+Setiap fungsi di `tasksApi` hanya menyebut alamat endpoint dan bentuk datanya. Urusan token dan error sudah
+diurus `api.get` dan `api.post` dari adapter.
+
+Hook di `src/features/tasks/hooks.ts` membungkus `tasksApi` dengan TanStack Query. Di sana ada **cache**
+(salinan data yang disimpan agar tidak perlu ambil ulang), **optimistic update** (layar langsung berubah sebelum
+server menjawab), **rollback** (mengembalikan layar kalau server menolak), dan **invalidasi** (menandai cache
+basi supaya diambil ulang). Layar tinggal memanggil `useTasks(filters)` atau `useCreateTask()` tanpa tahu URL
+endpoint. Hasilnya, layar menjadi **tipis**: isinya hanya merangkai hook dan komponen. Contohnya layar tambah
+tugas di `kuliah-app` versi TS (anotasi tipe dihilangkan dari potongan ini):
+
+```jsx title="kuliah-app/src/app/(app)/tasks/new.tsx (potongan)"
+const createTask = useCreateTask();
+
+return (
+  <>
+    <Stack.Screen options={{ title: 'Tugas baru' }} />
+    <Screen scroll>
+      <TaskForm
+        initialValues={initialValues}
+        submitLabel="Simpan tugas"
+        submitting={createTask.isPending}
+        onSubmit={handleSubmit}
+      />
+    </Screen>
+  </>
+);
+```
+
+Layar ini tidak tahu endpoint, tidak menyusun body JSON, dan tidak memetakan error server ke field form.
+Semua itu dibagi ke tiga tempat:
+
+- `useCreateTask()` mengurus state server (kirim data, cache, status `isPending`).
+- `TaskForm` di `src/features/tasks/components/` adalah form fitur. Ia memetakan `details` dari error 400 ke
+  field yang salah lewat helper di `src/lib/form.ts`.
+- `src/lib/api.ts` adalah adapter HTTP.
+
+Layar daftar memakai pola yang sama, dengan tampilan loading, error, dan kosong dari `components/ui`. Kira-kira
+seperti ini:
+
+```jsx title="ilustrasi: kuliah-app/src/app/(app)/(tabs)/courses.tsx"
+import { router } from 'expo-router';
+import { FlatList } from 'react-native';
+
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
+import { LoadingState } from '@/components/ui/LoadingState';
+import { Screen } from '@/components/ui/Screen';
+import { CourseCard } from '@/features/courses/components/CourseCard';
+import { useCourses } from '@/features/courses/hooks';
+
+export default function CoursesScreen() {
+  const { data: courses, isPending, error, refetch, isRefetching } = useCourses();
+
+  if (isPending) return <LoadingState message="Memuat mata kuliah..." />;
+  if (error) return <ErrorState error={error} onRetry={refetch} retrying={isRefetching} />;
+
+  return (
+    <Screen>
+      <FlatList
+        data={courses}
+        keyExtractor={(course) => String(course.id)}
+        renderItem={({ item }) => (
+          <CourseCard course={item} onPress={(course) => router.push(`/courses/${course.id}`)} />
+        )}
+        ListEmptyComponent={<EmptyState title="Belum ada mata kuliah" message="Tambahkan mata kuliah pertamamu." />}
+      />
+    </Screen>
+  );
+}
+```
+
+Alurnya: kalau data masih dimuat, tampilkan `LoadingState`. Kalau gagal, tampilkan `ErrorState` dengan tombol
+coba lagi. Kalau berhasil, tampilkan daftar mata kuliah, atau `EmptyState` kalau daftarnya kosong.
+
+Di layar ini tidak ada `fetch`, `useEffect`, atau pemetaan error. Kalau besok endpoint berubah atau kamu
+menambah cache offline (lihat [Offline-First](/belajar/expert/offline-first)), layar ini tidak perlu diubah.
+
+Kalau dirangkum, struktur `src/` yang disarankan untuk `kuliah-app` versi TS kira-kira seperti ini:
+
+<FileTree title="kuliah-app/src" tree={`
+app/ # layar & layout (route Expo Router), tipis
+  _layout.tsx
+  (auth)/
+    _layout.tsx
+    login.tsx
+    register.tsx
+  (app)/
+    _layout.tsx
+    (tabs)/
+      _layout.tsx # tab Tugas, Mata Kuliah, Profil
+    tasks/
+      * new.tsx # useCreateTask + TaskForm, tanpa fetch
+      [id]/
+        edit.tsx
+components/
+  ui/ # UI bersama, tidak memanggil API
+    Button.tsx
+    Chip.tsx
+    EmptyState.tsx
+    ErrorState.tsx
+    Icon.tsx
+    IconButton.tsx
+    LoadingState.tsx
+    Screen.tsx
+    SegmentedControl.tsx
+    TextField.tsx
+features/
+  auth/
+    api.ts
+    auth-context.tsx
+    types.ts
+    validation.ts
+  courses/
+    api.ts
+    hooks.ts
+    query-keys.ts
+    types.ts
+    validation.ts
+    components/
+      CourseCard.tsx
+      CourseForm.tsx
+      CoursePicker.tsx
+  tasks/
+    * api.ts # daftar endpoint tugas
+    * hooks.ts # useTasks, useCreateTask, useDeleteTask, ...
+    * query-keys.ts # taskKeys
+    types.ts
+    validation.ts
+    deadline.ts
+    attachments.ts
+    components/
+      TaskForm.tsx
+lib/
+  * api.ts # adapter HTTP: fetch, token, ApiError
+  query-client.ts
+  token-storage.ts
+  form.ts
+  haptics.ts
+  use-debounced-value.ts
+theme/
+  colors.ts
+  tokens.ts
+  useTheme.ts
+`} />
+
+Arah import-nya sama seperti di backend: `app/` → `features/` → `lib/`. Komponen di `components/ui/` hanya
+boleh bergantung pada `theme/` dan `lib/`, tidak pada `features/`. Antarfitur boleh berbagi bagian publik
+secukupnya. Contohnya, `features/tasks/hooks.ts` meng-import `courseKeys` agar jumlah tugas per mata kuliah
+ikut diperbarui.
+
+Kamu bisa memeriksa aturan "lib tidak boleh tahu fitur" dengan satu perintah. Perintah ini mencari teks
+`@/features` di folder `src/lib` dan `src/components/ui`. Output kosong berarti aman.
+
+<Tabs items={["Windows (PowerShell)", "macOS/Linux"]}>
+<Tab>
+
+```powershell
+Select-String -Path src\lib\*, src\components\ui\* -Pattern "@/features"
+```
+
+</Tab>
+<Tab>
+
+```bash
+grep -rn "@/features" src/lib src/components/ui
+```
+
+</Tab>
+</Tabs>
+
+## Anti-pattern yang sering muncul
+
+**Anti-pattern** adalah kebiasaan yang kelihatannya praktis, tetapi lama-lama merepotkan. Tabel ini memuat lima
+yang paling sering muncul:
+
+| Anti-pattern | Gejala | Perbaikan |
+| --- | --- | --- |
+| **God file** (satu file mengurus segalanya) | `server.ts` atau satu layar `index.tsx` berisi 800 baris; setiap fitur baru menambah ke file yang sama | pecah per fitur: `modules/<fitur>/` di API, `features/<fitur>/` di mobile |
+| **Tipe Prisma bocor ke UI** | mobile meng-import tipe dari `api/src/generated/prisma` | salin DTO sesuai kontrak di `kuliah-app/src/features/tasks/types.ts`; `Date` di server menjadi string di JSON |
+| **Service tahu HTTP** | fungsi service menerima `req` atau memanggil `res.status()` | service menerima data biasa, route yang menerjemahkan |
+| **Layar memanggil `fetch`** | `useEffect` + `fetch` + `try/catch` di setiap layar | hook per fitur di atas adapter `lib/api` |
+| **Over-abstraction** (lapisan berlebihan) | interface, repository, controller, mapper, dan factory untuk endpoint satu baris | tambah lapisan hanya bila ada kebutuhan nyata (test, sumber data kedua) |
+
+Over-abstraction sama merepotkannya dengan god file. Bayangkan warung kecil yang menyuruh enam orang bergantian
+hanya untuk menyajikan segelas air putih. Kode yang terlalu berlapis membuat satu perubahan kecil harus melompat
+ke enam file, jadi ongkos perubahannya justru naik. Ukurannya tetap sama: berapa file yang harus disentuh, dan
+apakah setiap lapisan punya alasan untuk ada.
+
+## Kesalahan umum
+
+<Callout type="warning" title="Error yang sering muncul saat merapikan lapisan">
+
+- **`ReferenceError: Cannot access 'tasksService' before initialization`**: terjadi *circular import*, yaitu
+  dua file saling meng-import. Misalnya `tasks.service.ts` meng-import sesuatu dari `tasks.routes.ts`, padahal
+  `tasks.routes.ts` juga meng-import service. Panah import harus satu arah. Pindahkan kode yang dipakai bersama
+  ke `lib/`.
+- **`Property 'repo' is missing in type '{}' but required in type 'TaskServiceDeps'.`**: kamu memanggil
+  `makeTaskService({})` tanpa dependensi. Di sinilah DI bertipe membantu. Lupa menyambungkan adapter ketahuan
+  saat `npm run typecheck`, bukan saat request pertama masuk.
+- **Respons error tiba-tiba `500 INTERNAL_ERROR` padahal seharusnya 404**: service melempar `new Error(...)`
+  biasa, atau error domain baru yang belum dipetakan di `toHttpError()`. Tambahkan pemetaannya di error handler.
+- **Layar menampilkan `[object Object]` atau tanggal kacau**: biasanya layar memakai tipe server (berisi `Date`),
+  padahal JSON berisi tanggal sebagai teks ISO (`"2025-05-12T00:00:00.000Z"`). Pakai tipe dari
+  `features/<fitur>/types.ts`.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Refactor route gemuk untuk mata kuliah" difficulty="sedang" hints={["Validasi `id` dikerjakan oleh `validate({ params: courseIdParamsSchema })`.", "Service cukup memanggil `getCourse()` untuk memastikan kepemilikan sebelum menghapus."]}>
+
+Handler berikut menghapus mata kuliah. Semua urusan masih tercampur di satu tempat. Rapikan dengan langkah ini:
+
+1. Buat route tipis di `courses.routes.ts` yang memakai `validate({ params: courseIdParamsSchema })`.
+2. Buat fungsi `deleteCourse(userId, id)` di `courses.service.ts`.
+3. Di service, pastikan mata kuliah itu milik user sebelum dihapus.
+4. Hapus semua `res.status(4xx).json(...)` manual. Biarkan error handler yang menyusun respons error.
+
+Ikuti gaya `api/src/modules/courses/`.
+
+```ts
+app.delete("/api/courses/:id", requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: { message: "Data yang dikirim tidak valid", code: "VALIDATION_ERROR" } });
+    return;
+  }
+  const course = await prisma.course.findFirst({ where: { id, userId: getUserId(req) } });
+  if (!course) {
+    res.status(404).json({ error: { message: "Mata kuliah tidak ditemukan", code: "NOT_FOUND" } });
+    return;
+  }
+  await prisma.course.delete({ where: { id } });
+  res.status(204).end();
+});
+```
+
+<Solution>
+
+```ts title="api/src/modules/courses/courses.routes.ts"
+coursesRouter.delete("/:id", validate({ params: courseIdParamsSchema }), async (req, res) => {
+  await coursesService.deleteCourse(getUserId(req), req.params.id);
+  res.status(204).end();
+});
+```
+
+```ts title="api/src/modules/courses/courses.service.ts"
+export async function deleteCourse(userId: number, id: number) {
+  await getCourse(userId, id);
+  // Tugas yang memakai course ini otomatis courseId = null (onDelete: SetNull di schema).
+  await prisma.course.delete({ where: { id } });
+}
+```
+
+Ini persis kode pendamping. Route hanya menerjemahkan HTTP: ambil `userId` dan `id`, panggil service, balas 204.
+Service memanggil `getCourse()` dulu. Fungsi itu melempar `HttpError.notFound("Mata kuliah tidak ditemukan")`
+kalau mata kuliah tidak ada atau milik user lain. Jadi kamu mendapat 404 tanpa menulis `if` tambahan, dan
+error handler yang menyusun JSON-nya.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Pindahkan fetch dari layar ke feature hook" difficulty="sulit" hints={["Mulai dari query-key factory `courseKeys` seperti `taskKeys`.", "Layar hanya boleh memanggil `useCourses()` dan merender state-nya."]}>
+
+Di `kuliah-app`, layar daftar mata kuliah masih memanggil `apiFetch('/api/courses')` di dalam `useEffect`. Layar
+itu juga memakai tiga `useState` untuk data, loading, dan error. Pindahkan urusan ini ke lapisan fitur:
+
+1. Buat file `src/features/courses/queries.js`.
+2. Tulis `courseKeys`, yaitu kumpulan "label" cache untuk data mata kuliah.
+3. Tulis hook `useCourses()` dengan `useQuery` dari TanStack Query.
+4. Ubah layar supaya hanya memanggil `useCourses()` dan menampilkan loading, error, atau data.
+
+<Solution>
+
+```js title="src/features/courses/queries.js"
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "../../lib/api";
+
+export const courseKeys = {
+  all: ["courses"],
+  lists: () => [...courseKeys.all, "list"],
+  details: () => [...courseKeys.all, "detail"],
+  detail: (id) => [...courseKeys.details(), id],
+};
+
+export function useCourses() {
+  return useQuery({
+    queryKey: courseKeys.lists(),
+    queryFn: ({ signal }) => apiFetch("/api/courses?limit=50", { signal }),
+    select: (json) => json.data,
+  });
+}
+```
+
+```jsx title="src/app/(app)/(tabs)/courses.js (potongan)"
+const { data: courses, isPending, error, refetch } = useCourses();
+
+if (isPending) return <ActivityIndicator style={{ flex: 1 }} />;
+if (error) return <ErrorView message={error.message} onRetry={refetch} />;
+```
+
+Layar tidak lagi tahu URL endpoint atau cara menyimpan cache. `useQuery` yang mengambil data, menyimpannya, dan
+memberi status `isPending` serta `error`. Bagian `select` mengambil isi `data` dari respons `{ data, meta }`.
+
+Query key `['courses', 'list']` juga bisa ditandai basi (di-*invalidate*) dari mutasi tugas. Di struktur TS
+yang disarankan, helper seperti `invalidateTasks()` di `kuliah-app/src/features/tasks/hooks.ts` sebaiknya ikut
+menyegarkan `courseKeys.lists()`. `ErrorView` di sini adalah komponen tampilan error milikmu sendiri.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Import mana yang melanggar dependency rule (arah import harus ke dalam) di API pendamping?",
+    options: ["`tasks.routes.ts` meng-import `tasks.service.ts`", "`tasks.service.ts` meng-import `Request` dari `express`", "`tasks.service.ts` meng-import `lib/prisma.ts`", "`app.ts` meng-import `tasks.routes.ts`"],
+    answer: 1,
+    explain: "Service adalah lapisan logika bisnis, jadi tidak boleh tahu soal HTTP seperti `Request`. Tiga import lainnya mengarah ke dalam: route ke service, service ke akses data, dan composition root ke router.",
+  },
+  {
+    q: "Di mana sebaiknya `ZodError` dan error domain diubah menjadi status HTTP dan JSON?",
+    options: ["Di setiap route dengan `try/catch`", "Di service sebelum `return`", "Di satu error handler seperti `toHttpError()`", "Di aplikasi mobile"],
+    answer: 2,
+    explain: "Satu error handler membuat format `{ error: { message, code, details? } }` selalu sama, seperti satu meja customer service. `try/catch` di setiap route membuat kode berulang. Service tidak boleh tahu format HTTP. Aplikasi mobile hanya membaca hasilnya.",
+  },
+  {
+    q: "Apa keuntungan utama `makeTaskService({ repo })` dibanding service yang meng-import `prisma` langsung?",
+    options: ["Query ke database menjadi lebih cepat", "Service bisa diuji dengan repository palsu tanpa `vi.mock` dan tanpa database", "Prisma tidak perlu di-generate lagi", "Route tidak perlu validasi lagi"],
+    answer: 1,
+    explain: "Dengan dependency injection, repository dicolokkan dari luar, jadi bisa diganti dengan versi palsu saat test. Kecepatan query, `prisma generate`, dan validasi input tidak berubah sama sekali.",
+  },
+  {
+    q: "Di `kuliah-app` versi TypeScript, di mana `useMutation` untuk menghapus tugas seharusnya ditulis?",
+    options: ["Langsung di layar `src/app/...`", "Di `src/components/ui/Button.tsx`", "Di `src/lib/api.ts`", "Di `src/features/tasks/hooks.ts`"],
+    answer: 3,
+    explain: "Hook per fitur menyimpan logika cache dan optimistic update. Layar harus tipis. Komponen UI bersama tidak boleh tahu fitur. `lib/api.ts` adalah adapter HTTP umum yang tidak tahu soal tugas.",
+  },
+  {
+    q: "Mana contoh over-abstraction (lapisan berlebihan)?",
+    options: ["Memisahkan skema Zod dari route", "Membuat interface, repository, controller, dan mapper untuk endpoint `GET /api/health`", "Satu error handler untuk seluruh aplikasi", "Folder `features/tasks` berisi api, hooks, dan types"],
+    answer: 1,
+    explain: "Endpoint health hanya mengembalikan status. Empat lapisan untuk satu baris kode menaikkan ongkos perubahan tanpa manfaat. Tiga pilihan lain adalah pemisahan yang memang dipakai di `api/` dan di struktur `kuliah-app` yang disarankan.",
+  },
+]} />
+
+## Ringkasan
+
+- Arsitektur dinilai dari **ongkos perubahan**: berapa file yang harus disentuh untuk satu perubahan yang wajar.
+- Ada tiga lapisan: HTTP (`*.routes.ts`, middleware), logika bisnis (`*.service.ts`), dan akses data
+  (`lib/prisma.ts`). Import hanya mengarah ke dalam. Service tidak pernah menerima `req` atau `res`.
+- Route tipis, `validate()`, `throw`, dan satu `errorHandler` menggantikan route gemuk yang penuh
+  `res.status(...).json(...)`.
+- Repository adalah *port* (colokan yang diminta service), dan Prisma adalah salah satu *adapter*. Factory
+  `makeTaskService({ repo })` membuat service bisa diuji dengan objek palsu. Tambahkan pola ini hanya kalau
+  memang dibutuhkan.
+- Folder per fitur (`modules/tasks`, `features/tasks`) membuat satu perubahan cukup di satu folder.
+- Di mobile, `lib/api.ts` adalah adapter HTTP, hook per fitur menyimpan state server, `components/ui` tidak
+  mengambil data, dan layar di `src/app` tetap tipis.
+- Hindari god file, tipe Prisma yang bocor ke UI, dan lapisan berlebihan.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Periksa `kuliah-app` dengan aturan pelajaran ini:
+
+1. Pastikan tidak ada layar di `src/app/` yang memanggil `apiFetch` langsung.
+2. Pastikan semua state server mata kuliah dan tugas ada di `src/features/<fitur>/queries.js`.
+3. Jalankan perintah `grep` untuk `@/features` di atas. Untuk `src/lib`, hasilnya harus kosong.
+
+Setelah lapisannya rapi, pelajaran [Performa Backend](/belajar/expert/performa-backend) akan mempercepat query
+yang kini sudah terkumpul di service.
+
+</Callout>

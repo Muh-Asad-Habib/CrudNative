@@ -1,0 +1,320 @@
+## Anatomi URL
+
+URL itu seperti alamat loket: nama gedung (host), nomor pintu (port), lalu nomor loket (path). Kenali tiap bagiannya supaya mudah membaca dokumentasi API dan pesan error.
+
+```txt
+https://api.kampus.dev:3000/api/tasks/7?page=2&limit=10#atas
+└─┬─┘   └──────┬──────┘ └┬─┘└────┬─────┘└──────┬──────┘└─┬─┘
+skema         host      port    path      query string  fragment
+```
+
+| Bagian | Contoh | Keterangan |
+| --- | --- | --- |
+| Skema | `https` | Protokol (aturan komunikasi). `https` berarti data diacak (dienkripsi) dengan TLS selama perjalanan. |
+| Host | `api.kampus.dev` | Nama domain atau alamat IP server. |
+| Port | `3000` | Nomor pintu program di server. Default 80 untuk http dan 443 untuk https. |
+| Path | `/api/tasks/7` | Menunjuk resource (data) yang diminta. |
+| Query string | `?page=2&limit=10` | Pasangan kunci-nilai untuk filter, pencarian, dan pagination. Nilainya selalu string. |
+| Fragment | `#atas` | Hanya dipakai browser, tidak pernah dikirim ke server. |
+
+## Bentuk request & response
+
+Mirip pesan GoFood: request adalah pesananmu, response adalah makanan yang diantar beserta notanya.
+
+Request berisi method, path, header, dan body (opsional). Response berisi status code, header, dan body. Header adalah keterangan tambahan tentang isi pesan.
+
+```http title="Request"
+POST /api/tasks HTTP/1.1
+Host: localhost:3000
+Content-Type: application/json
+Accept: application/json
+
+{ "title": "Laporan Basis Data", "priority": "tinggi" }
+```
+
+```http title="Response"
+HTTP/1.1 201 Created
+Content-Type: application/json; charset=utf-8
+Location: /api/tasks/9
+
+{ "data": { "id": 9, "title": "Laporan Basis Data", "done": false, "priority": "tinggi" } }
+```
+
+Baris kosong memisahkan header dari body. HTTP bersifat *stateless*: server tidak mengingat request sebelumnya. Jadi setiap request harus membawa semua informasi yang dibutuhkan, termasuk token login.
+
+## Method HTTP
+
+Method seperti tombol di aplikasi kontak HP: lihat (GET), tambah (POST), ubah (PUT/PATCH), dan hapus (DELETE).
+
+| Method | Operasi CRUD | Ada body? | Safe | Idempoten | Status sukses umum |
+| --- | --- | --- | --- | --- | --- |
+| `GET` | Read | Tidak | Ya | Ya | 200 |
+| `POST` | Create | Ya | Tidak | Tidak | 201 |
+| `PUT` | Update (ganti seluruh resource) | Ya | Tidak | Ya | 200 |
+| `PATCH` | Update sebagian field | Ya | Tidak | Tidak dijamin | 200 |
+| `DELETE` | Delete | Biasanya tidak | Tidak | Ya | 204 |
+| `HEAD` | Seperti GET tanpa body | Tidak | Ya | Ya | 200 |
+| `OPTIONS` | Cek kemampuan server, preflight CORS | Tidak | Ya | Ya | 204 |
+
+- **Safe** artinya request tidak mengubah data di server.
+- **Idempoten** artinya hasil akhir di server sama, mau request dikirim sekali atau sepuluh kali. DELETE kedua boleh membalas 404, tetapi datanya tetap sudah terhapus.
+- POST tidak idempoten. Menekan tombol "Simpan" dua kali bisa membuat dua tugas, jadi nonaktifkan tombol selama request berjalan.
+
+<Callout type="tip" title="PUT atau PATCH?">
+
+PUT mengirim seluruh objek. Field yang tidak dikirim dianggap hilang atau wajib diisi. PATCH hanya mengirim field yang berubah, misalnya `{ "done": true }`. Di lab HTTP Explorer, PUT wajib menyertakan `title` dan `done`.
+
+</Callout>
+
+## Status code
+
+Status code mirip status resi paket: sekali lihat, kamu tahu paketnya sampai, tertahan, atau alamatnya salah.
+
+| Kode | Nama | Kapan dipakai |
+| --- | --- | --- |
+| 200 | OK | GET, PUT, atau PATCH berhasil dan mengembalikan data. |
+| 201 | Created | POST berhasil membuat resource baru. |
+| 204 | No Content | DELETE berhasil, response tanpa body. |
+| 304 | Not Modified | Salinan data di klien (cache) masih berlaku, dicek lewat `ETag`. |
+| 400 | Bad Request | Input tidak valid. Di proyek ini kode error-nya `VALIDATION_ERROR`. |
+| 401 | Unauthorized | Belum login, token hilang, atau token kedaluwarsa. |
+| 403 | Forbidden | Sudah login, tetapi tidak berhak atas resource tersebut. |
+| 404 | Not Found | Resource atau route tidak ada (`NOT_FOUND`, `ROUTE_NOT_FOUND`). |
+| 405 | Method Not Allowed | Path ada, tetapi method tidak didukung. |
+| 409 | Conflict | Bentrok dengan data yang ada, misalnya email sudah terdaftar. |
+| 413 | Payload Too Large | Body atau file upload melebihi batas (misal 5 MB). |
+| 415 | Unsupported Media Type | `Content-Type` tidak didukung, misal file selain jpeg/png/webp. |
+| 422 | Unprocessable Content | Alternatif 400 untuk error validasi di sebagian API lain. |
+| 429 | Too Many Requests | Kena rate limit (batas jumlah request). Tunggu sesuai header `Retry-After`. |
+| 500 | Internal Server Error | Bug atau error tak terduga di server. |
+| 502 / 503 | Bad Gateway / Service Unavailable | Server di belakang proxy (perantara) mati atau sedang sibuk. |
+
+Kelompok besarnya: 1xx informasi, 2xx sukses, 3xx pengalihan, 4xx kesalahan dari sisi klien, 5xx kesalahan di server.
+
+<Callout type="warning" title="401 bukan 403">
+
+Pakai 401 kalau server belum tahu siapa kamu (token tidak ada atau tidak valid). Pakai 403 kalau server tahu siapa kamu, tetapi kamu tidak boleh mengakses resource itu, misalnya tugas milik user lain. Ibarat satpam kampus: 401 berarti kamu belum menunjukkan kartu mahasiswa, 403 berarti kartumu sah tetapi ruang dosen bukan untukmu.
+
+</Callout>
+
+## Header yang sering dipakai
+
+Header mirip tulisan di luar bungkus paket, seperti "pecah belah" atau "untuk Budi". Isinya keterangan tentang paket, bukan barangnya.
+
+| Header | Arah | Contoh nilai | Fungsi |
+| --- | --- | --- | --- |
+| `Content-Type` | Request & response | `application/json` | Format body yang dikirim. |
+| `Accept` | Request | `application/json` | Format balasan yang diinginkan klien. |
+| `Authorization` | Request | `Bearer eyJhbGciOi...` | Membawa token akses. |
+| `Location` | Response | `/api/tasks/9` | Alamat resource yang baru dibuat. |
+| `Cache-Control` | Response | `no-store` | Aturan cache untuk klien dan proxy. |
+| `ETag` / `If-None-Match` | Response / request | `"a1b2c3"` | Cek apakah cache masih sama. Kalau sama, server membalas 304. |
+| `Retry-After` | Response | `60` | Berapa detik harus menunggu setelah 429 atau 503. |
+| `Origin` | Request | `http://localhost:8081` | Asal halaman web, dipakai untuk CORS. |
+| `Access-Control-Allow-Origin` | Response | `http://localhost:8081` | Origin yang diizinkan memanggil API dari browser. |
+
+## Jenis body
+
+`Content-Type` mirip label di kardus: memberi tahu penerima cara membuka isinya. `multipart/form-data` adalah satu kardus berisi beberapa barang berlabel.
+
+| `Content-Type` | Dipakai untuk | Contoh di proyek |
+| --- | --- | --- |
+| `application/json` | Hampir semua request API | Membuat atau mengubah tugas |
+| `multipart/form-data` | Upload file | Lampiran gambar dengan field `file` |
+| `application/x-www-form-urlencoded` | Form HTML klasik | Jarang dipakai di aplikasi mobile |
+
+```js title="Membaca body di klien"
+const res = await fetch("http://localhost:3000/api/tasks/1");
+if (!res.ok) throw new Error(`HTTP ${res.status}`);
+const { data } = await res.json(); // body JSON → objek JavaScript
+```
+
+`res.ok` bernilai `true` untuk status 200 sampai 299. `res.json()` mengubah body JSON menjadi objek JavaScript.
+
+## Konvensi REST
+
+Satu loket "Tugas" cukup untuk semua urusan tugas, tidak perlu loket "Ambil Tugas" dan "Hapus Tugas" terpisah. Begitu juga di REST: path berisi kata benda jamak (`tasks`), method yang menentukan aksinya.
+
+| Method & path | Arti | Status sukses |
+| --- | --- | --- |
+| `GET /api/tasks` | Daftar tugas (dengan pagination) | 200 |
+| `GET /api/tasks/7` | Detail tugas id 7 | 200 |
+| `POST /api/tasks` | Membuat tugas baru | 201 |
+| `PUT /api/tasks/7` | Mengganti seluruh tugas 7 | 200 |
+| `PATCH /api/tasks/7` | Mengubah sebagian tugas 7 | 200 |
+| `DELETE /api/tasks/7` | Menghapus tugas 7 | 204 |
+| `GET /api/courses/2/tasks` | Tugas milik mata kuliah 2 (resource bersarang) | 200 |
+| `GET /api/tasks?courseId=2` | Sama, lewat filter query. API pendamping memakai bentuk ini | 200 |
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+- `GET /api/getTasks`
+- `POST /api/tasks/delete/7`
+- `GET /api/Task_List?Page=1`
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+- `GET /api/tasks`
+- `DELETE /api/tasks/7`
+- `GET /api/tasks?page=1`
+
+</CompareItem>
+</Compare>
+
+Aturan praktis:
+
+- huruf kecil, kata dipisah tanda hubung,
+- tanpa kata kerja di path,
+- filter lewat query string,
+- versi di prefix (`/api/v1`) kalau API sudah dipakai publik.
+
+## Format respons proyek
+
+Mirip nota minimarket: kolomnya selalu di tempat yang sama, jadi aplikasi tahu harus membaca di mana. Seluruh kursus memakai format ini, baik `belajar-api` maupun API pendamping.
+
+<Tabs items={["List", "Detail", "Error"]}>
+<Tab>
+
+```json
+{
+  "data": [{ "id": 1, "title": "Desain ERD perpustakaan", "done": true }],
+  "meta": { "page": 1, "limit": 10, "total": 23, "totalPages": 3 }
+}
+```
+
+</Tab>
+<Tab>
+
+```json
+{ "data": { "id": 1, "title": "Desain ERD perpustakaan", "done": true } }
+```
+
+</Tab>
+<Tab>
+
+```json
+{
+  "error": {
+    "message": "Input tidak valid",
+    "code": "VALIDATION_ERROR",
+    "details": [{ "field": "title", "message": "Judul minimal 3 karakter" }]
+  }
+}
+```
+
+</Tab>
+</Tabs>
+
+List berisi `data` (array) dan `meta` (info halaman). Detail hanya berisi `data`. Error selalu berisi `error.message` dan `error.code`. DELETE yang berhasil membalas 204 tanpa body, jadi jangan memanggil `res.json()` pada response itu.
+
+## Query string: filter, sort, pagination
+
+Pagination mirip katalog belanja: kamu membuka halaman 2, bukan seluruh katalog sekaligus. Filter, pencarian, dan urutan ditulis sebagai catatan tambahan di belakang tanda `?`.
+
+```txt
+GET /api/tasks?page=2&limit=10&status=TODO&q=laporan&sort=-deadline
+```
+
+| Parameter | Fungsi | Catatan |
+| --- | --- | --- |
+| `page` | Nomor halaman | Mulai dari 1 |
+| `limit` | Jumlah item per halaman | Dibatasi 1 sampai 50, default 10 |
+| `status` / `done` | Filter status | API pendamping memakai `TODO`, `IN_PROGRESS`, `DONE` |
+| `q` | Pencarian teks | Dicocokkan ke judul tugas |
+| `sort` | Urutan | Awalan `-` berarti menurun, misal `-createdAt` |
+
+```js title="Menyusun query string dengan aman"
+const params = new URLSearchParams({ page: "2", q: "basis data" });
+const url = `/api/tasks?${params}`; // → /api/tasks?page=2&q=basis+data
+```
+
+`URLSearchParams` dan `encodeURIComponent` meng-encode spasi, `&`, dan karakter khusus lain sehingga nilai tidak merusak URL.
+
+## Menguji dari terminal
+
+Mirip menelepon warung langsung tanpa lewat aplikasi GoFood: kamu bisa mengecek API tanpa menunggu aplikasinya jadi. `curl` adalah program terminal untuk mengirim request HTTP. Di PowerShell, padanannya `Invoke-RestMethod`, yang langsung mengubah body JSON menjadi objek.
+
+<Tabs items={["macOS/Linux (bash)", "Windows (PowerShell)"]}>
+<Tab>
+
+```bash
+curl -i "http://localhost:3000/api/tasks?page=1&limit=5"
+curl -X POST http://localhost:3000/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Kuis Basis Data","priority":"sedang"}'
+curl -i -X DELETE http://localhost:3000/api/tasks/3
+```
+
+</Tab>
+<Tab>
+
+```powershell
+Invoke-RestMethod "http://localhost:3000/api/tasks?page=1&limit=5"
+$body = @{ title = "Kuis Basis Data"; priority = "sedang" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/tasks -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Delete -Uri http://localhost:3000/api/tasks/3
+```
+
+</Tab>
+</Tabs>
+
+| Flag curl | Arti |
+| --- | --- |
+| `-i` | Tampilkan status dan header response |
+| `-v` | Mode verbose, termasuk header request |
+| `-X` | Pilih method |
+| `-H` | Tambah header |
+| `-d` | Kirim body (otomatis menjadi POST jika `-X` tidak diisi) |
+
+<Callout type="note" title="curl di PowerShell 5">
+
+Di Windows PowerShell 5, `curl` adalah alias dari `Invoke-WebRequest`, bukan curl asli. Panggil `curl.exe` jika ingin memakai flag seperti `-i` dan `-d`.
+
+</Callout>
+
+## CORS dalam satu menit
+
+Browser mirip satpam asrama. Balasan dari kantor lain hanya diserahkan ke penghuni kalau amplopnya diberi cap izin oleh kantor itu. Untuk urusan tertentu, satpam menelepon kantor dulu untuk bertanya.
+
+**Origin** adalah gabungan skema, host, dan port, misalnya `http://localhost:8081`. CORS (Cross-Origin Resource Sharing) adalah aturan browser. JavaScript di halaman dari origin A hanya boleh membaca response dari origin B kalau B mengizinkannya lewat header `Access-Control-Allow-Origin`. Aplikasi React Native di HP tidak terkena CORS. Expo versi web dan dashboard admin di browser terkena.
+
+Request "telepon dulu" itu disebut *preflight*: browser mengirim `OPTIONS` untuk minta izin sebelum request aslinya.
+
+```http title="Preflight dari browser"
+OPTIONS /api/tasks HTTP/1.1
+Origin: http://localhost:8081
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: content-type, authorization
+```
+
+```http title="Jawaban server"
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: http://localhost:8081
+Access-Control-Allow-Methods: GET,HEAD,PUT,PATCH,POST,DELETE
+Access-Control-Allow-Headers: content-type, authorization
+```
+
+Preflight muncul kalau request memakai method selain GET, HEAD, atau POST, atau membawa header seperti `Content-Type: application/json` dan `Authorization`.
+
+## Autentikasi Bearer
+
+Token akses mirip gelang tiket konser. Kamu menunjukkannya ke petugas pintu (server) setiap kali masuk, jadi petugas tidak perlu mengingat wajahmu.
+
+```http
+GET /api/tasks HTTP/1.1
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+Token akses dikirim di header `Authorization` dengan awalan `Bearer` dan satu spasi. Jangan menaruh token di query string karena URL tercatat di log server dan riwayat browser. Selalu gunakan HTTPS di produksi.
+
+## Pelajari lebih lanjut
+
+- [Cara Kerja Web](/belajar/fondasi/cara-kerja-web): client-server, DNS, dan alur request.
+- [REST API & HTTP](/belajar/crud-backend/rest-api-http): method, status code, dan desain endpoint.
+- [Pagination, Filter & Search](/belajar/crud-backend/pagination-filter-search): query string dalam praktik.
+- [Validasi & Error Handling](/belajar/crud-backend/validasi-error-handling): format error yang konsisten.
+- [Autentikasi](/belajar/fullstack/autentikasi): token Bearer dan refresh token.
+- [Keamanan API](/belajar/expert/keamanan-api): CORS, rate limit, dan HTTPS.
+- Coba langsung di lab [HTTP Explorer](/lab/http-explorer).

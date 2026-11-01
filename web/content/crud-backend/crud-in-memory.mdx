@@ -1,0 +1,909 @@
+## Pengantar
+
+Server `belajar-api` dari [Dasar Express.js](/belajar/crud-backend/express-dasar) baru bisa menjawab satu hal: "server hidup". Aplikasi Tugas & Catatan Kuliah butuh lebih dari itu. Kamu ingin melihat daftar tugas, menambah tugas "Kuis Basis Data", mencentangnya saat selesai, lalu menghapusnya.
+
+<Callout type="analogi" title="Seperti daftar kontak di HP">
+
+Coba buka aplikasi Kontak di HP-mu. Kamu bisa menambah kontak baru, melihat daftar kontak, membuka satu kontak, mengubah nomornya, dan menghapusnya. Empat kegiatan itu persis CRUD:
+
+- Tambah kontak = **Create**, lewat method `POST`.
+- Lihat daftar atau buka satu kontak = **Read**, lewat method `GET`.
+- Ganti nomor = **Update**, lewat method `PUT` atau `PATCH`.
+- Hapus kontak = **Delete**, lewat method `DELETE`.
+
+Bedanya, di pelajaran ini isinya bukan kontak, melainkan tugas kuliah. Yang meminta juga bukan jarimu, tetapi aplikasi (client) yang mengirim request ke server.
+
+</Callout>
+
+Empat operasi [CRUD](/glosarium#crud) ini sudah kamu kenal di [Konsep CRUD](/belajar/crud-backend/konsep-crud). Sekarang kamu membuatnya menjadi **endpoint** HTTP sungguhan. Endpoint adalah alamat tujuan request, misalnya `GET /api/tasks`. Mirip nomor loket di kantor pos: setiap loket melayani satu urusan.
+
+Kita belum memakai database dulu, supaya kamu bisa fokus pada alur HTTP (route, status code, dan format respons). Data tugas disimpan di sebuah **array JavaScript**, yaitu daftar berurutan di dalam kode. Array itu tinggal di memori (RAM) server. Istilahnya **in-memory**: data hanya hidup selama proses Node berjalan. Database sungguhan menyusul di pelajaran berikutnya, dan kamu akan melihat sendiri kenapa database diperlukan.
+
+Di akhir pelajaran ini `belajar-api` kamu:
+
+- punya lima operasi CRUD untuk `/api/tasks`: daftar, detail, tambah, ubah (PUT dan PATCH), dan hapus,
+- membalas **status code** yang tepat, yaitu angka tiga digit yang memberi tahu hasil request: 200, 201, 204, 400, dan 404,
+- memakai format respons yang sama dengan API pendamping (API contoh yang disiapkan untuk kursus ini), jadi aplikasi Expo nanti tidak perlu diubah,
+- bisa diuji lewat `requests.http`, Thunder Client, `curl`, atau `Invoke-RestMethod`.
+
+Diagram di bawah menunjukkan perjalanan satu request. Client mengirim request, route yang cocok membaca atau mengubah array, lalu server membalas dengan JSON.
+
+<Flow nodes={["Client", "Route /api/tasks", "Array tasks di RAM", "Respons JSON"]} labels={["HTTP + JSON", "find / push / splice", "res.status().json()"]} caption="Alur satu request CRUD in-memory" />
+
+## Rancangan lima endpoint
+
+<Callout type="analogi" title="Papan loket dan status resi">
+
+Di kantor pos ada papan petunjuk: Loket 1 untuk kirim paket, Loket 2 untuk ambil paket. Setelah urusanmu selesai, kamu menerima resi dengan status, misalnya "Diterima" atau "Alamat tidak ditemukan". Kalau ada masalah, semua loket memakai formulir keluhan yang sama.
+
+- Jenis layanan + nomor loket = method + path, misalnya `POST /api/tasks`.
+- Status di resi = status code, misalnya 201 atau 404.
+- Formulir keluhan yang seragam = format error yang sama untuk semua endpoint.
+
+Papan itu dipasang sebelum kantor buka. Begitu juga rancangan endpoint: dibuat sebelum menulis kode.
+
+</Callout>
+
+Sebelum menulis kode, sepakati dulu "kontrak"-nya. Kontrak adalah kesepakatan antara server dan aplikasi: method apa, path apa, dan balasan seperti apa untuk setiap endpoint. Rancangan ini mengikuti aturan REST dari [REST API & HTTP](/belajar/crud-backend/rest-api-http):
+
+- Satu **resource** (jenis data yang diurus), yaitu `tasks`.
+- Satu prefix (awalan path), yaitu `/api`.
+- Method HTTP berperan sebagai kata kerja: `GET` membaca, `POST` menambah, dan seterusnya.
+
+Pada tabel di bawah, `:id` adalah bagian URL yang isinya berubah-ubah. Misalnya `/api/tasks/2` berarti tugas nomor 2.
+
+| Operasi | Method & path | Sukses | Gagal |
+| --- | --- | --- | --- |
+| Read (daftar) | `GET /api/tasks` | 200, body `{ data, meta }` | – |
+| Read (detail) | `GET /api/tasks/:id` | 200, body `{ data }` | 404 `NOT_FOUND` |
+| Create | `POST /api/tasks` | 201, body `{ data }` | 400 `VALIDATION_ERROR` |
+| Update (ganti) | `PUT /api/tasks/:id` | 200, body `{ data }` | 400, 404 |
+| Update (sebagian) | `PATCH /api/tasks/:id` | 200, body `{ data }` | 400, 404 |
+| Delete | `DELETE /api/tasks/:id` | 204, tanpa body | 404 |
+
+Update punya dua varian, jadi totalnya ada enam route untuk lima operasi. **Route** adalah pasangan method + path yang punya kode penanganannya sendiri di server. Semua error memakai satu bentuk yang sama. Dengan begitu, aplikasi cukup punya satu cara untuk membaca error:
+
+```json
+{
+  "error": {
+    "message": "Data tugas tidak valid",
+    "code": "VALIDATION_ERROR",
+    "details": [{ "field": "title", "message": "title wajib diisi" }]
+  }
+}
+```
+
+Isi tiap bagian error di atas:
+
+- `message` ditujukan untuk manusia. Kalimat ini bisa langsung ditampilkan di layar.
+- `code` ditujukan untuk kode program, misalnya `if (err.code === "NOT_FOUND")`.
+- `details` boleh ada atau tidak. Isinya menunjuk field mana yang salah.
+
+Format ini sama persis dengan API pendamping yang dipakai di Track 3.
+
+<Callout type="tip" title="Pemanasan di lab">
+
+Buka [CRUD Simulator](/lab/crud-simulator) untuk melihat pasangan setiap operasi CRUD dengan method HTTP dan query SQL-nya. Setelah itu, kamu akan menulis versi Express-nya sendiri.
+
+</Callout>
+
+## Menyimpan data di memori
+
+<Callout type="analogi" title="Seperti papan tulis di ruang kelas">
+
+Selama kuliah berlangsung, asisten dosen menulis daftar tugas di papan tulis. Daftar itu bisa ditambah, dicoret, dan dihapus kapan saja. Tetapi setelah kelas selesai, petugas kebersihan menghapus papan. Besok pagi papannya kosong lagi.
+
+- Papan tulis = RAM server.
+- Daftar tugas di papan = array `tasks`.
+- Papan dihapus petugas = server berhenti atau restart.
+
+Kalau ingin catatannya awet, tulis di buku catatan atau simpan di lemari arsip. Itulah peran database nanti.
+
+</Callout>
+
+Buka `src/server.js` dari pelajaran sebelumnya. Tepat di bawah `const PORT`, tambahkan "database" sementara kita:
+
+```js title="src/server.js" {5-14}
+import express from "express";
+
+const app = express();
+const PORT = process.env.PORT ?? 3000;
+const PRIORITAS = ["rendah", "sedang", "tinggi"];
+
+// "Database" sementara: hidup di memori dan hilang setiap server restart
+const sekarang = new Date().toISOString();
+const tasks = [
+  { id: 1, title: "Membuat ERD perpustakaan", done: false, priority: "tinggi", createdAt: sekarang, updatedAt: sekarang },
+  { id: 2, title: "Latihan query JOIN", done: true, priority: "sedang", createdAt: sekarang, updatedAt: sekarang },
+  { id: 3, title: "Install Expo dan Android Studio", done: false, priority: "rendah", createdAt: sekarang, updatedAt: sekarang },
+];
+let nextId = 4;
+```
+
+Cara membaca kode di atas:
+
+- `PRIORITAS` adalah daftar nilai prioritas yang boleh dipakai. Nanti dipakai saat validasi.
+- `sekarang` menyimpan waktu saat server mulai jalan.
+- `tasks` berisi tiga tugas contoh. Setiap tugas adalah objek dengan kolom yang sama.
+- `nextId` adalah nomor untuk tugas berikutnya.
+
+Setiap tugas mengikuti model `Task` yang kita pakai sampai akhir Track 1. Isinya `id`, `title` (judul), `done` (sudah selesai atau belum), `priority` (prioritas), `createdAt` (waktu dibuat), dan `updatedAt` (waktu terakhir diubah). Waktu disimpan sebagai teks ISO 8601, misalnya `"2026-10-30T16:12:37.738Z"`. Format tanggal ini paling aman untuk JSON.
+
+Perhatikan dua kata kunci yang berbeda:
+
+- `tasks` memakai `const` karena variabelnya tidak pernah diganti dengan array lain. Isinya tetap boleh berubah lewat `push` (menambah) dan `splice` (membuang).
+- `nextId` memakai `let` karena nilainya naik setiap kali tugas baru dibuat. Variabel ini berperan seperti `AUTOINCREMENT` di SQLite.
+
+Kenapa tidak memakai `tasks.length + 1` saja? Karena panjang array berkurang setelah ada tugas yang dihapus. Misalnya tugas ber-`id` 1 dihapus. Array tinggal berisi `id` 2 dan 3, jadi `tasks.length + 1` menghasilkan `3`. Padahal `id` 3 sudah dipakai! Penghitung terpisah menjamin `id` tidak pernah dobel. Mirip nomor antrean di bank: nomor berikutnya tetap naik, walaupun ada nasabah yang sudah pulang.
+
+Lalu tambahkan dua **helper** di bawah `app.use(express.json())`. Helper adalah fungsi kecil yang dipakai berulang kali supaya kode tidak ditulis ulang. Helper pertama mencari tugas. Helper kedua membalas 404 dengan format standar:
+
+```js title="src/server.js"
+function cariTugas(id) {
+  return tasks.find((t) => t.id === id);
+}
+
+function tugasTidakDitemukan(res) {
+  return res.status(404).json({
+    error: { message: "Tugas tidak ditemukan", code: "NOT_FOUND" },
+  });
+}
+```
+
+`cariTugas(id)` menelusuri array dan mengembalikan tugas pertama yang `id`-nya cocok. Kalau tidak ada yang cocok, hasilnya `undefined`. `tugasTidakDitemukan(res)` mengirim status 404 beserta pesan error. Dua helper ini akan dipakai di hampir semua route.
+
+## Read: daftar dan detail tugas
+
+<Callout type="analogi" title="Seperti meminjam buku di perpustakaan kampus">
+
+Di meja petugas perpustakaan, kamu bisa minta dua hal. Pertama, "Boleh lihat daftar semua buku?" Petugas memberi katalog lengkap. Kedua, "Tolong ambilkan buku nomor 2." Petugas mencari di rak. Kalau nomor itu tidak ada, ia menjawab, "Maaf, buku itu tidak ada."
+
+- Minta katalog = `GET /api/tasks` (daftar).
+- Minta buku nomor 2 = `GET /api/tasks/2` (detail).
+- Jawaban "buku tidak ada" = status 404 `NOT_FOUND`.
+
+</Callout>
+
+Tambahkan dua route berikut **di atas** 404 catch-all. Catch-all adalah route penampung paling bawah yang menjawab semua path tak dikenal. Ingat dari pelajaran sebelumnya: route yang ditulis di bawah catch-all tidak akan pernah tercapai.
+
+```js title="src/server.js"
+app.get("/api/tasks", (req, res) => {
+  res.json({ data: tasks, meta: { total: tasks.length } });
+});
+
+app.get("/api/tasks/:id", (req, res) => {
+  const task = cariTugas(Number(req.params.id));
+  if (!task) return tugasTidakDitemukan(res);
+  res.json({ data: task });
+});
+```
+
+Cara kerja dua route di atas:
+
+- `GET /api/tasks` membalas seluruh isi array. Daftarnya dibungkus `{ data, meta }`. Untuk sekarang `meta` hanya berisi `total`. Nanti di pelajaran pagination, isinya bertambah `page`, `limit`, dan `totalPages`.
+- `GET /api/tasks/:id` mengambil nomor dari URL lewat `req.params.id`, lalu mencarinya dengan `cariTugas`. Kalau tidak ketemu, handler (fungsi yang menangani request di route itu) langsung membalas 404 dan berhenti berkat `return`.
+
+Hasil `GET /api/tasks/2`:
+
+```json
+{"data":{"id":2,"title":"Latihan query JOIN","done":true,"priority":"sedang","createdAt":"2026-10-30T16:12:37.738Z","updatedAt":"2026-10-30T16:12:37.738Z"}}
+```
+
+Sedangkan `GET /api/tasks/99` membalas `HTTP/1.1 404 Not Found` dengan body `{"error":{"message":"Tugas tidak ditemukan","code":"NOT_FOUND"}}`.
+
+### Jebakan Number(req.params.id)
+
+Nilai yang diambil dari URL **selalu berupa string** (teks). Di array, `id` bertipe number (angka). Tanpa `Number()`, perbandingan `t.id === "2"` selalu `false`, karena `===` juga membandingkan tipe. Mirip mencocokkan angka 2 dengan tulisan "dua": artinya sama, tetapi bentuknya beda, jadi petugas menganggapnya tidak cocok. Akibatnya setiap detail tugas dibalas 404, padahal datanya ada. Ini bug yang paling sering muncul di pelajaran ini.
+
+`Number()` juga punya perilaku yang perlu kamu kenal. Hasil berikut dijalankan langsung di Node 22:
+
+| Isi `req.params.id` | `Number(...)` | `parseInt(...)` |
+| --- | --- | --- |
+| `"7"` | `7` | `7` |
+| `"abc"` | `NaN` | `NaN` |
+| `"12abc"` | `NaN` | `12` |
+| `"7.5"` | `7.5` | `7` |
+| `"1e1"` | `10` | `1` |
+
+`parseInt` diam-diam membuang sisa teks, jadi `/api/tasks/12abc` bisa menampilkan tugas 12. `Number` lebih jujur: input yang aneh menjadi `NaN` (*Not a Number*, artinya "bukan angka"). `NaN` tidak sama dengan angka apa pun. Jadi `cariTugas(NaN)` mengembalikan `undefined`, dan client menerima 404. Untuk sekarang itu cukup aman. Idealnya `/api/tasks/abc` dibalas 400, karena formatnya salah. Itu kita rapikan dengan Zod di [Validasi & Error Handling](/belajar/crud-backend/validasi-error-handling).
+
+## Create: POST dengan validasi sederhana
+
+<Callout type="analogi" title="Petugas yang mengecek formulir">
+
+Saat mendaftar ulang di bagian akademik, kamu menyerahkan formulir. Petugas yang teliti memeriksa seluruh formulir sekaligus. Lalu ia berkata, "Nama belum diisi, dan pilihan jurusan tidak ada di daftar." Ia tidak menyuruhmu bolak-balik untuk tiap kesalahan. Kalau semuanya benar, kamu menerima bukti pendaftaran berisi nomor pendaftaran.
+
+- Petugas = fungsi validasi.
+- Daftar kesalahan yang disebut petugas = array `details` di respons 400.
+- Bukti pendaftaran dengan nomor = respons 201 berisi tugas baru lengkap dengan `id`.
+
+</Callout>
+
+Prinsip pertama backend: **jangan percaya input dari client**. Body (isi data yang dikirim bersama request) bisa kosong. `title` bisa berupa angka. `priority` bisa berisi `"urgent"`, padahal nilai itu tidak ada di daftar. Karena itu kita buat dua fungsi:
+
+1. `validasiTugas` memeriksa body dan mengumpulkan semua kesalahan sekaligus.
+2. `gagalValidasi` membalas status 400 dengan daftar kesalahan itu.
+
+Taruh keduanya di bawah helper sebelumnya:
+
+```js title="src/server.js"
+function validasiTugas(body, wajib = []) {
+  const details = [];
+  for (const field of wajib) {
+    if (body[field] === undefined) {
+      details.push({ field, message: `${field} wajib diisi` });
+    }
+  }
+  if (body.title !== undefined && (typeof body.title !== "string" || body.title.trim() === "")) {
+    details.push({ field: "title", message: "title harus berupa teks dan tidak boleh kosong" });
+  }
+  if (body.done !== undefined && typeof body.done !== "boolean") {
+    details.push({ field: "done", message: "done harus true atau false" });
+  }
+  if (body.priority !== undefined && !PRIORITAS.includes(body.priority)) {
+    details.push({ field: "priority", message: "priority harus rendah, sedang, atau tinggi" });
+  }
+  return details;
+}
+
+function gagalValidasi(res, details) {
+  return res.status(400).json({
+    error: { message: "Data tugas tidak valid", code: "VALIDATION_ERROR", details },
+  });
+}
+```
+
+Cara kerja `validasiTugas`:
+
+- Bagian `for` mengecek field wajib. Kalau field itu tidak dikirim, muncul pesan "... wajib diisi".
+- Tiga `if` berikutnya mengecek tipe field yang dikirim. `title` harus teks yang tidak kosong. `done` harus `true` atau `false`. `priority` harus salah satu isi `PRIORITAS`.
+- Setiap kesalahan dimasukkan ke array `details`. Kalau array itu kosong di akhir, berarti body-nya lolos.
+
+Parameter `wajib` berisi daftar field yang harus ada. POST mewajibkan `title`. PUT mewajibkan `title` dan `done`. PATCH tidak mewajibkan apa pun, tetapi field yang dikirim tetap dicek tipenya. Sekarang route-nya:
+
+```js title="src/server.js"
+app.post("/api/tasks", (req, res) => {
+  const body = req.body ?? {};
+  const details = validasiTugas(body, ["title"]);
+  if (details.length > 0) return gagalValidasi(res, details);
+
+  const waktu = new Date().toISOString();
+  const task = {
+    id: nextId++,
+    title: body.title.trim(),
+    done: body.done ?? false,
+    priority: body.priority ?? "sedang",
+    createdAt: waktu,
+    updatedAt: waktu,
+  };
+  tasks.push(task);
+  res.status(201).json({ data: task });
+});
+```
+
+Urutan kerjanya: validasi body, buat objek tugas baru, masukkan ke array dengan `push`, lalu balas 201. Beberapa detail yang perlu kamu perhatikan:
+
+- `req.body ?? {}` menjaga dari request tanpa body atau tanpa header `Content-Type: application/json`. Di Express 5, `req.body` bernilai `undefined` dalam kasus itu. Tanpa penjaga ini, `body.title` akan melempar `TypeError`.
+- `nextId++` memakai nilai sekarang (4), lalu menaikkannya menjadi 5 untuk tugas berikutnya.
+- `??` mengisi nilai bawaan hanya kalau field tidak dikirim. Misalnya `priority` yang tidak dikirim menjadi `"sedang"`.
+- Client tidak bisa mengatur `id`, `createdAt`, atau `updatedAt`. Server yang menentukannya.
+- Status **201 Created** artinya data baru berhasil dibuat. Body-nya berisi tugas lengkap dengan `id`, seperti bukti pendaftaran tadi.
+
+Coba kirim body `{"title":"   ","priority":"urgent"}`. Judulnya hanya spasi, dan prioritasnya tidak dikenal. Server menjawab dengan dua kesalahan sekaligus:
+
+```json
+{"error":{"message":"Data tugas tidak valid","code":"VALIDATION_ERROR","details":[{"field":"title","message":"title harus berupa teks dan tidak boleh kosong"},{"field":"priority","message":"priority harus rendah, sedang, atau tinggi"}]}}
+```
+
+Daftar `details` ini nanti berguna di aplikasi. Setiap pesan bisa ditampilkan tepat di bawah input yang salah.
+
+## Update: PUT vs PATCH
+
+<Callout type="analogi" title="Mengisi ulang formulir vs memakai tip-ex">
+
+Data biodatamu di bagian akademik salah. Ada dua cara memperbaikinya.
+
+- Cara pertama: kamu mengisi formulir biodata baru dari awal, lalu formulir lama dibuang. Kolom yang kamu biarkan kosong ikut kosong di data baru. Ini **PUT**.
+- Cara kedua: kamu hanya menutup satu kolom yang salah dengan tip-ex, lalu menulis isi yang benar. Kolom lain tetap seperti semula. Ini **PATCH**.
+
+</Callout>
+
+HTTP punya dua method untuk mengubah data. Keduanya sering tertukar.
+
+<Compare>
+<CompareItem title="PUT: ganti seluruh isi" tone="neutral">
+
+Client mengirim **data tugas lengkap**. Field yang tidak dikirim kembali ke nilai bawaan. Cocok untuk form edit yang mengirim semua field sekaligus. Di API kita, PUT wajib menyertakan `title` dan `done`.
+
+</CompareItem>
+<CompareItem title="PATCH: ubah sebagian" tone="good">
+
+Client hanya mengirim **field yang berubah**, misalnya `{"done":true}` saat tugas dicentang. Field lain tetap. Aplikasi mobile paling sering memakai PATCH, karena body-nya kecil.
+
+</CompareItem>
+</Compare>
+
+Dalam pemakaian kita, keduanya bersifat [idempotent](/glosarium#idempotent). Artinya, mengirim request yang sama dua kali menghasilkan data akhir yang sama. Mirip menekan tombol lift lantai 3 berkali-kali: lift tetap berhenti di lantai 3. Berikut kodenya:
+
+```js title="src/server.js"
+app.put("/api/tasks/:id", (req, res) => {
+  const body = req.body ?? {};
+  const details = validasiTugas(body, ["title", "done"]);
+  if (details.length > 0) return gagalValidasi(res, details);
+
+  const task = cariTugas(Number(req.params.id));
+  if (!task) return tugasTidakDitemukan(res);
+
+  task.title = body.title.trim();
+  task.done = body.done;
+  task.priority = body.priority ?? "sedang";
+  task.updatedAt = new Date().toISOString();
+  res.json({ data: task });
+});
+
+app.patch("/api/tasks/:id", (req, res) => {
+  const body = req.body ?? {};
+  const details = validasiTugas(body);
+  if (details.length > 0) return gagalValidasi(res, details);
+
+  const task = cariTugas(Number(req.params.id));
+  if (!task) return tugasTidakDitemukan(res);
+
+  if (body.title !== undefined) task.title = body.title.trim();
+  if (body.done !== undefined) task.done = body.done;
+  if (body.priority !== undefined) task.priority = body.priority;
+  task.updatedAt = new Date().toISOString();
+  res.json({ data: task });
+});
+```
+
+Lihat perbedaannya pada tugas "Kuis Basis Data" yang ber-`priority` `"tinggi"`. PATCH dengan `{"done":true}` hanya mengubah `done` (dan `updatedAt`). PUT dengan `{"title":"Kuis Basis Data (revisi)","done":false}` tanpa `priority` justru mengembalikannya ke `"sedang"`:
+
+```json
+{"data":{"id":4,"title":"Kuis Basis Data (revisi)","done":false,"priority":"sedang","createdAt":"2026-10-30T16:12:49.516Z","updatedAt":"2026-10-30T16:12:49.630Z"}}
+```
+
+Itulah arti "ganti seluruh isi". Kalau PUT dikirim tanpa `done`, server membalas 400 dengan `details` berisi `{"field":"done","message":"done wajib diisi"}`.
+
+### Validasi dulu, baru ubah
+
+Urutan di kedua handler disengaja: validasi semua input, cari tugasnya, **baru** mengubah data. Bayangkan kalau `title` diubah dulu, lalu ternyata `priority` tidak valid. Client menerima 400 dan mengira tidak ada yang berubah, padahal judulnya sudah terlanjur berganti. Data setengah berubah seperti ini sulit dilacak.
+
+### Mutasi vs immutability
+
+**Mutasi** artinya mengubah langsung isi objek yang sudah ada. Handler di atas melakukan itu, misalnya `task.done = body.done`. `cariTugas` tidak membuat salinan. Ia mengembalikan objek yang sama persis dengan yang ada di dalam array. Jadi begitu `task.done` diubah, isi `tasks` ikut berubah. Hal yang sama berlaku untuk `push` dan `splice`. Ada satu godaan yang perlu kamu hindari, yaitu menyingkat semua perubahan dalam satu baris:
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+```js
+Object.assign(task, req.body);
+```
+
+Semua isi body disalin ke tugas, termasuk field yang seharusnya hanya diatur server. Misalnya body `{"id":99,"done":"ya"}` mengubah tugas menjadi `{ id: 99, title: 'A', done: 'ya' }`. Akibatnya `id` rusak, dan `done` bukan boolean lagi.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+```js
+if (body.done !== undefined) task.done = body.done;
+```
+
+Ambil field yang boleh diubah satu per satu, setelah validasi lolos. Dengan cara ini client tidak bisa menyentuh `id` atau `createdAt`.
+
+</CompareItem>
+</Compare>
+
+Gaya kebalikannya disebut **[immutability](/glosarium#immutability)**. Objek lama tidak diubah. Kamu membuat objek baru yang berisi salinan data lama plus perubahannya. Contohnya:
+
+- `tasks[index] = { ...task, done: true }` membuat objek tugas baru. Tanda `...` (spread) menyalin semua field `task`, lalu `done` ditimpa.
+- `tasks = tasks.filter((t) => t.id !== id)` membuat array baru tanpa tugas yang dihapus. Cara ini butuh `let tasks`. Kalau tetap `const`, Node melempar `TypeError: Assignment to constant variable.`
+
+Mirip bedanya mencoret catatan di buku dengan menyalin catatan itu ke halaman baru sambil memperbaiki satu baris.
+
+Untuk server in-memory, mutasi itu wajar dan sederhana. Array kita memang berperan sebagai "tabel" yang isinya terus berubah. Lain halnya di React dan React Native (Track 2). Di sana state **wajib** diperlakukan immutable. React baru sadar ada perubahan kalau objeknya baru, jadi kamu akan sering menulis `{ ...task, done: true }`.
+
+## Delete: 204 No Content
+
+Menghapus tugas mirip mencabut satu lembar dari map berisi kertas tugas. Kamu cari dulu lembarnya ada di urutan ke berapa, baru mencabutnya. Kalau lembarnya tidak ada, tidak ada yang bisa dicabut.
+
+```js title="src/server.js"
+app.delete("/api/tasks/:id", (req, res) => {
+  const index = tasks.findIndex((t) => t.id === Number(req.params.id));
+  if (index === -1) return tugasTidakDitemukan(res);
+
+  tasks.splice(index, 1);
+  res.status(204).end();
+});
+```
+
+Cara membaca kode di atas:
+
+- `findIndex` mencari posisi tugas di array. Posisi dihitung dari 0. Kalau tugasnya tidak ada, hasilnya `-1`, dan kita membalas 404.
+- `splice(index, 1)` membuang satu elemen di posisi itu.
+- `res.status(204).end()` membalas tanpa isi. Status **204 No Content** artinya "berhasil, dan tidak ada yang perlu dikirim balik".
+
+Walaupun kamu menulis `res.status(204).json({ ... })`, Express tetap membuang body-nya. Kalau dicek dengan `curl.exe -i`, yang muncul hanya header tanpa isi.
+
+Bagaimana kalau tugas yang sama dihapus dua kali? Permintaan kedua dibalas 404 `NOT_FOUND`. Hasil akhirnya tetap sama, yaitu tugas itu tidak ada. Karena itu DELETE tetap disebut idempotent, walaupun status code-nya berbeda.
+
+## Kode lengkap src/server.js
+
+Ini gabungan semua bagian di atas. Bandingkan dengan file milikmu. Baris yang disorot adalah tambahan dari pelajaran ini. Bagian logger dan `/api/health` berasal dari pelajaran sebelumnya.
+
+```js title="src/server.js" showLineNumbers {5-14,29-63,69-134}
+import express from "express";
+
+const app = express();
+const PORT = process.env.PORT ?? 3000;
+const PRIORITAS = ["rendah", "sedang", "tinggi"];
+
+// "Database" sementara: hidup di memori dan hilang setiap server restart
+const sekarang = new Date().toISOString();
+const tasks = [
+  { id: 1, title: "Membuat ERD perpustakaan", done: false, priority: "tinggi", createdAt: sekarang, updatedAt: sekarang },
+  { id: 2, title: "Latihan query JOIN", done: true, priority: "sedang", createdAt: sekarang, updatedAt: sekarang },
+  { id: 3, title: "Install Expo dan Android Studio", done: false, priority: "rendah", createdAt: sekarang, updatedAt: sekarang },
+];
+let nextId = 4;
+
+// Middleware logger buatan sendiri
+app.use((req, res, next) => {
+  const mulai = Date.now();
+  res.on("finish", () => {
+    const durasi = Date.now() - mulai;
+    console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${durasi} ms)`);
+  });
+  next();
+});
+
+// Ubah body JSON menjadi objek di req.body
+app.use(express.json());
+
+// ---------- Helper ----------
+function cariTugas(id) {
+  return tasks.find((t) => t.id === id);
+}
+
+function tugasTidakDitemukan(res) {
+  return res.status(404).json({
+    error: { message: "Tugas tidak ditemukan", code: "NOT_FOUND" },
+  });
+}
+
+function validasiTugas(body, wajib = []) {
+  const details = [];
+  for (const field of wajib) {
+    if (body[field] === undefined) {
+      details.push({ field, message: `${field} wajib diisi` });
+    }
+  }
+  if (body.title !== undefined && (typeof body.title !== "string" || body.title.trim() === "")) {
+    details.push({ field: "title", message: "title harus berupa teks dan tidak boleh kosong" });
+  }
+  if (body.done !== undefined && typeof body.done !== "boolean") {
+    details.push({ field: "done", message: "done harus true atau false" });
+  }
+  if (body.priority !== undefined && !PRIORITAS.includes(body.priority)) {
+    details.push({ field: "priority", message: "priority harus rendah, sedang, atau tinggi" });
+  }
+  return details;
+}
+
+function gagalValidasi(res, details) {
+  return res.status(400).json({
+    error: { message: "Data tugas tidak valid", code: "VALIDATION_ERROR", details },
+  });
+}
+
+app.get("/api/health", (req, res) => {
+  res.json({ data: { status: "ok" } });
+});
+
+// ---------- Tasks ----------
+app.get("/api/tasks", (req, res) => {
+  res.json({ data: tasks, meta: { total: tasks.length } });
+});
+
+app.get("/api/tasks/:id", (req, res) => {
+  const task = cariTugas(Number(req.params.id));
+  if (!task) return tugasTidakDitemukan(res);
+  res.json({ data: task });
+});
+
+app.post("/api/tasks", (req, res) => {
+  const body = req.body ?? {};
+  const details = validasiTugas(body, ["title"]);
+  if (details.length > 0) return gagalValidasi(res, details);
+
+  const waktu = new Date().toISOString();
+  const task = {
+    id: nextId++,
+    title: body.title.trim(),
+    done: body.done ?? false,
+    priority: body.priority ?? "sedang",
+    createdAt: waktu,
+    updatedAt: waktu,
+  };
+  tasks.push(task);
+  res.status(201).json({ data: task });
+});
+
+app.put("/api/tasks/:id", (req, res) => {
+  const body = req.body ?? {};
+  const details = validasiTugas(body, ["title", "done"]);
+  if (details.length > 0) return gagalValidasi(res, details);
+
+  const task = cariTugas(Number(req.params.id));
+  if (!task) return tugasTidakDitemukan(res);
+
+  task.title = body.title.trim();
+  task.done = body.done;
+  task.priority = body.priority ?? "sedang";
+  task.updatedAt = new Date().toISOString();
+  res.json({ data: task });
+});
+
+app.patch("/api/tasks/:id", (req, res) => {
+  const body = req.body ?? {};
+  const details = validasiTugas(body);
+  if (details.length > 0) return gagalValidasi(res, details);
+
+  const task = cariTugas(Number(req.params.id));
+  if (!task) return tugasTidakDitemukan(res);
+
+  if (body.title !== undefined) task.title = body.title.trim();
+  if (body.done !== undefined) task.done = body.done;
+  if (body.priority !== undefined) task.priority = body.priority;
+  task.updatedAt = new Date().toISOString();
+  res.json({ data: task });
+});
+
+app.delete("/api/tasks/:id", (req, res) => {
+  const index = tasks.findIndex((t) => t.id === Number(req.params.id));
+  if (index === -1) return tugasTidakDitemukan(res);
+
+  tasks.splice(index, 1);
+  res.status(204).end();
+});
+
+// 404 catch-all: harus paling bawah, setelah semua route
+app.use((req, res) => {
+  res.status(404).json({
+    error: { message: "Route tidak ditemukan", code: "ROUTE_NOT_FOUND" },
+  });
+});
+
+app.listen(PORT, (error) => {
+  if (error) throw error; // misalnya EADDRINUSE: port sudah dipakai
+  console.log(`Server jalan di http://localhost:${PORT}`);
+});
+```
+
+<FileTree title="belajar-api" tree={`
+node_modules/
+src/
+  * server.js # semua route tasks + array in-memory
+package-lock.json
+package.json
+* requests.http # kumpulan request untuk menguji CRUD
+`} />
+
+## Menguji API
+
+Menguji API mirip mencicipi masakan sebelum disajikan ke pembeli. Kamu belum punya aplikasi HP, jadi kamu sendiri yang berperan sebagai client. Jalankan `npm run dev`, lalu kirim request dari alat yang paling kamu sukai. Semua output di bawah diambil dari server sungguhan.
+
+### requests.http dengan REST Client
+
+**REST Client** adalah ekstensi VS Code yang mengirim request langsung dari file teks berakhiran `.http`. Lanjutkan file `requests.http` dari pelajaran sebelumnya. Perhatikan baris `# @name buatTugas`. Baris itu memberi nama pada request POST. Request lain lalu bisa memakai `id` dari respons POST tersebut, jadi kamu tidak perlu menyalin `id` secara manual.
+
+```http title="requests.http"
+@baseUrl = http://localhost:3000/api
+
+### Cek server hidup
+GET {{baseUrl}}/health
+
+### Daftar tugas
+GET {{baseUrl}}/tasks
+
+### Detail tugas
+GET {{baseUrl}}/tasks/2
+
+### Detail tugas yang tidak ada -> 404
+GET {{baseUrl}}/tasks/99
+
+### Tambah tugas
+# @name buatTugas
+POST {{baseUrl}}/tasks
+Content-Type: application/json
+
+{
+  "title": "Kuis Basis Data",
+  "priority": "tinggi"
+}
+
+### Tambah tugas tidak valid -> 400
+POST {{baseUrl}}/tasks
+Content-Type: application/json
+
+{
+  "title": "   ",
+  "priority": "urgent"
+}
+
+### Centang tugas (PATCH)
+PATCH {{baseUrl}}/tasks/{{buatTugas.response.body.$.data.id}}
+Content-Type: application/json
+
+{
+  "done": true
+}
+
+### Ganti seluruh isi (PUT)
+PUT {{baseUrl}}/tasks/{{buatTugas.response.body.$.data.id}}
+Content-Type: application/json
+
+{
+  "title": "Kuis Basis Data (revisi)",
+  "done": false
+}
+
+### Hapus tugas -> 204
+DELETE {{baseUrl}}/tasks/{{buatTugas.response.body.$.data.id}}
+```
+
+Klik **Send Request** pada request "Tambah tugas" lebih dulu. Kalau belum, REST Client mengirim teks variabelnya apa adanya (`{{buatTugas...}}`), dan server membalas 404.
+
+Lebih suka mengisi formulir daripada menulis teks? Pakai **Thunder Client**, ekstensi VS Code yang mirip Postman. Langkahnya:
+
+1. Klik ikon petir di Activity Bar (deretan ikon di sisi kiri VS Code), lalu pilih **New Request**.
+2. Atur method dan URL, misalnya `POST` dan `http://localhost:3000/api/tasks`.
+3. Buka tab **Body**, pilih **JSON**, lalu tempel body-nya.
+4. Klik **Send**. Status, waktu, dan respons muncul di panel kanan.
+
+### Dari terminal
+
+Terminal cocok untuk pengujian cepat. Ingat dari pelajaran sebelumnya: di PowerShell, panggil curl asli dengan `curl.exe`.
+
+<Tabs items={["PowerShell (Invoke-RestMethod)", "Windows (curl.exe)", "macOS / Linux (curl)"]}>
+<Tab>
+
+```powershell
+$base = "http://localhost:3000/api"
+Invoke-RestMethod "$base/tasks" | ConvertTo-Json -Depth 5
+
+$body = @{ title = "Kuis Basis Data"; priority = "tinggi" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$base/tasks" -ContentType "application/json" -Body $body | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Method Patch -Uri "$base/tasks/4" -ContentType "application/json" -Body '{"done":true}' | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Method Delete -Uri "$base/tasks/4"
+Invoke-RestMethod "$base/tasks/99"
+```
+
+`DELETE` yang berhasil tidak menampilkan apa-apa, karena body 204 memang kosong. Untuk status 4xx (kelompok error dari sisi client, seperti 400 dan 404), Windows PowerShell 5.1 menampilkan pesan error merah. Body JSON dari server ikut tercetak di pesan itu:
+
+```txt
+Invoke-RestMethod : {"error":{"message":"Tugas tidak ditemukan","code":"NOT_FOUND"}}
+```
+
+</Tab>
+<Tab>
+
+```powershell
+curl.exe http://localhost:3000/api/tasks
+curl.exe -i http://localhost:3000/api/tasks/99
+
+'{"title":"Kuis Basis Data","priority":"tinggi"}' | curl.exe -i -X POST http://localhost:3000/api/tasks -H "Content-Type: application/json" --data-binary "@-"
+'{"done":true}' | curl.exe -X PATCH http://localhost:3000/api/tasks/4 -H "Content-Type: application/json" --data-binary "@-"
+'{"title":"Kuis Basis Data (revisi)","done":false}' | curl.exe -X PUT http://localhost:3000/api/tasks/4 -H "Content-Type: application/json" --data-binary "@-"
+curl.exe -i -X DELETE http://localhost:3000/api/tasks/4
+```
+
+Body JSON dikirim lewat pipe (tanda `|`, yang meneruskan teks di kirinya ke perintah di kanannya). Cara ini mencegah PowerShell merusak tanda kutip di dalam JSON.
+
+</Tab>
+<Tab>
+
+```bash
+curl http://localhost:3000/api/tasks
+curl -i http://localhost:3000/api/tasks/99
+
+curl -i -X POST http://localhost:3000/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Kuis Basis Data","priority":"tinggi"}'
+curl -X PATCH http://localhost:3000/api/tasks/4 \
+  -H "Content-Type: application/json" \
+  -d '{"done":true}'
+curl -X PUT http://localhost:3000/api/tasks/4 \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Kuis Basis Data (revisi)","done":false}'
+curl -i -X DELETE http://localhost:3000/api/tasks/4
+```
+
+</Tab>
+</Tabs>
+
+Ini respons `POST` lengkap dengan header-nya, hasil dari `curl.exe -i` (opsi `-i` ikut menampilkan header):
+
+```txt
+HTTP/1.1 201 Created
+X-Powered-By: Express
+Content-Type: application/json; charset=utf-8
+Content-Length: 154
+
+{"data":{"id":4,"title":"Kuis Basis Data","done":false,"priority":"tinggi","createdAt":"2026-10-30T16:12:49.516Z","updatedAt":"2026-10-30T16:12:49.516Z"}}
+```
+
+Sementara itu, logger buatanmu di pelajaran sebelumnya mencatat setiap request di terminal server:
+
+```txt
+GET /api/tasks -> 200 (5 ms)
+GET /api/tasks/99 -> 404 (1 ms)
+POST /api/tasks -> 201 (17 ms)
+POST /api/tasks -> 400 (2 ms)
+PATCH /api/tasks/4 -> 200 (1 ms)
+PUT /api/tasks/4 -> 200 (1 ms)
+DELETE /api/tasks/4 -> 204 (1 ms)
+DELETE /api/tasks/4 -> 404 (0 ms)
+```
+
+### Bandingkan dengan HTTP Explorer
+
+Lab [HTTP Explorer](/lab/http-explorer) menjalankan API tiruan dengan kontrak yang sama: path `/api/tasks`, format `{ data }`, dan error `NOT_FOUND`. Coba kirim PATCH di bawah ini. Lalu kirim request yang sama ke server buatanmu dan bandingkan responsnya.
+
+<HttpExplorer initialMethod="PATCH" initialPath="/api/tasks/1" />
+
+## Kenapa data hilang saat restart
+
+Ingat papan tulis di ruang kelas tadi? Sekarang kamu akan melihat sendiri "petugas kebersihan" menghapusnya. Coba langkah berikut:
+
+1. Tambah tugas "Rangkum materi normalisasi" lewat POST. Server membalas dengan `id` baru, misalnya 6.
+2. Buka `src/server.js`, lalu simpan file itu tanpa mengubah apa pun.
+3. Lihat terminal server, lalu kirim `GET /api/tasks` dan satu POST lagi.
+
+Terminal server menampilkan:
+
+```txt
+POST /api/tasks -> 201 (1 ms)
+Restarting 'src/server.js'
+Server jalan di http://localhost:3000
+GET /api/tasks -> 200 (4 ms)
+POST /api/tasks -> 201 (11 ms)
+```
+
+`GET /api/tasks` sekarang hanya berisi tiga tugas awal. POST berikutnya juga kembali mendapat `id` 4. Kenapa begitu?
+
+- Array `tasks` dan `nextId` hanyalah variabel di **RAM milik proses Node**. Proses adalah program yang sedang berjalan.
+- Saat file disimpan, `node --watch` me-restart server. Proses lama berhenti, dan isi memorinya dibuang.
+- Proses baru menjalankan `server.js` dari baris pertama. Array kembali berisi tiga tugas awal, dan `nextId` kembali ke 4.
+
+Masalah yang sama muncul kalau server crash (berhenti karena error), laptop dimatikan, atau aplikasi dijalankan di beberapa server sekaligus. Pada kasus terakhir, setiap server punya array sendiri, jadi datanya tidak sama. Data penting harus disimpan di **disk** (penyimpanan yang tetap ada walau listrik mati) lewat database.
+
+Itulah yang kamu kerjakan di [Database Sungguhan dengan Prisma + SQLite](/belajar/crud-backend/prisma-sqlite). Array `tasks`, `nextId`, dan `cariTugas` diganti dengan query Prisma. Route, status code, dan format responsnya tetap sama.
+
+## Kesalahan umum
+
+Saat error muncul, cocokkan gejalanya dengan kolom kiri tabel ini. Kolom tengah menjelaskan penyebabnya, dan kolom kanan cara memperbaikinya.
+
+| Pesan / gejala | Penyebab | Cara memperbaiki |
+| --- | --- | --- |
+| Detail tugas selalu 404 padahal `id`-nya ada | Membandingkan `t.id === req.params.id`, yaitu angka dengan teks | Ubah dulu dengan `Number(req.params.id)` |
+| Terminal server: `Error [ERR_HTTP_HEADERS_SENT]: Cannot set headers after they are sent to the client` | Lupa `return` sebelum membalas 404, jadi `res.json` kedua tetap dijalankan | Tulis `return tugasTidakDitemukan(res)` |
+| Halaman HTML 500: `TypeError: Cannot destructure property 'title' of 'req.body' as it is undefined.` | Request dikirim tanpa body atau tanpa header `Content-Type: application/json` | Kirim header yang benar, dan pakai `req.body ?? {}` |
+| `TypeError: Assignment to constant variable.` | Menulis `tasks = tasks.filter(...)`, padahal `tasks` dibuat dengan `const` | Pakai `splice`, atau ganti menjadi `let tasks` |
+| Dua tugas punya `id` yang sama | `id` dibuat dari `tasks.length + 1` | Pakai penghitung `nextId++` |
+| Route baru dibalas `ROUTE_NOT_FOUND` | Route ditulis di bawah 404 catch-all | Pindahkan ke atas catch-all |
+| Body respons DELETE kosong | Status 204 memang tanpa body | Ini normal. Cek status code-nya, bukan body-nya |
+
+<Callout type="warning" title="Selalu return setelah membalas">
+
+`res.status(404).json(...)` mengirim balasan, tetapi tidak menghentikan fungsi. Tanpa `return`, baris berikutnya ikut berjalan dan mencoba membalas untuk kedua kalinya. Ibarat kasir yang sudah menyerahkan struk, lalu mencoba mencetak struk kedua untuk pembeli yang sudah pergi. Client mungkin tetap menerima 404 yang benar, tetapi terminal server dipenuhi `ERR_HTTP_HEADERS_SENT`. Biasakan menulis `if (!task) return tugasTidakDitemukan(res);`.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="Tolak PATCH tanpa perubahan" difficulty="mudah" hints={["Cek apakah minimal satu dari `title`, `done`, atau `priority` dikirim.", "Array punya method `some` yang mengembalikan `true` kalau minimal satu elemen memenuhi syarat."]}>
+
+Saat ini `PATCH /api/tasks/1` dengan body `{}` tetap dibalas 200. Yang berubah hanya `updatedAt`, padahal client tidak mengirim perubahan apa pun. Perbaiki handler PATCH:
+
+1. Cek apakah body berisi minimal satu dari `title`, `done`, atau `priority`.
+2. Kalau tidak ada satu pun, balas 400 `VALIDATION_ERROR`.
+3. Isi `details` dengan `{ field: "body", message: "Kirim minimal satu dari title, done, atau priority" }`.
+4. Uji dengan body `{}` dan body `{"done":true}`.
+
+<Solution>
+
+```js title="src/server.js" {3-8}
+app.patch("/api/tasks/:id", (req, res) => {
+  const body = req.body ?? {};
+  const adaPerubahan = ["title", "done", "priority"].some((field) => body[field] !== undefined);
+  if (!adaPerubahan) {
+    return gagalValidasi(res, [
+      { field: "body", message: "Kirim minimal satu dari title, done, atau priority" },
+    ]);
+  }
+  const details = validasiTugas(body);
+  if (details.length > 0) return gagalValidasi(res, details);
+  // ...sisanya sama seperti sebelumnya
+});
+```
+
+`some` mengembalikan `true` kalau minimal satu field dikirim. Body `{"catatan":"x"}` juga ditolak, karena tidak berisi field yang dikenal. Pemeriksaan ini berjalan sebelum `cariTugas`, jadi data tidak tersentuh sama sekali.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Endpoint statistik tugas" difficulty="sedang" hints={["Hitung tugas selesai dengan `tasks.filter((t) => t.done).length`.", "Express mencocokkan route dari atas ke bawah. Kata `stats` juga cocok dengan pola `/api/tasks/:id`."]}>
+
+Buat endpoint yang menghitung jumlah tugas:
+
+1. Buat `GET /api/tasks/stats` yang membalas `{ data: { total, selesai, belum } }`.
+2. Tulis route-nya **di bawah** `GET /api/tasks/:id` dulu, lalu kirim request dan amati hasilnya.
+3. Cari tahu kenapa hasilnya salah, lalu perbaiki.
+
+<Solution>
+
+```js title="src/server.js (di atas GET /api/tasks/:id)"
+app.get("/api/tasks/stats", (req, res) => {
+  const selesai = tasks.filter((t) => t.done).length;
+  res.json({ data: { total: tasks.length, selesai, belum: tasks.length - selesai } });
+});
+```
+
+Kalau route ini ditulis di bawah `/api/tasks/:id`, request `/api/tasks/stats` lebih dulu cocok dengan pola `:id`. Express mengira `stats` adalah nomor tugas. `Number("stats")` menghasilkan `NaN`, jadi kamu mendapat `{"error":{"message":"Tugas tidak ditemukan","code":"NOT_FOUND"}}`. Aturannya: daftarkan route dengan path tetap sebelum route berparameter. Dengan data awal, hasil yang benar adalah `{"data":{"total":3,"selesai":1,"belum":2}}`.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Di server kita, apa balasan untuk `GET /api/tasks/abc`?",
+    options: ["500 karena `Number(\"abc\")` melempar error", "200 dengan `data: null`", "404 `NOT_FOUND`, karena `Number(\"abc\")` adalah `NaN` dan tidak ada tugas yang cocok", "404 `ROUTE_NOT_FOUND` dari catch-all"],
+    answer: 2,
+    explain: "`Number(\"abc\")` tidak melempar error. Hasilnya `NaN`, dan `find` tidak menemukan tugas apa pun, jadi handler membalas `NOT_FOUND`. Path `/api/tasks/abc` tetap cocok dengan route `/api/tasks/:id`, jadi catch-all tidak pernah dipanggil.",
+  },
+  {
+    q: "Client mengirim `PUT /api/tasks/1` dengan body `{\"done\":true}` saja. Apa yang terjadi?",
+    options: ["Hanya `done` yang berubah", "400 `VALIDATION_ERROR`, karena PUT wajib menyertakan `title` dan `done`", "Tugas 1 dihapus", "201 Created"],
+    answer: 1,
+    explain: "PUT mengganti seluruh isi tugas, seperti mengisi ulang formulir dari awal. Karena itu server kita mewajibkan `title` dan `done`. Kalau hanya ingin mengubah satu field, pakai PATCH.",
+  },
+  {
+    q: "Status code dan body yang tepat untuk DELETE yang berhasil adalah…",
+    options: ["200 dengan body `{ data: null }`", "201 dengan tugas yang dihapus", "404 karena tugas sudah tidak ada", "204 tanpa body"],
+    answer: 3,
+    explain: "204 No Content artinya berhasil, tanpa isi balasan. 201 khusus untuk data baru. 404 baru muncul kalau DELETE yang sama dikirim sekali lagi.",
+  },
+  {
+    q: "Apa akibat kode berikut saat tugas tidak ditemukan?",
+    code: "if (!task) res.status(404).json({ error: { message: \"Tugas tidak ditemukan\", code: \"NOT_FOUND\" } });\nres.json({ data: task });",
+    options: ["Client menerima 404, tetapi terminal server mencatat `ERR_HTTP_HEADERS_SENT`", "Client menerima 200 dengan `data` kosong", "Server mati dan harus di-restart", "Request menggantung sampai timeout"],
+    answer: 0,
+    explain: "Tidak ada `return`, jadi `res.json` kedua tetap dijalankan setelah balasan pertama terkirim. Node menolak mengirim header dua kali, dan Express mencatat error itu. Server tetap hidup.",
+  },
+  {
+    q: "Kamu menambah tugas lewat POST, lalu menyimpan `src/server.js`. Kenapa tugas itu hilang?",
+    options: ["Express menghapus data setiap 5 menit", "Browser menyimpan cache yang salah", "`node --watch` memulai proses baru, sehingga array `tasks` di RAM dibuat ulang dari awal", "POST tidak benar-benar menyimpan data"],
+    answer: 2,
+    explain: "Data in-memory hanya hidup selama proses Node berjalan, seperti tulisan di papan tulis. Saat restart, memori lama dibuang, lalu `tasks` dan `nextId` kembali ke nilai awal. Solusinya database, yang kamu pelajari berikutnya.",
+  },
+]} />
+
+## Ringkasan
+
+- CRUD untuk `/api/tasks` memakai `GET` untuk melihat daftar dan detail, `POST` untuk menambah, `PUT` atau `PATCH` untuk mengubah, dan `DELETE` untuk menghapus.
+- Status code yang dipakai: 200 untuk baca dan ubah, 201 untuk data baru, 204 tanpa body untuk hapus, 400 `VALIDATION_ERROR` untuk input salah, dan 404 `NOT_FOUND` untuk `id` yang tidak ada.
+- Semua respons punya bentuk tetap: `{ data, meta }` untuk daftar, `{ data }` untuk satu data, dan `{ error: { message, code, details? } }` untuk error.
+- Nilai `req.params.id` selalu berupa teks. Ubah dulu dengan `Number()`. Input aneh menjadi `NaN` dan berakhir 404.
+- PUT mengganti seluruh isi tugas dan wajib berisi `title` serta `done`. PATCH hanya mengubah field yang dikirim. Validasi dulu, baru ubah data, dan jangan pakai `Object.assign(task, req.body)`.
+- Mengubah array dan objek secara langsung (mutasi) wajar untuk server in-memory. State React nanti wajib immutable.
+- Data in-memory hilang setiap server restart, karena hanya tersimpan di RAM proses Node.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Kontrak `/api/tasks` yang kamu buat hari ini sama dengan kontrak yang dipakai aplikasi Expo di Track 3. Path, status code, dan format responsnya tidak akan berubah. Di pelajaran berikutnya, [Database Sungguhan dengan Prisma + SQLite](/belajar/crud-backend/prisma-sqlite), array `tasks` diganti tabel SQLite. Data tugas kuliah jadi tetap ada setelah restart. Kamu juga menambahkan mata kuliah (`Course`) yang terhubung dengan tugas. Simpan `requests.http`, karena semua request di dalamnya tetap bisa dipakai.
+
+</Callout>

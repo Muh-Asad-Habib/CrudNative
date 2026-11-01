@@ -1,0 +1,777 @@
+## Pengantar
+
+Di akhir [Prisma & SQLite](/belajar/crud-backend/prisma-sqlite), `belajar-api` sudah menyimpan data secara permanen. Sekarang coba kirim request yang "nakal". Panggil `GET /api/tasks/abc`. Atau kirim `PATCH /api/tasks/1` dengan body `{"done":"ya"}`. Server membalas seperti ini:
+
+```txt
+HTTP/1.1 500 Internal Server Error
+Content-Type: text/html; charset=utf-8
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>PrismaClientValidationError: <br> ...
+```
+
+Balasan ini punya tiga masalah:
+
+1. Status `500` artinya "server yang salah". Padahal yang salah adalah input dari client (aplikasi atau orang yang mengirim request).
+2. Isinya HTML. Padahal aplikasi HP kita menunggu [JSON](/glosarium#json), yaitu teks data dengan kolom tetap, mirip nota belanja.
+3. Isinya membocorkan *stack trace*, yaitu jejak baris kode dan path folder di laptopmu. Info ini berguna bagi orang yang ingin membobol server.
+
+Di pelajaran ini kamu memasang dua pengaman:
+
+1. **Validasi dengan Zod.** Validasi artinya memeriksa data sebelum dipakai. Setiap body dan parameter diperiksa sebelum menyentuh database. Input yang salah dijawab `400` dengan pesan per field dalam Bahasa Indonesia.
+2. **Error handler terpusat.** Semua error, dari mana pun asalnya, dikumpulkan di satu [middleware](/glosarium#middleware). Middleware adalah fungsi yang dilewati request di tengah jalan. Middleware ini mengubah semua error menjadi satu format: `{ error: { message, code, details? } }`.
+
+Diagram di bawah menunjukkan jalur setiap request. Kalau ada masalah di tahap mana pun, request langsung dilempar ke `errorHandler` di ujung.
+
+<Flow nodes={["Request", "express.json()", "validate()", "Route handler", "errorHandler"]} labels={["parse body", "cek schema", "error dilempar?", "format JSON"]} caption="Setiap tahap boleh melempar error, dan semuanya berakhir di errorHandler" />
+
+## Kenapa validasi harus di server
+
+<Callout type="analogi" title="Seperti petugas yang mengecek formulir di loket">
+
+Kamu mengurus surat keterangan aktif kuliah di bagian akademik. Ketua kelas sudah mengumumkan di grup WhatsApp: "Isi formulir lengkap dan bawa KTM." Tapi petugas di loket tetap mengecek formulirmu satu per satu. Selalu ada yang lupa menulis NIM atau salah tulis tanggal.
+
+- Pengumuman di grup WA = validasi di aplikasi HP. Membantu, tapi bisa diabaikan.
+- Petugas di loket = validasi di server. Pemeriksaan terakhir yang tidak bisa dilewati.
+- Formulir dikembalikan dengan catatan "NIM belum diisi" = respons `400` dengan pesan per field.
+
+</Callout>
+
+Mungkin kamu berpikir, "Form di aplikasi HP kan sudah mengecek judul tidak boleh kosong." Pengecekan itu bagus untuk kenyamanan pengguna. Tapi itu tidak cukup. API bisa dipanggil langsung lewat `curl` atau Postman, yaitu alat untuk mengirim request secara manual. API juga bisa dipanggil aplikasi versi lama yang belum diperbarui. Jadi validasi di client bisa dilewati siapa saja.
+
+<Compare>
+<CompareItem title="Validasi di aplikasi" tone="neutral">
+
+Memberi umpan balik cepat saat pengguna mengetik, misalnya teks merah "Judul minimal 3 karakter". Tujuannya kenyamanan. Bisa dilewati, jadi jangan dijadikan satu-satunya pengaman.
+
+</CompareItem>
+<CompareItem title="Validasi di server" tone="good">
+
+Memeriksa setiap request sebelum data menyentuh database. Tujuannya keamanan dan data yang rapi. Wajib ada, apa pun aplikasi yang memanggil API.
+
+</CompareItem>
+</Compare>
+
+Database sebenarnya juga punya penjaga, yaitu *constraint* (aturan yang menempel di tabel). Contohnya `NOT NULL` (kolom wajib diisi) atau foreign key (kolom yang harus menunjuk data yang ada). Masalahnya, pesannya teknis, misalnya `Foreign key constraint violated`. Pesan itu juga baru muncul setelah query dikirim ke database. Validasi di server menangkap kesalahan lebih awal, dengan pesan yang bisa langsung ditampilkan ke pengguna.
+
+## Zod 4: schema sebagai satpam
+
+<Callout type="analogi" title="Seperti formulir pendaftaran dengan aturan isian">
+
+Formulir pendaftaran UKM biasanya punya aturan di tiap kolom: "Nama wajib diisi", "NIM berupa angka", "Pilih salah satu: futsal, paduan suara, atau pecinta alam". Panitia mencocokkan setiap formulir yang masuk dengan aturan itu.
+
+- Daftar aturan di formulir = **schema** Zod.
+- Panitia yang mencocokkan = fungsi `parse`.
+- Formulir yang lolos dan sudah dirapikan = data bersih hasil `parse`.
+- Catatan "kolom NIM salah" = daftar error dari Zod.
+
+Bedanya, panitia manusia kadang memaklumi tulisan yang sedikit keliru. Zod tidak. Aturan yang kamu tulis dijalankan persis apa adanya.
+
+</Callout>
+
+[Zod](/glosarium#zod) adalah library (kumpulan kode siap pakai) untuk menulis **schema**. Schema adalah deskripsi bentuk data yang kamu harapkan: field apa saja, tipenya apa, dan aturannya apa. Zod memakai schema itu untuk memeriksa data. Hasilnya data bersih, atau daftar kesalahan. Instal Zod versi 4 di folder `belajar-api`:
+
+```bash
+npm install zod@4
+```
+
+Contoh kecil yang bisa kamu jalankan dengan `node`:
+
+```js title="coba-zod.js"
+import { z } from "zod";
+
+const taskSchema = z.object({
+  title: z.string().trim().min(3, "Judul minimal 3 karakter"),
+  done: z.boolean({ error: "done harus true atau false" }).optional(),
+});
+
+console.log(taskSchema.parse({ title: "  Kuis Basis Data  ", id: 99 }));
+// → { title: 'Kuis Basis Data' }
+
+const hasil = taskSchema.safeParse({ title: "ab", done: "ya" });
+console.log(hasil.success); // → false
+console.log(hasil.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`));
+// → [ 'title: Judul minimal 3 karakter', 'done: done harus true atau false' ]
+```
+
+Kode di atas membuat `taskSchema` dengan dua aturan. `title` harus teks minimal 3 karakter, dihitung setelah spasi di ujung dibuang. `done` boleh tidak dikirim, tapi kalau dikirim harus `true` atau `false`. Lalu kode mencoba dua data: yang pertama lolos, yang kedua gagal.
+
+Dari contoh itu, ada empat hal yang perlu kamu tangkap:
+
+- **`parse` vs `safeParse`.** `parse` mengembalikan data bersih kalau lolos. Kalau gagal, `parse` **melempar** (*throw*) `ZodError`. Artinya kode berhenti di situ dan error dikirim ke atas. `safeParse` tidak pernah melempar. Ia selalu mengembalikan objek, yaitu `{ success, data }` kalau lolos atau `{ success, error }` kalau gagal.
+- **Hasil parse sudah dirapikan.** `.trim()` membuang spasi di awal dan akhir judul. Key yang tidak ada di schema, seperti `id: 99`, dibuang. Ini melindungi API dari client yang mencoba mengisi kolom yang bukan haknya, misalnya `id` atau `createdAt`.
+- **Pesan kustom.** Di Zod 4, kamu menulis pesan sendiri lewat `{ error: "..." }`, atau string langsung seperti `.min(3, "...")`. Parameter `message` dari Zod 3 masih jalan, tapi sudah *deprecated* (masih ada, tapi dijadwalkan dihapus).
+- **`error.issues`** adalah array (daftar) kesalahan. Tiap item punya `path` (nama field yang salah) dan `message` (pesannya). Zod 4 juga punya `z.flattenError(err)` dan `z.treeifyError(err)` untuk bentuk lain. Kita cukup memakai `issues`, karena paling mudah diubah menjadi `details: [{ field, message }]`.
+
+<Callout type="info" title="400 atau 422?">
+
+Sebagian API membalas error validasi dengan `422 Unprocessable Content`. Artinya JSON-nya bisa dibaca, tapi isinya tidak masuk akal. Dua-duanya sah. Kita memakai `400 Bad Request` dengan kode `VALIDATION_ERROR`, supaya sama dengan API pendamping di Track 3. Pilih salah satu, lalu pakai secara konsisten di seluruh API dan tulis di dokumentasi.
+
+</Callout>
+
+## Schema untuk tugas dan mata kuliah
+
+Buat file `src/schemas.js`. Aturan yang dipakai berulang, misalnya aturan judul, disimpan dulu di variabel. Dengan begitu kamu tidak menulisnya dua kali.
+
+```js title="src/schemas.js"
+import { z } from "zod";
+
+// Pesan bawaan Zod (yang tidak kita tulis sendiri) memakai Bahasa Indonesia
+z.config(z.locales.id());
+
+const title = z
+  .string({
+    error: (issue) => (issue.input === undefined ? "Judul wajib diisi" : "Judul harus berupa teks"),
+  })
+  .trim()
+  .min(3, "Judul minimal 3 karakter")
+  .max(100, "Judul maksimal 100 karakter");
+
+const priority = z.enum(["rendah", "sedang", "tinggi"], {
+  error: "Prioritas harus rendah, sedang, atau tinggi",
+});
+
+const done = z.boolean({ error: "done harus true atau false" });
+
+const courseId = z
+  .number({ error: "courseId harus berupa angka" })
+  .int("courseId harus bilangan bulat")
+  .positive("courseId harus lebih dari 0")
+  .nullable();
+
+export const idParamsSchema = z.object({
+  id: z.coerce
+    .number({ error: "id harus berupa angka" })
+    .int("id harus bilangan bulat")
+    .positive("id harus lebih dari 0"),
+});
+
+// POST: hanya title yang wajib, sisanya memakai default database
+export const createTaskSchema = z.object({
+  title,
+  priority: priority.optional(),
+  done: done.optional(),
+  courseId: courseId.optional(),
+});
+
+// PUT: mengganti seluruh data, jadi title dan done wajib
+export const replaceTaskSchema = z.object({
+  title,
+  done,
+  priority: priority.default("sedang"),
+  courseId: courseId.default(null),
+});
+
+// PATCH: field sama dengan POST, tetapi semuanya opsional
+export const updateTaskSchema = createTaskSchema.partial();
+
+export const createCourseSchema = z.object({
+  name: z
+    .string({ error: "Nama mata kuliah wajib diisi" })
+    .trim()
+    .min(3, "Nama mata kuliah minimal 3 karakter")
+    .max(100, "Nama mata kuliah maksimal 100 karakter"),
+  lecturer: z
+    .string({ error: "Nama dosen wajib diisi" })
+    .trim()
+    .min(3, "Nama dosen minimal 3 karakter")
+    .max(100, "Nama dosen maksimal 100 karakter"),
+  sks: z
+    .number({ error: "sks harus berupa angka" })
+    .int("sks harus bilangan bulat")
+    .min(1, "sks minimal 1")
+    .max(6, "sks maksimal 6")
+    .nullable()
+    .optional(),
+});
+```
+
+Gambaran besarnya: bagian atas file menyiapkan aturan per field (`title`, `priority`, `done`, `courseId`). Bagian bawah merakit aturan itu menjadi schema yang di-`export` (dibuka untuk file lain). Ada satu schema untuk `:id` di URL, tiga untuk tugas (POST, PUT, PATCH), dan satu untuk mata kuliah.
+
+Beberapa keputusan di file ini:
+
+- **Pesan sebagai fungsi.** Parameter `error` boleh berupa fungsi yang menerima `issue` (catatan masalahnya). Kalau `issue.input` bernilai `undefined`, berarti field-nya tidak dikirim, jadi pesannya "Judul wajib diisi". Kalau field dikirim tapi tipenya salah, misalnya angka `123`, pesannya "Judul harus berupa teks".
+- **`z.enum`** membatasi `priority` ke tiga pilihan saja. Ini pengganti enum yang tidak dimiliki SQLite, seperti dibahas di pelajaran Prisma.
+- **`.nullable()` pada `courseId`** membolehkan nilai `null`. Artinya "lepaskan tugas dari mata kuliah".
+- **`.partial()`** membuat salinan schema dengan semua field opsional. Cocok untuk PATCH, yang hanya mengirim field yang berubah.
+- **`z.locales.id()`** mengubah pesan bawaan Zod ke Bahasa Indonesia, misalnya `Input tidak valid: diharapkan object, diterima array`. Pesan bawaan ini muncul untuk kasus yang tidak kita beri pesan sendiri.
+
+<Callout type="warning" title="Jebakan .default() + .partial()">
+
+Kenapa `createTaskSchema` memakai `.optional()`, bukan `.default("sedang")`? Karena nilai default tetap diisi walaupun schema sudah di-`.partial()`.
+
+Contohnya begini. Kalau `createTaskSchema` memakai default, `updateTaskSchema.parse({ done: true })` menghasilkan `{ priority: 'sedang', done: true }`. PATCH yang niatnya cuma mencentang tugas ikut mengubah prioritas menjadi "sedang" tanpa kamu sadari. Mirip formulir ganti data yang kolom prioritasnya sudah tercetak "sedang": kamu cuma ingin ganti satu hal, tapi kolom itu ikut terkirim.
+
+Solusinya, biarkan database yang mengisi default (`@default("sedang")` di schema Prisma). Pakai `.default()` hanya untuk PUT, yang memang mengganti seluruh data.
+
+</Callout>
+
+### Parameter URL selalu berupa string
+
+<Callout type="analogi" title="Seperti nomor kamar di alamat surat">
+
+Di amplop tertulis "Kos Melati, kamar 7". Angka 7 itu sebenarnya tulisan, bukan bilangan. Pak kos harus membacanya dulu sebagai nomor kamar sebelum mengantar surat. Kalau tertulis "kamar abc", surat tidak bisa diantar.
+
+URL juga begitu. Semua yang ada di URL adalah teks. Server harus mengubahnya dulu menjadi angka.
+
+</Callout>
+
+`req.params.id` dari `/api/tasks/7` adalah string `"7"`, bukan angka. `z.coerce.number()` menjalankan `Number(input)` dulu untuk mengubah teks menjadi angka. Setelah itu, baru hasilnya diperiksa:
+
+| `:id` di URL | Hasil `idParamsSchema` |
+| --- | --- |
+| `7` | `{ id: 7 }` (sudah bertipe number) |
+| `abc` | error "id harus berupa angka" (`Number("abc")` adalah `NaN`) |
+| `2.5` | error "id harus bilangan bulat" |
+| `0` atau `-2` | error "id harus lebih dari 0" |
+
+Pakai `coerce` hanya untuk data yang memang selalu string, yaitu params dan query. Di body JSON, `"3"` (teks) dan `3` (angka) sengaja dibedakan. Karena itu `courseId` memakai `z.number()` biasa, tanpa `coerce`.
+
+## Middleware validate yang bisa dipakai ulang
+
+<Callout type="analogi" title="Seperti satpam di gerbang gedung kuliah">
+
+Satpam di gerbang gedung memeriksa setiap orang sebelum masuk. Yang membawa KTM boleh lewat. Yang tidak membawa, diarahkan ke pos informasi. Dosen di kelas tidak perlu memeriksa KTM lagi.
+
+- Satpam = middleware `validate`.
+- Orang yang boleh lewat = request dengan data valid. Ia diteruskan ke route handler lewat `next()`.
+- Diarahkan ke pos informasi = `ZodError` dilempar ke error handler.
+- Dosen di kelas = route handler. Ia tinggal fokus pada tugasnya, yaitu menyimpan atau mengambil data.
+
+</Callout>
+
+Kamu bisa saja memanggil `safeParse` di setiap route. Tapi kodenya akan berulang di mana-mana. Lebih rapi kalau kamu membuat satu middleware yang menerima schema untuk tiga bagian request: `params` (bagian `:id` di URL), `query` (bagian setelah `?` di URL), dan `body` (isi JSON yang dikirim).
+
+```js title="src/middleware/validate.js"
+export function validate(schemas) {
+  return (req, res, next) => {
+    if (schemas.params) {
+      req.params = schemas.params.parse(req.params);
+    }
+    if (schemas.query) {
+      // Di Express 5 req.query hanya punya getter, jadi tidak bisa di-assign langsung
+      Object.defineProperty(req, "query", {
+        value: schemas.query.parse(req.query),
+        writable: true,
+        enumerable: true,
+      });
+    }
+    if (schemas.body) {
+      req.body = schemas.body.parse(req.body ?? {});
+    }
+    next();
+  };
+}
+```
+
+`validate` adalah fungsi pembuat middleware. Kamu memanggilnya dengan schema, lalu ia mengembalikan middleware yang siap dipasang di route. Contohnya `validate({ params: idParamsSchema, body: updateTaskSchema })`. Di dalamnya, tiap blok `if` mengurus satu bagian request. Alurnya:
+
+- Kalau data valid, hasil parse **menggantikan** data asli. Handler berikutnya menerima `req.params.id` yang sudah berupa angka, dan `req.body` yang sudah di-trim serta bebas key asing.
+- Kalau tidak valid, `parse` melempar `ZodError`. Express otomatis menangkap error dari middleware biasa (bukan `async`) dan meneruskannya ke error handler. Kamu tidak perlu `try/catch`.
+- `req.body ?? {}` artinya "pakai `req.body`, atau objek kosong kalau tidak ada". Ini perlu karena di Express 5, `req.body` bernilai `undefined` kalau request tidak membawa body JSON. Dengan objek kosong, pesan yang muncul tetap ramah: "Judul wajib diisi".
+- Bagian `query` belum dipakai sekarang. Bentuknya berbeda (`Object.defineProperty`) karena di Express 5, `req.query` tidak bisa ditimpa dengan `=` biasa. Kamu akan memakainya untuk `page` dan `limit` di [Pagination, Filter, Search & Sort](/belajar/crud-backend/pagination-filter-search).
+
+## HttpError dan error handler terpusat
+
+<Callout type="analogi" title="Seperti meja customer service di minimarket">
+
+Di minimarket, masalah apa pun (barang rusak, harga di rak beda dengan di kasir, struk salah cetak) tidak diurus kasir sendiri-sendiri. Semua diarahkan ke meja customer service. Petugas di sana punya cara menjawab yang baku. Jadi pelanggan selalu menerima penjelasan dengan bentuk yang sama.
+
+- Kasir dan pegawai rak = route dan middleware lain, tempat masalah ditemukan.
+- Meja customer service = error handler terpusat.
+- Cara menjawab yang baku = format `{ error: { message, code, details? } }`.
+- Catatan internal yang tidak ditunjukkan ke pelanggan = log `console.error` di terminal server.
+
+</Callout>
+
+Pertama, buat `HttpError`. Ini kelas error buatan kita sendiri. Ia turunan dari `Error` bawaan JavaScript, ditambah dua info: status HTTP (misalnya `404`) dan kode singkat (misalnya `NOT_FOUND`). Kita memakainya untuk error yang sengaja kita lempar, misalnya saat tugas tidak ditemukan.
+
+```js title="src/lib/http-error.js"
+export class HttpError extends Error {
+  constructor(status, code, message, details) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+
+  static notFound(message = "Data tidak ditemukan") {
+    return new HttpError(404, "NOT_FOUND", message);
+  }
+}
+```
+
+Di route, kamu cukup menulis `throw HttpError.notFound("Tugas tidak ditemukan")`. Sisanya diurus oleh error handler:
+
+```js title="src/middleware/error-handler.js"
+import { z } from "zod";
+import { Prisma } from "../generated/prisma/client.ts";
+import { HttpError } from "../lib/http-error.js";
+
+const isProduction = process.env.NODE_ENV === "production";
+
+function toHttpError(err) {
+  if (err instanceof HttpError) return err;
+
+  if (err instanceof z.ZodError) {
+    const details = err.issues.map((issue) => ({
+      field: issue.path.join(".") || "body",
+      message: issue.message,
+    }));
+    return new HttpError(400, "VALIDATION_ERROR", "Data yang dikirim tidak valid", details);
+  }
+
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === "P2025") return HttpError.notFound();
+    if (err.code === "P2003") {
+      return new HttpError(400, "VALIDATION_ERROR", "Data yang dikirim tidak valid", [
+        { field: "courseId", message: "Mata kuliah tidak ditemukan" },
+      ]);
+    }
+  }
+
+  if (err.type === "entity.parse.failed") {
+    return new HttpError(400, "BAD_REQUEST", "Body bukan JSON yang valid");
+  }
+
+  return null;
+}
+
+export function errorHandler(err, req, res, next) {
+  if (res.headersSent) return next(err);
+
+  const httpError = toHttpError(err);
+  if (httpError) {
+    return res.status(httpError.status).json({
+      error: {
+        message: httpError.message,
+        code: httpError.code,
+        ...(httpError.details && { details: httpError.details }),
+      },
+    });
+  }
+
+  console.error(err);
+  res.status(500).json({
+    error: {
+      message: "Terjadi kesalahan pada server",
+      code: "INTERNAL_ERROR",
+      ...(!isProduction && { stack: err.stack }),
+    },
+  });
+}
+```
+
+`toHttpError` menerjemahkan setiap jenis error yang kita kenal:
+
+| Error yang datang | Asalnya | Status | `code` |
+| --- | --- | --- | --- |
+| `HttpError` | `throw` di route kita | sesuai isinya | sesuai isinya |
+| `ZodError` | `validate()` | 400 | `VALIDATION_ERROR` + `details` |
+| Prisma `P2025` | `update`/`delete` data yang tidak ada | 404 | `NOT_FOUND` |
+| Prisma `P2003` | `courseId` menunjuk mata kuliah yang tidak ada | 400 | `VALIDATION_ERROR` |
+| `type: "entity.parse.failed"` | `express.json()` gagal membaca JSON | 400 | `BAD_REQUEST` |
+| Lainnya | bug, database mati, dan sebagainya | 500 | `INTERNAL_ERROR` |
+
+Tiga detail yang sering terlewat:
+
+- **Empat parameter itu wajib.** Express mengenali error handler dari jumlah parameternya: `(err, req, res, next)`. Walaupun `next` jarang dipakai, jangan dihapus.
+- **`res.headersSent`.** Kalau respons sudah mulai terkirim saat error terjadi, kita tidak bisa mengirim JSON baru, jadi error diserahkan ke handler bawaan Express yang akan menutup koneksi.
+- **Error tak dikenal tidak dibocorkan.** Detail lengkap dicatat dengan `console.error` di terminal server. Client hanya mendapat pesan umum, plus `stack` selama development. Di produksi (`NODE_ENV=production`), stack trace disembunyikan karena memuat path folder dan nama library yang berguna bagi penyerang.
+
+### Express 5 menangkap error async
+
+Di Express 4, error di dalam handler `async` tidak ditangkap. Promise yang ditolak menjadi *unhandled rejection*, request menggantung, dan Node bahkan bisa menghentikan proses. Karena itu kode lama penuh `try/catch` atau pembungkus seperti `express-async-handler`.
+
+Express 5 meneruskan Promise yang ditolak ke error handler secara otomatis. Lihat perbedaan route PATCH sebelum dan sesudah:
+
+```diff title="src/server.js"
+-app.patch("/api/tasks/:id", async (req, res) => {
+-  const { title, done, priority, courseId } = req.body ?? {};
+-  try {
+-    const task = await prisma.task.update({
+-      where: { id: Number(req.params.id) },
+-      data: { title, done, priority, courseId },
+-    });
+-    res.json({ data: task });
+-  } catch (err) {
+-    if (err.code === "P2025") return tugasTidakDitemukan(res);
+-    throw err;
+-  }
+-});
++app.patch(
++  "/api/tasks/:id",
++  validate({ params: idParamsSchema, body: updateTaskSchema }),
++  async (req, res) => {
++    const task = await prisma.task.update({ where: { id: req.params.id }, data: req.body });
++    res.json({ data: task });
++  },
++);
+```
+
+Route menjadi pendek dan hanya berisi "jalan bahagia". Kalau tugas tidak ada, `update` melempar P2025, Express 5 menangkapnya, dan error handler mengubahnya menjadi 404.
+
+## Merakit src/server.js
+
+Struktur proyek setelah pelajaran ini:
+
+<FileTree title="belajar-api" tree={`
+prisma/
+  schema.prisma
+  seed.js
+src/
+  generated/prisma/ # hasil prisma generate
+  lib/
+    * http-error.js # kelas HttpError
+    prisma.js
+  middleware/
+    * error-handler.js # error handler terpusat
+    * validate.js # middleware validasi Zod
+  * schemas.js # schema Zod tugas & mata kuliah
+  * server.js # route memakai validate()
+.env
+package.json
+prisma7.config.ts
+`} />
+
+Ganti seluruh `src/server.js`. Semua route masih di satu file. Pemecahannya per fitur menunggu [Struktur Proyek Backend](/belajar/crud-backend/struktur-proyek-backend).
+
+```js title="src/server.js" showLineNumbers
+import express from "express";
+import { prisma } from "./lib/prisma.js";
+import { HttpError } from "./lib/http-error.js";
+import { validate } from "./middleware/validate.js";
+import { errorHandler } from "./middleware/error-handler.js";
+import {
+  idParamsSchema,
+  createTaskSchema,
+  replaceTaskSchema,
+  updateTaskSchema,
+  createCourseSchema,
+} from "./schemas.js";
+
+const app = express();
+const PORT = process.env.PORT ?? 3000;
+
+app.use((req, res, next) => {
+  const mulai = Date.now();
+  res.on("finish", () => {
+    const durasi = Date.now() - mulai;
+    console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${durasi} ms)`);
+  });
+  next();
+});
+
+app.use(express.json());
+
+app.get("/api/health", (req, res) => {
+  res.json({ data: { status: "ok" } });
+});
+
+// ---------- Tasks ----------
+app.get("/api/tasks", async (req, res) => {
+  const tasks = await prisma.task.findMany({ orderBy: { id: "asc" } });
+  res.json({ data: tasks, meta: { total: tasks.length } });
+});
+
+app.get("/api/tasks/:id", validate({ params: idParamsSchema }), async (req, res) => {
+  const task = await prisma.task.findUnique({
+    where: { id: req.params.id },
+    include: { course: true },
+  });
+  if (!task) throw HttpError.notFound("Tugas tidak ditemukan");
+  res.json({ data: task });
+});
+
+app.post("/api/tasks", validate({ body: createTaskSchema }), async (req, res) => {
+  const task = await prisma.task.create({ data: req.body });
+  res.status(201).json({ data: task });
+});
+
+app.put(
+  "/api/tasks/:id",
+  validate({ params: idParamsSchema, body: replaceTaskSchema }),
+  async (req, res) => {
+    const task = await prisma.task.update({ where: { id: req.params.id }, data: req.body });
+    res.json({ data: task });
+  },
+);
+
+app.patch(
+  "/api/tasks/:id",
+  validate({ params: idParamsSchema, body: updateTaskSchema }),
+  async (req, res) => {
+    const task = await prisma.task.update({ where: { id: req.params.id }, data: req.body });
+    res.json({ data: task });
+  },
+);
+
+app.delete("/api/tasks/:id", validate({ params: idParamsSchema }), async (req, res) => {
+  await prisma.task.delete({ where: { id: req.params.id } });
+  res.status(204).end();
+});
+
+// ---------- Courses ----------
+app.get("/api/courses", async (req, res) => {
+  const courses = await prisma.course.findMany({
+    orderBy: { name: "asc" },
+    include: { _count: { select: { tasks: true } } },
+  });
+  res.json({ data: courses, meta: { total: courses.length } });
+});
+
+app.get("/api/courses/:id", validate({ params: idParamsSchema }), async (req, res) => {
+  const course = await prisma.course.findUnique({
+    where: { id: req.params.id },
+    include: { tasks: { orderBy: { id: "asc" } } },
+  });
+  if (!course) throw HttpError.notFound("Mata kuliah tidak ditemukan");
+  res.json({ data: course });
+});
+
+app.post("/api/courses", validate({ body: createCourseSchema }), async (req, res) => {
+  const course = await prisma.course.create({ data: req.body });
+  res.status(201).json({ data: course });
+});
+
+// 404 catch-all: setelah semua route
+app.use((req, res) => {
+  res.status(404).json({
+    error: { message: "Route tidak ditemukan", code: "ROUTE_NOT_FOUND" },
+  });
+});
+
+// Error handler: paling akhir
+app.use(errorHandler);
+
+app.listen(PORT, (error) => {
+  if (error) throw error;
+  console.log(`Server jalan di http://localhost:${PORT}`);
+});
+```
+
+Fungsi `tugasTidakDitemukan`, konstanta `PRIORITAS`, semua `if` validasi manual, dan semua `try/catch` hilang. Urutan pendaftaran tetap penting: middleware global, lalu route, lalu 404 catch-all, dan `errorHandler` paling akhir. Error handler yang didaftarkan sebelum route tidak akan pernah menerima error dari route itu.
+
+## Mencoba hasilnya
+
+Jalankan `npx prisma db seed` agar datanya segar, lalu `npm run dev`. Dari terminal kedua:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+'{"title":"ab","priority":"urgent","done":"ya","courseId":-1}' | curl.exe -i -X POST http://localhost:3000/api/tasks -H "Content-Type: application/json" --data-binary "@-"
+'{"title":"  Kuis Basis Data  ","priority":"tinggi","courseId":1,"id":99}' | curl.exe -i -X POST http://localhost:3000/api/tasks -H "Content-Type: application/json" --data-binary "@-"
+'{"title":"Tugas misterius","courseId":999}' | curl.exe -i -X POST http://localhost:3000/api/tasks -H "Content-Type: application/json" --data-binary "@-"
+'{"title": "Kuis",}' | curl.exe -i -X POST http://localhost:3000/api/tasks -H "Content-Type: application/json" --data-binary "@-"
+curl.exe -i http://localhost:3000/api/tasks/abc
+curl.exe -i -X DELETE http://localhost:3000/api/tasks/999
+```
+
+</Tab>
+<Tab>
+
+```bash
+curl -i -X POST http://localhost:3000/api/tasks -H "Content-Type: application/json" \
+  -d '{"title":"ab","priority":"urgent","done":"ya","courseId":-1}'
+curl -i -X POST http://localhost:3000/api/tasks -H "Content-Type: application/json" \
+  -d '{"title":"  Kuis Basis Data  ","priority":"tinggi","courseId":1,"id":99}'
+curl -i -X POST http://localhost:3000/api/tasks -H "Content-Type: application/json" \
+  -d '{"title":"Tugas misterius","courseId":999}'
+curl -i -X POST http://localhost:3000/api/tasks -H "Content-Type: application/json" \
+  -d '{"title": "Kuis",}'
+curl -i http://localhost:3000/api/tasks/abc
+curl -i -X DELETE http://localhost:3000/api/tasks/999
+```
+
+</Tab>
+</Tabs>
+
+Respons aslinya, berurutan (header lain dipangkas):
+
+```txt
+HTTP/1.1 400 Bad Request
+{"error":{"message":"Data yang dikirim tidak valid","code":"VALIDATION_ERROR","details":[{"field":"title","message":"Judul minimal 3 karakter"},{"field":"priority","message":"Prioritas harus rendah, sedang, atau tinggi"},{"field":"done","message":"done harus true atau false"},{"field":"courseId","message":"courseId harus lebih dari 0"}]}}
+
+HTTP/1.1 201 Created
+{"data":{"id":5,"title":"Kuis Basis Data","done":false,"priority":"tinggi","courseId":1,"createdAt":"2026-10-30T16:26:13.459Z","updatedAt":"2026-10-30T16:26:13.459Z"}}
+
+HTTP/1.1 400 Bad Request
+{"error":{"message":"Data yang dikirim tidak valid","code":"VALIDATION_ERROR","details":[{"field":"courseId","message":"Mata kuliah tidak ditemukan"}]}}
+
+HTTP/1.1 400 Bad Request
+{"error":{"message":"Body bukan JSON yang valid","code":"BAD_REQUEST"}}
+
+HTTP/1.1 400 Bad Request
+{"error":{"message":"Data yang dikirim tidak valid","code":"VALIDATION_ERROR","details":[{"field":"id","message":"id harus berupa angka"}]}}
+
+HTTP/1.1 404 Not Found
+{"error":{"message":"Data tidak ditemukan","code":"NOT_FOUND"}}
+```
+
+Perhatikan respons kedua: judul sudah di-trim, dan `"id":99` dari client diabaikan sehingga `id` tetap diisi database. Respons pertama mengembalikan **semua** kesalahan sekaligus, sehingga aplikasi HP bisa menandai setiap field form dalam satu kali kirim.
+
+Mau mencoba format error yang sama tanpa server? Buka lab berikut, kirim `POST` dengan body `{"title":""}`, lalu bandingkan bentuk `details`-nya.
+
+<HttpExplorer initialMethod="POST" initialPath="/api/tasks" />
+
+### Menguji error 500
+
+Tambahkan route sementara **sebelum** 404 catch-all untuk mensimulasikan bug:
+
+```js title="src/server.js (sementara)"
+app.get("/api/coba-error", async () => {
+  throw new Error("Koneksi database putus");
+});
+```
+
+Panggil `/api/coba-error`. Terminal server mencetak stack trace lengkap, dan client menerima status 500 dengan `code` `INTERNAL_ERROR` plus `stack`. Server tidak mati walaupun handler-nya `async` dan tidak ada `try/catch`. Sekarang jalankan server dalam mode produksi:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+$env:NODE_ENV = "production"; npm start
+```
+
+</Tab>
+<Tab>
+
+```bash
+NODE_ENV=production npm start
+```
+
+</Tab>
+</Tabs>
+
+```json
+{"error":{"message":"Terjadi kesalahan pada server","code":"INTERNAL_ERROR"}}
+```
+
+Stack trace hilang dari respons, tetapi tetap tercatat di terminal. Di PowerShell, variabel `$env:NODE_ENV` bertahan sampai jendela terminal ditutup; jalankan `Remove-Item Env:NODE_ENV` untuk kembali ke mode development. Hapus route `/api/coba-error` setelah selesai.
+
+## Kesalahan umum
+
+| Pesan / gejala | Penyebab | Cara memperbaiki |
+| --- | --- | --- |
+| Error tetap berupa HTML, error handler tidak terpanggil | Error handler hanya punya 3 parameter, atau didaftarkan sebelum route | Pakai `(err, req, res, next)` dan daftarkan paling akhir |
+| `TypeError: Cannot set property query of #<IncomingMessage> which has only a getter` | Menulis `req.query = ...` di Express 5 | Pakai `Object.defineProperty` seperti di `validate.js` |
+| Selalu "Judul wajib diisi" padahal body sudah dikirim | Header `Content-Type: application/json` lupa dikirim, atau `app.use(express.json())` hilang | Tambahkan header di request dan pastikan `express.json()` terdaftar sebelum route |
+| PATCH `{"done":true}` ikut mengubah `priority` | Schema yang di-`.partial()` memakai `.default()` | Pakai `.optional()` di `createTaskSchema` |
+| Pesan kustom tidak muncul, yang tampil `Expected string, received number` | Terpasang Zod 3, yang mengabaikan parameter `error` | Cek `npm ls zod`, lalu `npm install zod@4` |
+| `z.treeifyError is not a function` | Juga tanda Zod 3 | `npm install zod@4` |
+
+<Callout type="danger" title="Jangan kirim err.message mentah ke client">
+
+Godaannya besar untuk menulis `res.status(500).json({ error: { message: err.message } })`. Pesan error Prisma atau library lain bisa berisi nama tabel, potongan query, atau path file. Kirim pesan umum ke client, dan simpan detailnya di log server.
+
+</Callout>
+
+## Latihan
+
+<Exercise title="PATCH mata kuliah" difficulty="sedang" hints={["`createCourseSchema.partial()` sudah cukup untuk schema-nya.", "Route-nya mirip PATCH tugas: `validate({ params, body })` lalu `prisma.course.update`."]}>
+
+Tambahkan endpoint `PATCH /api/courses/:id` yang memvalidasi `:id` dan body. Uji dengan body `{"sks":0}` (harus 400), `{"lecturer":"Bu Rina Wati"}` (harus 200), dan `id` 999 (harus 404).
+
+<Solution>
+
+```js title="src/schemas.js (tambahan)"
+export const updateCourseSchema = createCourseSchema.partial();
+```
+
+```js title="src/server.js (sebelum 404 catch-all)"
+app.patch(
+  "/api/courses/:id",
+  validate({ params: idParamsSchema, body: updateCourseSchema }),
+  async (req, res) => {
+    const course = await prisma.course.update({ where: { id: req.params.id }, data: req.body });
+    res.json({ data: course });
+  },
+);
+```
+
+Jangan lupa menambahkan `updateCourseSchema` ke import di `server.js`. Body `{"sks":0}` dibalas `details: [{"field":"sks","message":"sks minimal 1"}]`, dan `id` 999 dibalas `NOT_FOUND` lewat P2025 tanpa satu pun `try/catch`.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Tolak PATCH kosong" difficulty="mudah" hints={["Zod punya `.refine(fungsi, { error })` untuk aturan buatan sendiri.", "`Object.keys(data).length` menghitung field yang dikirim."]}>
+
+Saat ini `PATCH /api/tasks/1` dengan body `{}` tetap dibalas 200 walaupun tidak ada yang berubah. Ubah `updateTaskSchema` agar body kosong ditolak dengan pesan "Kirim minimal satu field yang ingin diubah".
+
+<Solution>
+
+```js title="src/schemas.js"
+export const updateTaskSchema = createTaskSchema
+  .partial()
+  .refine((data) => Object.keys(data).length > 0, {
+    error: "Kirim minimal satu field yang ingin diubah",
+  });
+```
+
+`refine` menjalankan fungsi setelah semua field lolos. Kalau fungsi mengembalikan `false`, Zod menambahkan issue dengan `path` kosong, dan error handler kita mengisinya sebagai `"field":"body"`:
+
+```json
+{"error":{"message":"Data yang dikirim tidak valid","code":"VALIDATION_ERROR","details":[{"field":"body","message":"Kirim minimal satu field yang ingin diubah"}]}}
+```
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Form di aplikasi HP sudah mengecek judul minimal 3 karakter. Kenapa server tetap harus memvalidasi?",
+    options: ["Supaya respons lebih cepat", "API bisa dipanggil langsung tanpa aplikasi, jadi validasi client bisa dilewati", "Karena Prisma tidak bisa menyimpan teks pendek", "Agar tidak perlu error handler"],
+    answer: 1,
+    explain: "Validasi client hanya untuk kenyamanan. Siapa pun bisa memanggil API lewat curl atau Postman. Prisma tetap bisa menyimpan teks pendek, dan validasi justru menambah langkah, bukan mempercepat.",
+  },
+  {
+    q: "Setelah melewati `validate({ params: idParamsSchema })`, apa isi `req.params.id` untuk URL `/api/tasks/7`?",
+    options: ["Number `7`", "String `\"7\"`", "`NaN`", "`undefined`"],
+    answer: 0,
+    explain: "`z.coerce.number()` mengubah string `\"7\"` menjadi number 7, dan `validate` mengganti `req.params` dengan hasil parse. `NaN` hanya muncul untuk input seperti `abc`, dan itu ditolak dengan 400.",
+  },
+  {
+    q: "Apa yang dihasilkan `updateTaskSchema.parse({ done: true })` jika `updateTaskSchema` dibuat seperti ini?",
+    code: "const createTaskSchema = z.object({\n  title: z.string().min(3),\n  priority: z.enum([\"rendah\", \"sedang\", \"tinggi\"]).default(\"sedang\"),\n  done: z.boolean().optional(),\n});\nconst updateTaskSchema = createTaskSchema.partial();",
+    options: ["`{ done: true }`", "Error karena `title` wajib", "`{ priority: 'sedang', done: true }`", "`{ title: undefined, done: true }`"],
+    answer: 2,
+    explain: "`.partial()` membuat `title` opsional, tetapi `.default()` tetap mengisi `priority`. Akibatnya PATCH diam-diam mengubah prioritas. Karena itu default untuk POST dan PATCH diserahkan ke database.",
+  },
+  {
+    q: "Middleware mana yang dikenali Express sebagai error handler?",
+    options: ["`(req, res) => {}` yang didaftarkan paling akhir", "`(req, res, next) => {}` yang memanggil `next(err)`", "Fungsi apa pun bernama `errorHandler`", "`(err, req, res, next) => {}` dengan empat parameter"],
+    answer: 3,
+    explain: "Express membedakan error handler dari jumlah parameternya, yaitu empat. Nama fungsi tidak berpengaruh. Middleware dengan dua atau tiga parameter adalah middleware biasa, seperti 404 catch-all.",
+  },
+  {
+    q: "Di Express 5, handler `async` melempar error dan tidak ada `try/catch`. Apa yang terjadi?",
+    options: ["Server berhenti karena unhandled rejection", "Error diteruskan otomatis ke error handler", "Request menggantung sampai timeout", "Express membalas 200 dengan body kosong"],
+    answer: 1,
+    explain: "Express 5 menangkap Promise yang ditolak dan memanggil `next(err)` untukmu. Server berhenti atau request menggantung adalah perilaku Express 4 tanpa `try/catch`.",
+  },
+]} />
+
+## Ringkasan
+
+- Validasi di client untuk kenyamanan, validasi di server untuk keamanan. Server tidak boleh mempercayai input apa pun.
+- Zod 4 memeriksa data lewat schema. `parse` melempar `ZodError`, `safeParse` mengembalikan hasil, dan key asing dibuang otomatis. Pesan kustom ditulis dengan `{ error: "..." }` atau string di method seperti `.min()`.
+- `.partial()` cocok untuk PATCH asalkan schema dasarnya tidak memakai `.default()`. `z.coerce.number()` mengubah params string menjadi angka.
+- `validate({ params, query, body })` mengganti data request dengan hasil parse, atau melempar `ZodError` ke error handler.
+- `HttpError` membawa status dan kode. Error handler terpusat memetakan `ZodError`, Prisma P2025/P2003, JSON rusak, dan error tak dikenal ke format `{ error: { message, code, details? } }`.
+- Express 5 meneruskan error async otomatis, jadi route tidak butuh `try/catch`. Urutannya: route, 404 catch-all, lalu error handler.
+
+<Callout type="capstone" title="Langkah capstone">
+
+API kini selalu menjawab dengan JSON yang bisa diprediksi, termasuk saat gagal. Di Track 3, `apiFetch` di aplikasi Expo akan membaca `error.code` dan `details` untuk menampilkan pesan di bawah setiap field form, dan API pendamping memakai pola yang sama persis (`api/src/middleware/validate.ts` dan `error-handler.ts`). Berikutnya, [Pagination, Filter, Search & Sort](/belajar/crud-backend/pagination-filter-search) memakai `validate({ query })` untuk memeriksa `page` dan `limit`.
+
+</Callout>

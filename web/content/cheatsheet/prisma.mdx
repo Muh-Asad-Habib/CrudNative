@@ -1,0 +1,621 @@
+## Instalasi
+
+Prisma adalah ORM (*Object-Relational Mapper*). Kamu menulis schema (rancangan tabel), Prisma membuat tabelnya lewat migrasi, lalu menghasilkan client (kumpulan fungsi siap pakai) untuk query dari JavaScript.
+
+<Callout type="analogi" title="Seperti penerjemah">
+
+Kamu bicara bahasa JavaScript, database hanya mengerti SQL. Prisma = penerjemah di tengah. Kamu menulis `prisma.task.findMany()`, Prisma mengubahnya kira-kira menjadi `SELECT * FROM "Task"` dan mengembalikan hasilnya sebagai array JavaScript.
+
+</Callout>
+
+Prisma 7 butuh empat paket.
+
+```bash
+npm install @prisma/client @prisma/adapter-better-sqlite3 dotenv
+npm install -D prisma
+npx prisma init --datasource-provider sqlite --output ../src/generated/prisma
+```
+
+| Paket | Peran |
+| --- | --- |
+| `prisma` (dev) | CLI (perintah di terminal): migrate, generate, seed, studio |
+| `@prisma/client` | Kode pendukung yang dipakai client hasil generate saat aplikasi jalan |
+| `@prisma/adapter-better-sqlite3` | Driver adapter, yaitu library yang benar-benar membuka file SQLite |
+| `dotenv` | Memuat `.env`, karena Prisma 7 tidak memuatnya otomatis |
+
+<FileTree title="belajar-api setelah migrasi pertama" tree={`
+prisma/
+  migrations/ # riwayat migrasi, ikut di-commit
+  * schema.prisma
+  seed.js
+src/
+  generated/
+    prisma/ # hasil prisma generate, jangan diedit
+  lib/
+    * prisma.js # satu instance PrismaClient
+.env # DATABASE_URL
+dev.db # file database SQLite
+* prisma.config.ts
+package.json
+`} />
+
+File yang tercantum di `.gitignore` tidak ikut di-commit: rahasia (`.env`), data lokal (`dev.db`), dan hasil generate.
+
+```txt title=".gitignore"
+node_modules
+.env
+dev.db
+src/generated/
+```
+
+## prisma.config.ts
+
+Sejak Prisma 7, pengaturan CLI ada di `prisma.config.ts` di root proyek: lokasi schema, folder migrasi, perintah seed, dan URL database. File ini dibaca sendiri oleh CLI, jadi boleh berformat `.ts` walau proyekmu JavaScript.
+
+```ts title="prisma.config.ts"
+import "dotenv/config";
+import { defineConfig, env } from "prisma/config";
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  migrations: {
+    path: "prisma/migrations",
+    seed: "node prisma/seed.js",
+  },
+  datasource: {
+    url: env("DATABASE_URL"),
+  },
+});
+```
+
+```dotenv title=".env"
+DATABASE_URL="file:./dev.db"
+```
+
+`env("DATABASE_URL")` membaca nilai dari file `.env`. File `.env` menyimpan alamat database dan rahasia lain di luar kode, seperti kunci rumah yang tidak ditempel di pintu.
+
+<Callout type="warning" title=".env tidak dimuat otomatis">
+
+Tanpa baris `import "dotenv/config"`, CLI berhenti dengan pesan `PrismaConfigEnvError: Cannot resolve environment variable: DATABASE_URL`. Hal yang sama berlaku untuk server: muat `.env` lewat `import "dotenv/config"` atau `node --env-file=.env`.
+
+</Callout>
+
+## Generator & datasource
+
+Bagian atas `schema.prisma` mengatur dua hal: bentuk client yang dihasilkan (`generator`) dan jenis database (`datasource`).
+
+```prisma title="prisma/schema.prisma"
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+```
+
+| Baris | Arti |
+| --- | --- |
+| `provider = "prisma-client"` | Generator (pembuat client) versi baru, pengganti `prisma-client-js` |
+| `output` | Wajib diisi. Folder hasil generate, relatif terhadap file schema |
+| `importFileExtension = "ts"` | Import antarfile hasil generate memakai akhiran `.ts`, jadi Node bisa menjalankannya langsung |
+| `provider = "sqlite"` | Jenis database. URL-nya tidak lagi ditulis di schema, tapi di `prisma.config.ts` |
+
+## Model & tipe field
+
+Satu `model` menjadi satu tabel, dan setiap field menjadi satu kolom. Bayangkan satu sheet Excel: nama model = nama sheet, field = judul kolom, dan tiap data = satu baris. Ini model `Task` dan `Course` di proyek `belajar-api`.
+
+```prisma title="prisma/schema.prisma (lanjutan)"
+model Course {
+  id        Int      @id @default(autoincrement())
+  name      String
+  lecturer  String
+  sks       Int?
+  tasks     Task[]
+  createdAt DateTime @default(now())
+}
+
+model Task {
+  id        Int      @id @default(autoincrement())
+  title     String
+  done      Boolean  @default(false)
+  priority  String   @default("sedang") // rendah | sedang | tinggi
+  courseId  Int?
+  course    Course?  @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([courseId])
+}
+```
+
+| Tipe Prisma | Kolom SQLite | Nilai di JS |
+| --- | --- | --- |
+| `String` | `TEXT` | string |
+| `Int` | `INTEGER` | number |
+| `Float` | `REAL` | number |
+| `Boolean` | `BOOLEAN` (disimpan 0/1) | `true` / `false` |
+| `DateTime` | `DATETIME` (teks ISO 8601) | objek `Date` |
+| `Tipe?` | kolom boleh `NULL` (kosong) | nilai atau `null` |
+| `Model[]` | tidak ada kolom, hanya sisi "banyak" relasi | array |
+
+| Atribut | Fungsi |
+| --- | --- |
+| `@id` | Primary key, penanda unik tiap baris (seperti NIM) |
+| `@default(autoincrement())` | id naik otomatis: 1, 2, 3, dan seterusnya |
+| `@default(now())` | Diisi waktu saat data dibuat |
+| `@default("sedang")` | Nilai bawaan kalau field tidak dikirim |
+| `@updatedAt` | Diperbarui otomatis setiap kali data diubah |
+| `@unique` | Nilai tidak boleh kembar, dan bisa dipakai di `findUnique` |
+| `@relation(...)` | Menghubungkan foreign key (kolom berisi id milik tabel lain) ke model lain |
+| `@@index([courseId])` | Index, seperti indeks di belakang buku, untuk mempercepat filter dan join |
+| `@@unique([a, b])` | Kombinasi beberapa kolom harus unik |
+| `@map("nama")` / `@@map("tasks")` | Nama kolom atau tabel di database berbeda dari nama di kode |
+
+<Callout type="note" title="Nama tabel & enum">
+
+Tanpa `@@map`, nama tabel sama dengan nama model (`Task`, `Course`), jadi di SQL mentah tulis `"Task"`. SQLite tidak punya tipe enum (daftar pilihan tetap) bawaan. Kursus ini menyimpan `priority` sebagai `String` lalu memvalidasinya dengan Zod, sama seperti API pendamping. Blok `enum` Prisma juga bisa dipakai di SQLite kalau kamu ingin batasannya ada di schema.
+
+</Callout>
+
+## Relasi 1–N
+
+Relasi 1–N (satu ke banyak) artinya satu course punya banyak task.
+
+<Callout type="analogi" title="Seperti NIM di lembar KRS">
+
+Tiap lembar KRS mencantumkan NIM pemiliknya, tapi data mahasiswa di bagian akademik tidak menyimpan tumpukan lembar KRS. Kalau ingin tahu KRS milik seseorang, kamu mencari lembar yang NIM-nya cocok. Lembar KRS = `Task`, NIM yang tertulis = `courseId`, mahasiswa = `Course`.
+
+</Callout>
+
+Foreign key selalu ada di sisi "banyak" (`Task.courseId`). Sisi "satu" hanya punya field list (`Course.tasks`) yang tidak menjadi kolom.
+
+```prisma title="Dua sisi relasi"
+model Course {
+  tasks Task[] // tanpa kolom di tabel
+}
+
+model Task {
+  courseId Int?
+  course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+}
+```
+
+| `onDelete` | Saat course dihapus |
+| --- | --- |
+| `Cascade` | Semua task milik course ikut terhapus |
+| `SetNull` | `courseId` task menjadi `null`, sehingga field-nya harus opsional (`Int?`) |
+| `Restrict` | Course yang masih punya task tidak bisa dihapus |
+
+Selalu tulis `onDelete` secara eksplisit supaya perilakunya jelas saat membaca schema.
+
+## Perintah CLI
+
+Alurnya selalu sama: ubah schema, buat migrasi, lalu generate ulang client. Migrasi mirip catatan renovasi rumah: tiap perubahan denah dicatat berurutan, jadi database di laptop lain bisa diubah persis sama.
+
+| Perintah | Fungsi |
+| --- | --- |
+| `npx prisma migrate dev --name init` | Buat file migrasi dari perubahan schema, lalu terapkan ke `dev.db` |
+| `npx prisma generate` | Buat ulang client di `src/generated/prisma` |
+| `npx prisma db seed` | Jalankan perintah `seed` dari `prisma.config.ts` |
+| `npx prisma migrate reset` | Kosongkan database, lalu terapkan ulang semua migrasi |
+| `npx prisma migrate status` | Cek migrasi yang belum diterapkan |
+| `npx prisma migrate deploy` | Terapkan migrasi di server produksi tanpa membuat migrasi baru |
+| `npx prisma studio` | Lihat dan edit data lewat browser, mirip membuka tabel Excel |
+| `npx prisma db push` | Samakan database dengan schema tanpa file migrasi, cocok untuk percobaan cepat |
+| `npx prisma format` | Rapikan dan validasi `schema.prisma` |
+
+<Callout type="warning" title="Prisma 7: tidak ada lagi generate & seed otomatis">
+
+`migrate dev` dan `db push` tidak lagi menjalankan `generate`, dan perintah migrate tidak lagi menjalankan seed. Setelah schema berubah, jalankan `npx prisma generate` sendiri. Setelah reset, jalankan `npx prisma db seed`. Kalau lupa generate, query ke model baru gagal karena client masih versi lama.
+
+</Callout>
+
+```json title="package.json (scripts)"
+{
+  "scripts": {
+    "postinstall": "prisma generate",
+    "db:migrate": "prisma migrate dev && prisma generate",
+    "db:seed": "prisma db seed",
+    "db:reset": "prisma migrate reset --force && prisma generate && prisma db seed",
+    "db:studio": "prisma studio"
+  }
+}
+```
+
+`postinstall` jalan otomatis setelah `npm install`, jadi client selalu dibuat ulang di laptop baru.
+
+<Callout type="tip" title="Nama migrasi">
+
+`npm run db:migrate -- --name x` menempelkan `--name x` ke perintah terakhir, yaitu `prisma generate`, bukan ke `migrate dev`. Jadi jalankan `npm run db:migrate` tanpa argumen, nanti `migrate dev` menanyakan nama migrasinya.
+
+</Callout>
+
+## Prisma Client
+
+Buat satu instance (satu objek aktif) `PrismaClient` di satu file, lalu import dari mana saja. Seperti satu kurir langganan untuk seluruh kos: semua penghuni memakai kurir yang sama, bukan memanggil kurir baru tiap kali butuh. Di Prisma 7, koneksi ke database dibuka oleh driver adapter.
+
+```js title="src/lib/prisma.js"
+import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaClient } from "../generated/prisma/client.ts";
+
+const adapter = new PrismaBetterSqlite3({ url: process.env.DATABASE_URL });
+
+export const prisma = new PrismaClient({ adapter });
+```
+
+```js title="Pemakaian"
+import { prisma } from "../../lib/prisma.js";
+
+const tasks = await prisma.task.findMany();
+```
+
+<Callout type="info" title="Mengimport file .ts dari JavaScript">
+
+Generator `prisma-client` menghasilkan TypeScript. Node 22.18 ke atas menjalankan file `.ts` langsung dengan membuang anotasi tipenya (type stripping), jadi `node --watch src/server.js` tetap jalan. Tulis akhiran `.ts` secara lengkap di path import. Kalau Node-mu lebih lama, perbarui Node atau jalankan server dengan `tsx`.
+
+</Callout>
+
+<Callout type="danger" title="Path relatif dihitung dari folder terminal">
+
+`file:./dev.db` dicari relatif terhadap folder tempat perintah dijalankan. Kalau server dijalankan dari folder lain, SQLite diam-diam membuat file `dev.db` kosong baru, lalu query gagal dengan pesan ``The table `main.Task` does not exist``. Jalankan semua perintah dari root proyek.
+
+</Callout>
+
+## Query CRUD
+
+Setiap model punya kumpulan method yang sama, diakses lewat nama model berhuruf kecil: `prisma.task`, `prisma.course`. Polanya sama seperti kontak di HP: tambah (`create`), lihat (`findMany`, `findUnique`), ubah (`update`), dan hapus (`delete`).
+
+| Method | Hasil |
+| --- | --- |
+| `findMany({ where, orderBy, skip, take })` | Array, bisa kosong |
+| `findUnique({ where: { id } })` | Objek atau `null`. `where` harus memakai field `@id` atau `@unique` |
+| `findFirst({ where })` | Objek pertama yang cocok atau `null` |
+| `findUniqueOrThrow` / `findFirstOrThrow` | Objek, atau error `P2025` kalau tidak ada |
+| `create({ data })` | Objek baru lengkap dengan `id` dan nilai default |
+| `createMany({ data: [...] })` | `{ count }` |
+| `update({ where, data })` | Objek setelah diubah, atau `P2025` kalau tidak ada |
+| `updateMany({ where, data })` | `{ count }`, tidak error walau 0 baris |
+| `upsert({ where, update, create })` | Update kalau sudah ada, create kalau belum ada |
+| `delete({ where })` | Objek yang dihapus, atau `P2025` kalau tidak ada |
+| `deleteMany({ where })` | `{ count }` |
+| `count({ where })` | number |
+| `aggregate` / `groupBy` | Hitungan seperti `_count`, `_max`, `_avg` |
+
+```js title="src/modules/tasks/tasks.service.js"
+import { prisma } from "../../lib/prisma.js";
+
+export const findTask = (id) => prisma.task.findUnique({ where: { id } });
+
+export const createTask = (data) => prisma.task.create({ data });
+
+export const updateTask = (id, data) => prisma.task.update({ where: { id }, data });
+
+export const deleteTask = (id) => prisma.task.delete({ where: { id } });
+```
+
+Tiap fungsi service membungkus satu query, jadi route Express cukup memanggil `findTask(id)` tanpa tahu detail Prisma.
+
+```js title="Contoh hasil"
+await prisma.task.create({ data: { title: "Rancang ERD", courseId: 1 } });
+// { id: 3, title: "Rancang ERD", done: false, priority: "sedang", courseId: 1,
+//   createdAt: Date, updatedAt: Date }
+
+await prisma.task.groupBy({ by: ["done"], _count: { _all: true } });
+// [{ done: false, _count: { _all: 2 } }, { done: true, _count: { _all: 1 } }]
+```
+
+Bedakan `undefined` (tidak dikirim) dan `null` (sengaja dikosongkan):
+
+| Nilai | Di `data` | Di `where` |
+| --- | --- | --- |
+| `undefined` | Field diabaikan, tidak diubah | Filter diabaikan |
+| `null` | Kolom diisi `NULL` | Mencari `IS NULL` |
+
+<Callout type="warning" title="id dari URL masih string">
+
+`req.params.id` bertipe string. `findUnique({ where: { id: "7" } })` gagal dengan `Expected Int, provided String`. Ubah dulu dengan `Number()` atau `z.coerce.number()`.
+
+</Callout>
+
+## Filter (where)
+
+Objek `where` berisi syarat penyaring data, versi JavaScript dari klausa `WHERE` di SQL. Bayangkan memberi daftar syarat ke petugas perpustakaan: "buku yang belum dipinjam, terbitan setelah 2020". Beberapa field dalam satu objek digabung dengan `AND`, artinya semua syarat harus terpenuhi.
+
+| Prisma | SQL |
+| --- | --- |
+| `done: false` atau `{ equals: false }` | `done = 0` |
+| `{ not: "rendah" }` | `<> 'rendah'` |
+| `{ in: ["sedang", "tinggi"] }` / `notIn` | `IN (...)` / `NOT IN (...)` |
+| `{ gt, gte, lt, lte }` | `>`, `>=`, `<`, `<=` |
+| `{ contains: "erd" }` | `LIKE '%erd%'` |
+| `{ startsWith: "R" }` / `{ endsWith: "x" }` | `LIKE 'R%'` / `LIKE '%x'` |
+| `courseId: null` | `courseId IS NULL` |
+| `AND: [...]`, `OR: [...]`, `NOT: {...}` | `AND`, `OR`, `NOT` |
+| `course: { name: "Basis Data" }` | Saring task berdasarkan data course-nya (bentuk panjang: `is` / `isNot`) |
+| `tasks: { some: {...} }` / `none` / `every` | Saring course berdasarkan task-nya: ada yang cocok / tidak ada / semua cocok |
+
+```js title="Filter dari query string"
+// done, priority, q sudah divalidasi Zod; yang tidak dikirim bernilai undefined
+const where = {
+  done,
+  priority,
+  ...(q && { title: { contains: q } }),
+};
+const tasks = await prisma.task.findMany({ where });
+```
+
+Field yang bernilai `undefined` diabaikan Prisma. Baris `...(q && {...})` artinya tambahkan filter judul hanya kalau `q` diisi.
+
+```js title="OR, NOT, dan filter relasi"
+await prisma.task.findMany({
+  where: {
+    OR: [{ title: { contains: "erd" } }, { course: { name: { contains: "basis" } } }],
+    NOT: { done: true },
+  },
+});
+
+// course yang belum punya tugas sama sekali
+await prisma.course.findMany({ where: { tasks: { none: {} } } });
+```
+
+<Callout type="note" title="Huruf besar-kecil di SQLite">
+
+`contains` diterjemahkan ke `LIKE`, yang di SQLite tidak membedakan huruf besar-kecil, tapi hanya untuk huruf A–Z. Opsi `mode: "insensitive"` tidak ada untuk SQLite dan memicu error `Unknown argument mode`.
+
+</Callout>
+
+## select, include & orderBy
+
+`include` menyertakan data relasi di samping semua field, sedangkan `select` hanya mengambil field yang kamu sebut. Mirip memesan nasi: `include` itu nasi paket plus lauk tambahan, `select` itu pesan lauk satu per satu.
+
+<Tabs items={["include", "select"]}>
+<Tab>
+
+```js
+await prisma.task.findMany({
+  include: { course: true },
+});
+// [{ id, title, done, ..., course: { id, name, lecturer, sks, createdAt } }]
+```
+
+</Tab>
+<Tab>
+
+```js
+await prisma.task.findMany({
+  select: { id: true, title: true, course: { select: { name: true } } },
+});
+// [{ id: 1, title: "Rancang ERD", course: { name: "Basis Data" } }]
+```
+
+</Tab>
+</Tabs>
+
+```js title="Hitung relasi & urutkan"
+await prisma.course.findMany({
+  include: { _count: { select: { tasks: true } } }, // course._count.tasks
+  orderBy: [{ name: "asc" }, { createdAt: "desc" }],
+});
+
+await prisma.task.findMany({ orderBy: { course: { name: "asc" } } });
+```
+
+`_count` menghitung jumlah task tiap course tanpa mengambil isinya. `asc` mengurutkan naik (A ke Z, lama ke baru), `desc` turun.
+
+<Callout type="warning" title="select dan include tidak boleh setingkat">
+
+`findMany({ select: {...}, include: {...} })` ditolak dengan `PrismaClientValidationError`. Pilih salah satu, atau taruh `select` di dalam `include`.
+
+</Callout>
+
+## Pagination dengan meta
+
+Pagination membagi data menjadi halaman, seperti katalog belanja yang menampilkan 10 barang per halaman. `skip` (lewati) dan `take` (ambil) sama dengan `OFFSET` dan `LIMIT`. Jalankan `findMany` dan `count` dengan `where` yang sama dalam satu transaksi supaya jumlah total cocok dengan datanya.
+
+```js title="tasks.service.js: list"
+export async function listTasks({ page = 1, limit = 10, where = {} }) {
+  const [data, total] = await prisma.$transaction([
+    prisma.task.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.task.count({ where }),
+  ]);
+  return { data, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+}
+```
+
+Contoh: `page` 3 dan `limit` 10 berarti lewati 20 task, lalu ambil 10. `Math.ceil` membulatkan ke atas, jadi 21 task menjadi 3 halaman.
+
+## Menulis data relasi
+
+Relasi bisa diisi lewat foreign key langsung atau lewat objek relasi: `connect` (sambungkan ke data yang sudah ada), `create` (buat data baru sekaligus), `disconnect` (lepas sambungannya).
+
+```js title="Dua cara memasang course"
+await prisma.task.create({ data: { title: "Latihan JOIN", courseId: 1 } });
+
+await prisma.task.create({
+  data: { title: "Latihan JOIN", course: { connect: { id: 1 } } },
+});
+```
+
+```js title="Nested create & disconnect"
+await prisma.course.create({
+  data: {
+    name: "Basis Data",
+    lecturer: "Bu Rina",
+    tasks: { create: [{ title: "Rancang ERD", priority: "tinggi" }, { title: "Latihan JOIN" }] },
+  },
+  include: { tasks: true },
+});
+
+await prisma.task.update({ where: { id: 3 }, data: { course: { disconnect: true } } });
+```
+
+<Callout type="warning" title="Jangan campur dua cara">
+
+`data: { courseId: 1, course: { connect: { id: 1 } } }` ditolak dengan pesan ``Unknown argument `courseId`. Did you mean `course`?`` Dalam satu objek `data`, pakai foreign key saja atau objek relasi saja.
+
+</Callout>
+
+## Transaksi
+
+Transaksi memastikan beberapa query berhasil semua atau batal semua.
+
+<Callout type="analogi" title="Seperti transfer bank">
+
+Transfer punya dua langkah: saldo pengirim dikurangi, lalu saldo penerima ditambah. Kalau langkah kedua gagal, langkah pertama dibatalkan supaya uang tidak hilang di tengah jalan. Transaksi database bekerja dengan cara yang sama.
+
+</Callout>
+
+<Tabs items={["Array", "Interaktif"]}>
+<Tab>
+
+```js
+const [tasks, total] = await prisma.$transaction([
+  prisma.task.findMany({ take: 10 }),
+  prisma.task.count(),
+]);
+```
+
+Cocok untuk query yang tidak saling bergantung. Semua query dikirim sekaligus dalam satu array.
+
+</Tab>
+<Tab>
+
+```js
+await prisma.$transaction(async (tx) => {
+  await tx.task.deleteMany({ where: { courseId: id } });
+  await tx.course.delete({ where: { id } }); // gagal? deleteMany ikut dibatalkan
+});
+```
+
+Di dalam callback, pakai `tx`, bukan `prisma`, supaya query ikut transaksi. Cocok kalau langkah berikutnya butuh hasil langkah sebelumnya.
+
+</Tab>
+</Tabs>
+
+## Error Prisma → respons HTTP
+
+Saat query gagal karena datanya (bukan karena kodenya), Prisma melempar `Prisma.PrismaClientKnownRequestError` dengan properti `code`, misalnya `P2025`. Tugasmu menerjemahkan kode itu ke status HTTP, mirip petugas customer service yang mengubah kode gangguan teknis menjadi kalimat yang dimengerti pelanggan.
+
+| Kode | Penyebab | Respons |
+| --- | --- | --- |
+| `P2025` | Data untuk `update`, `delete`, atau `...OrThrow` tidak ada | 404 `NOT_FOUND` |
+| `P2003` | Foreign key tidak valid, misalnya `courseId` yang tidak ada | 400 `VALIDATION_ERROR` |
+| `P2002` | Melanggar `@unique` | 409 `CONFLICT` |
+| `PrismaClientValidationError` | Argumen query salah, berarti bug di kode | 500 `INTERNAL_ERROR` |
+
+```js title="src/middleware/error-handler.js (tambahan)"
+import { Prisma } from "../generated/prisma/client.ts";
+import { HttpError } from "../lib/http-error.js";
+
+function fromPrismaError(err) {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return err;
+  if (err.code === "P2025") return new HttpError(404, "NOT_FOUND", "Data tidak ditemukan");
+  if (err.code === "P2003") {
+    return new HttpError(400, "VALIDATION_ERROR", "Data yang dikirim tidak valid", [
+      { field: "courseId", message: "Mata kuliah tidak ditemukan" },
+    ]);
+  }
+  if (err.code === "P2002") return new HttpError(409, "CONFLICT", "Data sudah ada");
+  return err;
+}
+
+export function errorHandler(err, req, res, next) {
+  err = fromPrismaError(err);
+  // ...lanjut ke penanganan ZodError, HttpError, dan 500
+}
+```
+
+`fromPrismaError` mengubah error Prisma yang dikenal menjadi `HttpError`. Error lain dikembalikan apa adanya, lalu ditangani bagian berikutnya.
+
+```js title="Alternatif: cek null sendiri"
+const task = await prisma.task.findUnique({ where: { id } });
+if (!task) throw new HttpError(404, "NOT_FOUND", "Tugas tidak ditemukan");
+```
+
+## Seed
+
+Seed mengisi database dengan data contoh, seperti barang pajangan yang ditata sebelum toko dibuka supaya rak tidak kosong. Perintahnya diatur di `migrations.seed` pada `prisma.config.ts`.
+
+```js title="prisma/seed.js"
+import "dotenv/config";
+import { prisma } from "../src/lib/prisma.js";
+
+async function main() {
+  await prisma.task.deleteMany();
+  await prisma.course.deleteMany();
+
+  await prisma.course.create({
+    data: {
+      name: "Basis Data",
+      lecturer: "Bu Rina",
+      sks: 3,
+      tasks: { create: [{ title: "Rancang ERD", priority: "tinggi" }, { title: "Latihan JOIN", done: true }] },
+    },
+  });
+  console.log("Seed selesai");
+}
+
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect());
+```
+
+Data lama dihapus dulu (task sebelum course), jadi seed aman dijalankan berulang kali. `process.exitCode = 1` menandai bahwa seed gagal.
+
+```bash
+npx prisma db seed
+# Running seed command `node prisma/seed.js` ...
+# Seed selesai
+```
+
+## SQL mentah
+
+Kalau query terlalu rumit untuk API Prisma, tulis SQL sendiri dengan tagged template (template string yang diawali nama fungsi, di sini `$queryRaw`). Nilai `${...}` dikirim terpisah sebagai parameter, jadi aman dari SQL injection, yaitu serangan yang menyelipkan perintah SQL lewat input. Mirip formulir dengan kotak isian: apa pun yang ditulis di kotak tetap dianggap isian, bukan instruksi.
+
+```js
+const rows = await prisma.$queryRaw`
+  SELECT priority, COUNT(*) AS total FROM "Task" WHERE done = ${false} GROUP BY priority
+`;
+const result = rows.map((row) => ({ ...row, total: Number(row.total) }));
+```
+
+<Callout type="warning" title="COUNT menghasilkan BigInt">
+
+Angka dari `$queryRaw` bisa bertipe `BigInt` (bilangan bulat besar), dan `res.json()` lalu gagal dengan `TypeError: Do not know how to serialize a BigInt`. Ubah dengan `Number()` sebelum dikirim.
+
+</Callout>
+
+## Kesalahan umum
+
+Cocokkan pesan error di terminal dengan kolom kiri.
+
+| Gejala | Penyebab & solusi |
+| --- | --- |
+| `Cannot find module '.../generated/prisma/client.ts'` | Client belum dibuat. Jalankan `npx prisma generate` |
+| Field atau model baru tidak dikenali | Schema berubah tapi client lama. Jalankan `npx prisma generate` |
+| ``The table `main.Task` does not exist`` | Migrasi belum jalan, atau terminal tidak berada di root proyek |
+| `Cannot resolve environment variable: DATABASE_URL` | `.env` tidak ada atau tidak dimuat |
+| `findUnique` dengan `title` ditolak | `findUnique` hanya untuk field `@id` atau `@unique`. Pakai `findFirst` |
+| `Unknown argument mode` | `mode: "insensitive"` tidak didukung SQLite |
+| Tanggal di JSON berupa string | Normal. `Date` diubah ke string ISO oleh `res.json()` |
+
+## Pelajari lebih lanjut
+
+- [Database Sungguhan dengan Prisma + SQLite](/belajar/crud-backend/prisma-sqlite): schema, migrasi, seed, dan CRUD langkah demi langkah.
+- [Dasar SQL](/belajar/crud-backend/dasar-sql) dan [Relasi & JOIN](/belajar/crud-backend/relasi-join): SQL di balik query Prisma.
+- [Validasi & Error Handling](/belajar/crud-backend/validasi-error-handling): memetakan error Prisma ke `HttpError`.
+- [Pagination, Filter & Search](/belajar/crud-backend/pagination-filter-search): `skip`, `take`, `where`, dan `meta`.
+- [Struktur Proyek Backend](/belajar/crud-backend/struktur-proyek-backend): query Prisma di lapisan service.
+- [TypeScript End-to-End](/belajar/expert/typescript-end-to-end) dan [Performa Backend](/belajar/expert/performa-backend): tipe dari client Prisma, index, dan query N+1.
+- Coba query SQL di [SQL Playground](/lab/sql-playground), dan lihat cheatsheet [SQL](/cheatsheet/sql) serta [Express.js](/cheatsheet/express).

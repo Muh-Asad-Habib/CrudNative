@@ -1,0 +1,737 @@
+## Daftar tugas yang terus bertambah
+
+Aplikasi tugas kuliah cepat atau lambat akan punya daftar yang panjang. Di awal semester Andi mungkin hanya punya lima tugas. Menjelang UTS, daftarnya bisa berisi ratusan baris dari Basis Data, Pemrograman Mobile, dan mata kuliah lain.
+
+Kamu sudah menampilkan list dengan `map` di [useEffect, List & Custom Hook](/belajar/react-native/effect-list-custom-hook) dan mengenal `ScrollView` di [Komponen Inti React Native](/belajar/react-native/core-components). Gabungan keduanya cukup untuk data kecil, tetapi mulai berat saat datanya membesar.
+
+Di pelajaran ini kamu memakai **FlatList**, komponen list bawaan React Native yang dibuat khusus untuk data panjang. Kita mulai dari tiga **props** wajibnya (props = pengaturan yang kamu kirim ke komponen). Lalu kita menambah garis pemisah, judul, pesan saat data kosong, pull-to-refresh, dan infinite scroll. Setelah itu kita mengelompokkan tugas per mata kuliah dengan **SectionList** dan menutup dengan tips performa.
+
+## Kenapa bukan ScrollView + map?
+
+`ScrollView` **merender** (menggambar ke layar) **semua** isinya sekaligus. Kalau kamu menulis `tasks.map(...)` di dalamnya untuk 500 tugas, React Native membuat 500 komponen beserta view native-nya. Padahal yang terlihat di layar hanya sekitar sepuluh. Akibatnya layar lambat terbuka, memori HP cepat penuh, dan scroll tersendat di HP murah.
+
+<Callout type="analogi" title="Seperti pelayan yang hanya menata meja di dekatmu">
+
+Bayangkan restoran besar dengan 500 meja. Dari tempatmu berdiri, kamu hanya melihat sepuluh. Pelayan yang cerdas tidak menata 500 meja sekaligus. Ia menata meja yang terlihat dan beberapa di dekatnya. Saat kamu berjalan ke bagian lain, ia menata meja di sana dan membereskan meja yang sudah jauh di belakang.
+
+Meja = item tugas. Area yang terlihat = layar HP. Berjalan = scroll. Menata meja = merender item. Cara kerja pelayan ini disebut **virtualization**.
+
+</Callout>
+
+FlatList memakai teknik **virtualization** (virtualisasi): hanya item di sekitar layar yang dirender. Item yang sudah jauh dilepas dari memori, lalu dirender ulang saat kamu scroll kembali ke sana. Dua angka bawaannya:
+
+- `initialNumToRender` bernilai 10: saat list pertama muncul, hanya 10 item yang dirender.
+- `windowSize` bernilai 21: FlatList menyiapkan item seluas kira-kira 21 layar, yaitu 10 layar di atas, layar yang terlihat, dan 10 layar di bawah.
+
+| Aspek | `ScrollView` + `map` | `FlatList` |
+| --- | --- | --- |
+| Item yang dirender | Semua, sejak awal | Hanya di sekitar layar |
+| Cocok untuk | Konten pendek dan tetap, misalnya form atau halaman profil | Data panjang atau data dari API |
+| Pull-to-refresh | Pasang `RefreshControl` manual | Cukup `refreshing` + `onRefresh` |
+| Muat halaman berikutnya | Hitung posisi scroll sendiri | `onEndReached` |
+| Header, footer, empty state | Tulis kondisi sendiri | Props siap pakai |
+
+<Compare>
+<CompareItem title="Hindari untuk data panjang" tone="bad">
+
+```jsx
+<ScrollView>
+  {tasks.map((task) => (
+    <TaskItem key={task.id} task={task} />
+  ))}
+</ScrollView>
+```
+
+Ke-500 tugas langsung dirender walau hanya 10 yang terlihat.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+```jsx
+<FlatList
+  data={tasks}
+  keyExtractor={(item) => item.id}
+  renderItem={({ item }) => <TaskItem task={item} />}
+/>
+```
+
+Hanya item di sekitar layar yang dirender. Sisanya menyusul saat kamu scroll.
+
+</CompareItem>
+</Compare>
+
+## FlatList pertama: data, renderItem, keyExtractor
+
+FlatList butuh tiga hal: data, cara menggambar satu item, dan cara mengenali tiap item.
+
+```jsx title="App.js"
+import { FlatList, StyleSheet, Text, View } from 'react-native';
+
+const TUGAS = [
+  { id: '1', title: 'ERD sistem perpustakaan', course: 'Basis Data' },
+  { id: '2', title: 'Layout halaman profil', course: 'Pemrograman Mobile' },
+  { id: '3', title: 'Kuis subnetting', course: 'Jaringan Komputer' },
+];
+
+export default function App() {
+  return (
+    <FlatList
+      style={styles.list}
+      data={TUGAS}
+      keyExtractor={(item) => item.id}
+      renderItem={({ item, index }) => (
+        <View style={styles.item}>
+          <Text style={styles.title}>
+            {index + 1}. {item.title}
+          </Text>
+          <Text style={styles.muted}>{item.course}</Text>
+        </View>
+      )}
+    />
+  );
+}
+
+const styles = StyleSheet.create({
+  list: { flex: 1, paddingTop: 48 },
+  item: { paddingHorizontal: 16, paddingVertical: 12 },
+  title: { fontSize: 16, fontWeight: '600' },
+  muted: { color: '#64748b' },
+});
+```
+
+- `data`: array berisi tugas, misalnya isi `data` dari respons API `GET /api/tasks`.
+- `renderItem`: fungsi yang menggambar **satu** item. FlatList memanggilnya untuk tiap item yang perlu tampil. Fungsi ini menerima objek `{ item, index }`, bukan item langsung. Karena itu kita menulis `({ item, index })` untuk mengambil isinya (destructuring).
+- `keyExtractor`: fungsi yang mengembalikan **string** unik untuk tiap item. Fungsinya sama dengan prop `key` di `map`: React memakainya untuk tahu item mana yang berubah, bertambah, atau hilang. Kalau `id` dari API berupa angka, ubah dengan `String(item.id)`.
+
+Hasilnya, tiga tugas tampil bernomor 1 sampai 3, masing-masing dengan nama mata kuliah di bawah judulnya.
+
+<Callout type="analogi" title="Seperti NIM, bukan nomor urut absen">
+
+Dosen mengenali mahasiswa lewat NIM, bukan nomor urut di daftar hadir. Kalau mahasiswa nomor 3 mengundurkan diri, semua nomor urut di bawahnya bergeser. NIM tidak ikut berubah.
+
+`keyExtractor` = NIM tiap tugas. Index = nomor urut absen. Kalau kuncinya index, React bisa salah mengira tugas mana yang hilang setelah ada yang dihapus.
+
+</Callout>
+
+Tanpa `keyExtractor`, FlatList mencari `item.key`, lalu `item.id`. Kalau keduanya tidak ada, ia memakai index dan memunculkan peringatan `VirtualizedList: missing keys for items, make sure to specify a key or id property on each item or provide a custom keyExtractor.` Seperti nomor absen, index tidak aman sebagai kunci karena berubah saat item dihapus atau diurutkan ulang.
+
+<Callout type="warning" title="List tidak bisa di-scroll?">
+
+FlatList perlu tinggi yang terbatas agar tahu kapan harus scroll. Pastikan induknya punya `flex: 1` atau tinggi tetap. Kalau induknya hanya setinggi isinya, list memanjang melewati bawah layar dan tidak bisa di-scroll.
+
+</Callout>
+
+## Separator, header, footer, dan empty state
+
+<Callout type="analogi" title="Seperti papan menu di warung">
+
+Papan menu warung yang enak dibaca punya nama warung di atas, garis di antara tiap menu, dan catatan kecil di bawah seperti "Harga sudah termasuk nasi". Kalau semua lauk habis, pemilik menulis "Menu hari ini habis". Papan tidak dibiarkan kosong sampai pembeli bingung.
+
+Nama warung = **header**. Garis antarmenu = **separator**. Catatan di bawah = **footer**. Tulisan "Menu habis" = **empty state**.
+
+</Callout>
+
+Daftar yang rapi butuh empat hal itu. **Empty state** adalah pesan ramah yang muncul saat daftar belum punya isi. FlatList menyediakan prop khusus untuk masing-masing, jadi kamu tidak perlu menulis kondisi `if` sendiri.
+
+```jsx title="App.js"
+function Separator() {
+  return <View style={styles.separator} />;
+}
+
+function EmptyState() {
+  return (
+    <View style={styles.empty}>
+      <Text style={styles.title}>Belum ada tugas</Text>
+      <Text style={styles.muted}>Tarik layar ke bawah untuk memuat ulang.</Text>
+    </View>
+  );
+}
+
+<FlatList
+  data={tasks}
+  keyExtractor={(item) => item.id}
+  renderItem={renderItem}
+  ItemSeparatorComponent={Separator}
+  ListHeaderComponent={<Text style={styles.heading}>Tugas Kuliah</Text>}
+  ListEmptyComponent={loading ? null : EmptyState}
+  ListFooterComponent={loading ? <ActivityIndicator /> : null}
+/>
+```
+
+Kode di atas membuat dua komponen kecil, lalu menyerahkannya ke FlatList:
+
+- `ItemSeparatorComponent` digambar **di antara** item. Garis tidak muncul di atas item pertama atau di bawah item terakhir.
+- `ListHeaderComponent` dan `ListFooterComponent` ikut bergeser saat list di-scroll, seperti bagian dari isi list. Keduanya boleh diisi nama komponen (`EmptyState`) atau elemen JSX langsung (`<Text>...</Text>`).
+- `ActivityIndicator` adalah ikon loading berputar bawaan React Native. Di sini ia muncul di footer selama data sedang diambil.
+- `ListEmptyComponent` hanya tampil saat `data` berupa array kosong. Masalahnya, saat data pertama masih diambil, array juga kosong. Karena itu kita menulis `loading ? null : EmptyState`: selama loading, jangan tampilkan apa-apa. Tanpa cek ini, pengguna sempat melihat "Belum ada tugas" padahal datanya sedang dalam perjalanan.
+
+## Pull-to-refresh
+
+Di banyak aplikasi, kamu menarik layar ke bawah lalu melepasnya untuk memuat data terbaru. Gerakan ini disebut **pull-to-refresh** (tarik untuk menyegarkan).
+
+<Callout type="analogi" title="Seperti minta ketua kelas mengecek jadwal terbaru">
+
+Kamu bertanya ke ketua kelas, "Ada perubahan jadwal?" Ia mengangkat tangan tanda "tunggu sebentar", lalu mengecek grup dosen. Setelah dapat jawaban, ia menurunkan tangan dan menempel jadwal baru di papan. Kalau grup dosen sedang error, ia tetap harus menurunkan tangan. Kalau tidak, seisi kelas menunggu selamanya.
+
+Menarik layar = bertanya. `onRefresh` = ketua kelas pergi mengecek. `refreshing` = tangan yang terangkat (ikon loading berputar). Menurunkan tangan apa pun hasilnya = blok `finally`.
+
+</Callout>
+
+Di FlatList, kamu cukup memasang dua props, dan keduanya harus dipasang bersama:
+
+- `refreshing`: nilai **boolean** (hanya `true` atau `false`). Kalau `true`, ikon loading berputar di atas list.
+- `onRefresh`: fungsi yang dipanggil saat pengguna menarik layar.
+
+```jsx title="App.js"
+const [refreshing, setRefreshing] = useState(false);
+
+async function onRefresh() {
+  setRefreshing(true);
+  try {
+    const res = await ambilTugas(1);
+    setTasks(res.data);
+  } finally {
+    setRefreshing(false);
+  }
+}
+
+<FlatList
+  // ...props lain
+  refreshing={refreshing}
+  onRefresh={onRefresh}
+/>
+```
+
+Urutan kerja `onRefresh`:
+
+1. `setRefreshing(true)` menyalakan ikon loading.
+2. `ambilTugas(1)` meminta halaman pertama ke API. Fungsi ini kita tulis lengkap di demo Snack di bawah.
+3. `setTasks(res.data)` mengganti isi list dengan data terbaru.
+4. `finally` selalu dijalankan, entah request berhasil atau gagal. Di dalamnya `setRefreshing(false)` mematikan ikon loading. Tanpa `finally`, ikon bisa berputar terus saat server mati.
+
+## Infinite scroll dengan onEndReached
+
+API dari Track 1 tidak mengirim semua tugas sekaligus. Di pelajaran [Pagination, Filter, Search & Sort](/belajar/crud-backend/pagination-filter-search), datanya dipotong per halaman. Respons berbentuk `{ data, meta: { page, limit, total, totalPages } }`: `page` = halaman ke berapa, `limit` = jumlah tugas per halaman, `totalPages` = jumlah halaman seluruhnya.
+
+**Infinite scroll** (scroll tanpa ujung) memuat halaman berikutnya secara otomatis saat pengguna hampir sampai di bawah list. Pengguna tidak perlu menekan tombol "Halaman 2".
+
+<Callout type="analogi" title="Seperti modul kuliah yang dibagikan per bab">
+
+Dosen membagikan modul tebal per bab, bukan sekaligus. Saat kamu hampir selesai membaca bab terakhir yang kamu pegang, kamu minta bab berikutnya ke ketua kelas. Bab baru kamu jepret di belakang bab lama. Selama ketua kelas masih di tukang fotokopi, kamu tidak minta lagi. Setelah bab terakhir dibagikan, kamu berhenti meminta.
+
+Satu bab = satu halaman API (`page`). Hampir selesai membaca = `onEndReachedThreshold`. Minta bab berikutnya = `onEndReached`. Menjepret di belakang = menggabungkan data. Ketua kelas masih di fotokopi = penjaga `sedangMuat`. Bab terakhir = `totalPages`.
+
+</Callout>
+
+<Flow nodes={["Scroll mendekati akhir", "onEndReached", "ambilTugas(page + 1)", "Gabung ke data"]} labels={["FlatList memicu", "cek meta", "await"]} caption="Alur infinite scroll" />
+
+`onEndReachedThreshold` mengatur seberapa dekat ke ujung sebelum `onEndReached` dipanggil. Satuannya panjang layar yang terlihat. Nilai `0.5` berarti "panggil saat sisa konten di bawah tinggal setengah layar". Nilai bawaannya `2`, yaitu dua layar sebelum ujung.
+
+```jsx title="App.js" {1,4-5,9,13,21-23}
+const sedangMuat = useRef(false);
+
+const muat = useCallback(async (page) => {
+  if (sedangMuat.current) return;
+  sedangMuat.current = true;
+  setLoading(true);
+  try {
+    const res = await ambilTugas(page);
+    setTasks((prev) => (page === 1 ? res.data : [...prev, ...res.data]));
+    setMeta(res.meta);
+  } finally {
+    setLoading(false);
+    sedangMuat.current = false;
+  }
+}, []);
+
+useEffect(() => {
+  muat(1);
+}, [muat]);
+
+const onEndReached = useCallback(() => {
+  if (meta && meta.page < meta.totalPages) muat(meta.page + 1);
+}, [meta, muat]);
+```
+
+Isi kode di atas dalam kata-kata biasa:
+
+- `muat(page)` mengambil satu halaman. Kalau `page` bernilai 1, data lama **diganti**. Kalau halaman 2 dan seterusnya, data baru **digabung** di belakang data lama lewat `[...prev, ...res.data]`.
+- `useEffect` memanggil `muat(1)` sekali saat layar pertama tampil.
+- `onEndReached` memanggil `muat` untuk halaman berikutnya, tapi hanya kalau masih ada halaman tersisa.
+
+Ada dua pengaman di kode ini:
+
+1. **Ref `sedangMuat`.** `onEndReached` bisa terpanggil beberapa kali beruntun sebelum request pertama selesai. Tanpa penjaga, halaman 2 bisa diminta dua kali dan tugas muncul dobel. `useRef` adalah kotak penyimpan nilai yang isinya langsung berubah dan tidak memicu render ulang. Karena itu ia lebih cocok daripada state, yang baru terbaca setelah render berikutnya.
+2. **Cek `meta.page < meta.totalPages`.** Kalau halaman terakhir sudah dimuat, kode berhenti meminta data.
+
+`useCallback` di sini menjaga fungsi `muat` dan `onEndReached` tetap sama antar-render. Manfaatnya dibahas di bagian tips performa.
+
+## Coba langsung di Snack
+
+Demo berikut menggabungkan semua yang sudah kamu pelajari. Isinya 50 tugas palsu dan "server" tiruan yang membalas 15 tugas per halaman dengan jeda 800 ms (0,8 detik) supaya terasa seperti internet sungguhan. Ada juga separator, header, empty state, footer loading, pull-to-refresh, dan infinite scroll. Scroll ke bawah dan perhatikan angka "x dari 50 tugas dimuat" bertambah.
+
+<SnackEmbed
+  name="FlatList Tugas Kuliah"
+  dependencies="react-native-safe-area-context"
+  code={`import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+
+const MATKUL = ['Basis Data', 'Pemrograman Mobile', 'Jaringan Komputer', 'Statistika'];
+const JENIS = ['Laporan', 'Kuis', 'Makalah', 'Praktikum'];
+
+// 50 tugas palsu. Ganti 50 menjadi 0 untuk melihat empty state.
+const SEMUA_TUGAS = Array.from({ length: 50 }, (_, i) => ({
+  id: String(i + 1),
+  title: JENIS[i % 4] + ' #' + (i + 1),
+  course: MATKUL[i % 4],
+  done: i % 3 === 0,
+}));
+
+// "Server" tiruan: membalas { data, meta } seperti API di Track 1
+function ambilTugas(page, limit = 15) {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const start = (page - 1) * limit;
+      resolve({
+        data: SEMUA_TUGAS.slice(start, start + limit),
+        meta: { page, limit, total: SEMUA_TUGAS.length, totalPages: Math.ceil(SEMUA_TUGAS.length / limit) },
+      });
+    }, 800);
+  });
+}
+
+const TaskItem = memo(function TaskItem({ task }) {
+  return (
+    <View style={styles.item}>
+      <Text style={[styles.title, task.done && styles.done]}>{task.title}</Text>
+      <Text style={styles.muted}>
+        {task.course}
+        {task.done ? ' · selesai' : ''}
+      </Text>
+    </View>
+  );
+});
+
+function Separator() {
+  return <View style={styles.separator} />;
+}
+
+function EmptyState() {
+  return (
+    <View style={styles.empty}>
+      <Text style={styles.title}>Belum ada tugas</Text>
+      <Text style={styles.muted}>Tarik layar ke bawah untuk memuat ulang.</Text>
+    </View>
+  );
+}
+
+const renderItem = ({ item }) => <TaskItem task={item} />;
+const keyExtractor = (item) => item.id;
+
+export default function App() {
+  const [tasks, setTasks] = useState([]);
+  const [meta, setMeta] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const sedangMuat = useRef(false);
+
+  const muat = useCallback(async (page) => {
+    if (sedangMuat.current) return;
+    sedangMuat.current = true;
+    setLoading(true);
+    try {
+      const res = await ambilTugas(page);
+      setTasks((prev) => (page === 1 ? res.data : [...prev, ...res.data]));
+      setMeta(res.meta);
+    } finally {
+      setLoading(false);
+      sedangMuat.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    muat(1);
+  }, [muat]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await muat(1);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [muat]);
+
+  const onEndReached = useCallback(() => {
+    if (meta && meta.page < meta.totalPages) muat(meta.page + 1);
+  }, [meta, muat]);
+
+  const habis = meta !== null && meta.page >= meta.totalPages && tasks.length > 0;
+
+  return (
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.screen}>
+        <FlatList
+          data={tasks}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          ItemSeparatorComponent={Separator}
+          ListHeaderComponent={
+            <View style={styles.header}>
+              <Text style={styles.heading}>Tugas Kuliah</Text>
+              <Text style={styles.muted}>
+                {tasks.length} dari {meta ? meta.total : '…'} tugas dimuat
+              </Text>
+              <Pressable onPress={onRefresh} style={styles.button}>
+                <Text style={styles.buttonText}>Muat ulang</Text>
+              </Pressable>
+            </View>
+          }
+          ListEmptyComponent={loading ? null : EmptyState}
+          ListFooterComponent={
+            loading && !refreshing ? (
+              <ActivityIndicator style={styles.footer} />
+            ) : habis ? (
+              <Text style={[styles.muted, styles.footer]}>Semua tugas sudah tampil.</Text>
+            ) : null
+          }
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          onEndReached={onEndReached}
+          onEndReachedThreshold={0.5}
+        />
+      </SafeAreaView>
+    </SafeAreaProvider>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: '#f8fafc' },
+  header: { padding: 16, gap: 4 },
+  heading: { fontSize: 24, fontWeight: '700' },
+  item: { paddingHorizontal: 16, paddingVertical: 12, backgroundColor: 'white' },
+  title: { fontSize: 16, fontWeight: '600' },
+  done: { textDecorationLine: 'line-through', color: '#94a3b8' },
+  muted: { color: '#64748b' },
+  separator: { height: 1, backgroundColor: '#e2e8f0' },
+  empty: { alignItems: 'center', padding: 32, gap: 4 },
+  footer: { padding: 16, textAlign: 'center' },
+  button: { alignSelf: 'flex-start', marginTop: 8, backgroundColor: '#4f46e5', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
+  buttonText: { color: 'white', fontWeight: '600' },
+});
+`}
+/>
+
+<Callout type="info" title="Pull-to-refresh di pratinjau web">
+
+Pratinjau Snack di halaman ini berjalan di browser lewat react-native-web (versi React Native untuk browser). Gerakan tarik-untuk-refresh tidak tersedia di sana, jadi demo menyediakan tombol **Muat ulang**. Untuk merasakan gerakan aslinya, pindai QR di Snack dengan aplikasi Expo Go di HP. Penjelasan lain soal Snack ada di [lab Expo Snack](/lab/expo-snack).
+
+</Callout>
+
+## SectionList: tugas per mata kuliah
+
+Kadang daftar lebih mudah dibaca kalau dikelompokkan, misalnya semua tugas "Basis Data" di bawah satu judul.
+
+<Callout type="analogi" title="Seperti map binder dengan kertas pembatas">
+
+Banyak mahasiswa menyimpan catatan di satu map binder. Tiap mata kuliah dipisah kertas pembatas berwarna yang bertuliskan nama matkulnya. Di belakang pembatas ada lembar-lembar catatan matkul itu.
+
+Kertas pembatas = **section header**. Lembar di belakangnya = `data` milik section itu. Satu map binder = satu SectionList.
+
+</Callout>
+
+**SectionList** adalah saudara FlatList untuk data berkelompok. Cara kerjanya sama, termasuk virtualization. Ada dua perbedaan:
+
+- Data dikirim lewat prop `sections` dengan bentuk `[{ title, data: [...] }]`. Tiap objek adalah satu kelompok.
+- Kamu menambahkan `renderSectionHeader`, yaitu fungsi yang menggambar judul tiap kelompok.
+
+API biasanya mengirim array datar (semua tugas berjejer tanpa kelompok). Jadi kita perlu fungsi kecil untuk mengelompokkannya:
+
+```js title="App.js"
+function kelompokkanPerMatkul(tasks) {
+  const map = new Map();
+  for (const task of tasks) {
+    if (!map.has(task.course)) map.set(task.course, []);
+    map.get(task.course).push(task);
+  }
+  return Array.from(map, ([title, data]) => ({ title, data }));
+}
+
+kelompokkanPerMatkul(TUGAS);
+// → [{ title: 'Basis Data', data: [3 tugas] }, { title: 'Pemrograman Mobile', data: [...] }, ...]
+```
+
+Cara kerja `kelompokkanPerMatkul`:
+
+1. `Map` adalah wadah pasangan kunci dan nilai yang menjaga urutan masuknya. Di sini kuncinya nama matkul, nilainya array tugas.
+2. Untuk tiap tugas, kalau matkulnya belum punya "laci", buat array kosong. Lalu tugas dimasukkan ke laci matkulnya.
+3. `Array.from(map, fn)` mengubah tiap pasangan `[kunci, nilai]` menjadi objek `{ title, data }` yang diminta SectionList.
+
+<SnackEmbed
+  name="SectionList per Mata Kuliah"
+  dependencies="react-native-safe-area-context"
+  height={480}
+  code={`import { SectionList, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+
+const TUGAS = [
+  { id: '1', title: 'ERD sistem perpustakaan', course: 'Basis Data', done: true },
+  { id: '2', title: 'Latihan query JOIN', course: 'Basis Data', done: false },
+  { id: '3', title: 'Layout halaman profil', course: 'Pemrograman Mobile', done: false },
+  { id: '4', title: 'Daftar tugas dengan FlatList', course: 'Pemrograman Mobile', done: false },
+  { id: '5', title: 'Kuis subnetting', course: 'Jaringan Komputer', done: true },
+  { id: '6', title: 'Laporan uji hipotesis', course: 'Statistika', done: false },
+  { id: '7', title: 'Normalisasi tabel', course: 'Basis Data', done: false },
+];
+
+// Ubah array datar menjadi [{ title, data: [...] }, ...]
+function kelompokkanPerMatkul(tasks) {
+  const map = new Map();
+  for (const task of tasks) {
+    if (!map.has(task.course)) map.set(task.course, []);
+    map.get(task.course).push(task);
+  }
+  return Array.from(map, ([title, data]) => ({ title, data }));
+}
+
+const sections = kelompokkanPerMatkul(TUGAS);
+
+const renderItem = ({ item }) => (
+  <View style={styles.item}>
+    <Text style={[styles.title, item.done && styles.done]}>{item.title}</Text>
+  </View>
+);
+
+const renderSectionHeader = ({ section }) => (
+  <Text style={styles.sectionHeader}>
+    {section.title} ({section.data.length})
+  </Text>
+);
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.screen}>
+        <SectionList
+          sections={sections}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          renderSectionHeader={renderSectionHeader}
+          stickySectionHeadersEnabled
+        />
+      </SafeAreaView>
+    </SafeAreaProvider>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: '#f8fafc' },
+  sectionHeader: { backgroundColor: '#e0e7ff', color: '#3730a3', fontWeight: '700', paddingHorizontal: 16, paddingVertical: 8 },
+  item: { backgroundColor: 'white', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+  title: { fontSize: 16 },
+  done: { textDecorationLine: 'line-through', color: '#94a3b8' },
+});
+`}
+/>
+
+`stickySectionHeadersEnabled` membuat judul section menempel di atas layar selama kamu masih scroll di dalam kelompok itu, seperti pembatas binder yang tetap terlihat. Secara bawaan fitur ini hanya aktif di iOS, jadi kita menyalakannya sendiri agar Android ikut. Props lain seperti `ListEmptyComponent`, `refreshing`, `onRefresh`, dan `onEndReached` juga berlaku di SectionList.
+
+## Tips performa
+
+FlatList sudah cepat tanpa pengaturan tambahan. Kebiasaan berikut menjaganya tetap mulus saat isi tiap item makin rumit.
+
+- **Memo komponen item.** `memo` membuat React "mengingat" hasil gambar sebuah komponen. Kalau props-nya sama dengan sebelumnya, React memakai hasil lama dan tidak menggambar ulang. Di demo, `TaskItem` dibungkus `memo`. Saat halaman baru digabung, item lama tidak digambar ulang karena objek `task`-nya masih sama.
+- **Callback yang stabil.** Callback adalah fungsi yang kamu titipkan ke komponen lain untuk dipanggil nanti, seperti `renderItem`. Fungsi yang tidak memakai state, misalnya `renderItem` dan `keyExtractor` di demo, bisa ditaruh di luar komponen. Fungsi yang butuh state, misalnya `onEndReached`, dibungkus `useCallback` agar tidak dibuat ulang di setiap render.
+- **Item ringan.** Hindari perhitungan berat di dalam `renderItem`. Gambar juga sebaiknya diberi ukuran tetap.
+- **`getItemLayout` untuk item yang tingginya sama.** Kalau semua item setinggi, beri tahu FlatList ukurannya. FlatList jadi tidak perlu mengukur tiap item, dan `scrollToIndex` (perintah "lompat ke item ke-sekian") bisa langsung melompat.
+
+<Callout type="analogi" title="Seperti menghitung letak ubin lantai">
+
+Kalau semua ubin di lorong kampus berukuran 60 cm, kamu bisa menghitung bahwa 50 ubin pertama panjangnya 50 × 60 cm = 30 meter. Tidak perlu mengukur satu per satu. Kalau ukuran ubin beda-beda, kamu harus mengukur semuanya dulu.
+
+Ubin = item. Ukuran ubin = `length`. Jarak dari pintu = `offset`. Nat (celah) di antara ubin = tinggi separator, yang ikut dihitung.
+
+</Callout>
+
+```js title="App.js"
+const ITEM_HEIGHT = 64; // samakan dengan style item: { height: 64 }
+const SEPARATOR_HEIGHT = 1;
+
+const getItemLayout = (data, index) => ({
+  length: ITEM_HEIGHT,
+  offset: (ITEM_HEIGHT + SEPARATOR_HEIGHT) * index,
+  index,
+});
+
+<FlatList getItemLayout={getItemLayout} /* ...props lain */ />;
+```
+
+`getItemLayout` menerima `data` dan `index`, lalu mengembalikan tiga angka: `length` (tinggi item), `offset` (jarak item dari awal list), dan `index`. Tinggi separator wajib ikut dihitung di `offset`. Kalau ada `ListHeaderComponent`, tinggi header juga ditambahkan. Angka yang salah membuat scroll melompat ke posisi yang keliru.
+
+<Callout type="tip" title="React Compiler dan FlashList">
+
+Proyek baru dari `npx create-expo-app@latest` (SDK 58) sudah menyalakan **React Compiler** di `app.json` (`"reactCompiler": true`). Compiler ini memasang `memo` dan `useCallback` secara otomatis saat aplikasi di-build, jadi kamu sering tidak perlu menulisnya sendiri. Konsepnya tetap perlu kamu pahami untuk proyek lama atau proyek tanpa compiler.
+
+Untuk list yang sangat besar dan rumit, ada **FlashList** dari Shopify. Cara pakainya hampir sama dengan FlatList. Bedanya, ia memakai ulang tampilan item yang sudah keluar layar untuk item baru, sehingga lebih hemat memori. Pasang dengan `npx expo install @shopify/flash-list`, lalu ganti `FlatList` menjadi `FlashList`. Untuk aplikasi tugas kita, FlatList sudah lebih dari cukup.
+
+</Callout>
+
+## Kesalahan umum
+
+| Gejala atau pesan | Penyebab | Solusi |
+| --- | --- | --- |
+| `VirtualizedList: missing keys for items, ...` | Item tidak punya `key`/`id` dan tidak ada `keyExtractor` | Tambahkan `keyExtractor={(item) => String(item.id)}` |
+| `VirtualizedLists should never be nested inside plain ScrollViews with the same orientation ...` | FlatList ditaruh di dalam `ScrollView` vertikal | Hapus `ScrollView`; pindahkan konten atas ke `ListHeaderComponent` |
+| Halaman yang sama dimuat dua kali, tugas dobel | `onEndReached` terpanggil berulang tanpa penjaga | Pakai ref `sedangMuat` dan cek `meta.page < meta.totalPages` |
+| Item tidak ikut berubah saat state lain berubah | FlatList hanya render ulang saat props-nya berubah | Kirim state itu lewat `extraData`, misalnya `extraData={selectedId}` |
+| List tidak bisa di-scroll | Induk tidak punya tinggi terbatas | Beri `flex: 1` pada induk |
+
+Peringatan pertama muncul di konsol Metro, yaitu terminal tempat `npx expo start` berjalan. Pesan kedua tampil sebagai error merah. Artinya FlatList di dalam `ScrollView` tidak bisa lagi menghitung item mana yang terlihat, sehingga ia merender semuanya dan virtualization tidak berguna.
+
+Soal `extraData`: FlatList hanya menggambar ulang kalau `data` berubah. Kalau tampilan item bergantung pada state lain, misalnya `selectedId` (id tugas yang sedang dipilih), kirim state itu lewat `extraData` supaya FlatList ikut tahu.
+
+## Latihan
+
+<Exercise title="Hitung tugas selesai per mata kuliah" difficulty="mudah" hints={["`renderSectionHeader` menerima `{ section }`, dan `section.data` adalah array tugas di kelompok itu.", "Pakai `filter((t) => t.done).length`."]}>
+
+Ubah demo SectionList di atas:
+
+1. Buka demo SectionList dan cari fungsi `renderSectionHeader`.
+2. Hitung berapa tugas di kelompok itu yang sudah selesai.
+3. Tampilkan judul dalam format `Basis Data (1/3 selesai)`.
+
+<Solution>
+
+```jsx title="App.js"
+const renderSectionHeader = ({ section }) => {
+  const selesai = section.data.filter((t) => t.done).length;
+  return (
+    <Text style={styles.sectionHeader}>
+      {section.title} ({selesai}/{section.data.length} selesai)
+    </Text>
+  );
+};
+// Basis Data (1/3 selesai)
+// Pemrograman Mobile (0/2 selesai)
+```
+
+Data per kelompok sudah tersedia di `section.data`, jadi kamu cukup menghitung yang `done`-nya `true`.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Tandai tugas selesai dengan sekali ketuk" difficulty="sedang" hints={["Simpan `TUGAS` di state dengan `useState`.", "Perbarui secara immutable: `prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t))`.", "Bungkus `Pressable` di item dan kirim `onToggle` sebagai prop."]}>
+
+Mulai dari contoh FlatList pertama:
+
+1. Simpan daftar tugas di state agar bisa diubah.
+2. Bungkus tiap item dengan `Pressable` (komponen yang bisa diketuk).
+3. Saat diketuk, balik status `done` tugas itu. Judul tugas yang selesai dicoret.
+4. Pastikan hanya item yang diketuk yang digambar ulang.
+
+<Solution>
+
+```jsx title="App.js"
+import { memo, useCallback, useState } from 'react';
+import { FlatList, Pressable, StyleSheet, Text } from 'react-native';
+
+const TaskItem = memo(function TaskItem({ task, onToggle }) {
+  return (
+    <Pressable onPress={() => onToggle(task.id)} style={styles.item}>
+      <Text style={[styles.title, task.done && styles.done]}>{task.title}</Text>
+    </Pressable>
+  );
+});
+
+// TUGAS sama seperti di contoh FlatList pertama
+export default function App() {
+  const [tasks, setTasks] = useState(TUGAS.map((t) => ({ ...t, done: false })));
+
+  const toggle = useCallback((id) => {
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
+  }, []);
+
+  const renderItem = useCallback(
+    ({ item }) => <TaskItem task={item} onToggle={toggle} />,
+    [toggle]
+  );
+
+  return (
+    <FlatList
+      style={styles.list}
+      data={tasks}
+      keyExtractor={(item) => item.id}
+      renderItem={renderItem}
+    />
+  );
+}
+
+const styles = StyleSheet.create({
+  list: { flex: 1, paddingTop: 48 },
+  item: { paddingHorizontal: 16, paddingVertical: 12 },
+  title: { fontSize: 16 },
+  done: { textDecorationLine: 'line-through', color: '#94a3b8' },
+});
+```
+
+Cara kerja solusi ini:
+
+- `map` membuat array baru, jadi FlatList tahu data berubah.
+- Hanya tugas yang diketuk yang menjadi objek baru (`{ ...t, done: !t.done }`). Tugas lain tetap objek lama, sehingga `memo` melewatkan gambar ulangnya.
+- `toggle` tidak pernah berganti karena dibungkus `useCallback` dengan dependensi kosong. Ia aman melakukan itu karena memakai bentuk fungsi `setTasks((prev) => ...)`, yang selalu menerima data terbaru.
+
+</Solution>
+</Exercise>
+
+## Kuis
+
+<Quiz questions={[
+  {
+    q: "Kenapa FlatList lebih cocok daripada `ScrollView` + `map` untuk 500 tugas?",
+    options: ["FlatList otomatis mengambil data dari API", "FlatList memakai CSS Grid sehingga lebih cepat", "FlatList hanya merender item di sekitar layar (virtualization)", "ScrollView tidak bisa menampilkan lebih dari 100 item"],
+    answer: 2,
+    explain: "Virtualization membuat FlatList hanya merender item yang dekat dengan layar, seperti pelayan yang hanya menata meja di dekatmu. ScrollView merender semua isinya sekaligus. Ia tidak punya batas 100 item dan tidak mengambil data sendiri.",
+  },
+  {
+    q: "Props apa yang dibutuhkan FlatList untuk pull-to-refresh?",
+    options: ["`refreshing` dan `onRefresh`", "`onEndReached` dan `onEndReachedThreshold`", "`ListHeaderComponent` dan `extraData`", "`RefreshControl` di dalam `renderItem`"],
+    answer: 0,
+    explain: "`refreshing` mengatur ikon loading berputar, dan `onRefresh` dipanggil saat pengguna menarik layar. `onEndReached` dipakai untuk infinite scroll. `RefreshControl` tidak ditaruh di tiap item.",
+  },
+  {
+    q: "Apa risiko kode ini kalau `onEndReached` terpanggil dua kali dengan cepat?",
+    code: "const onEndReached = () => {\n  muat(meta.page + 1);\n};",
+    options: ["Tidak ada, FlatList otomatis membatalkan panggilan kedua", "List akan kembali ke halaman 1", "Aplikasi crash karena `meta` selalu null", "Halaman yang sama bisa diminta dua kali sehingga tugas dobel, dan halaman di luar `totalPages` tetap diminta"],
+    answer: 3,
+    explain: "Tanpa penjaga seperti ref `sedangMuat` dan cek `meta.page < meta.totalPages`, request bisa dobel dan terus berjalan melewati halaman terakhir. FlatList tidak membatalkan panggilan untukmu.",
+  },
+  {
+    q: "Item kamu tidak punya `key` maupun `id`, dan kamu tidak memasang `keyExtractor`. Apa yang terjadi?",
+    options: ["List tidak tampil sama sekali", "FlatList memakai index sebagai kunci dan menampilkan peringatan missing keys", "FlatList membuat UUID acak untuk tiap item", "Error merah dan aplikasi berhenti"],
+    answer: 1,
+    explain: "Kunci bawaan dicari dari `item.key`, lalu `item.id`, lalu index. Saat jatuh ke index, muncul peringatan karena index berubah ketika item dihapus atau diurutkan.",
+  },
+  {
+    q: "Bentuk data yang benar untuk prop `sections` di SectionList adalah…",
+    options: ["`{ 'Basis Data': [...], 'Statistika': [...] }`", "`[[...], [...]]`", "`[{ title: 'Basis Data', data: [...] }]`", "`[{ id: '1', section: 'Basis Data' }]`"],
+    answer: 2,
+    explain: "SectionList butuh array objek section dan tiap section wajib punya `data` berupa array. Objek biasa atau array datar harus dikelompokkan dulu, misalnya dengan fungsi `kelompokkanPerMatkul`.",
+  },
+]} />
+
+## Ringkasan
+
+- FlatList hanya merender item di sekitar layar (virtualization), jadi tetap ringan untuk ratusan tugas. `ScrollView` + `map` cukup untuk konten pendek.
+- Tiga props inti: `data` (array tugas), `renderItem` (cara menggambar satu item, menerima `{ item, index }`), dan `keyExtractor` (id unik berupa string, seperti NIM).
+- `ItemSeparatorComponent`, `ListHeaderComponent`, `ListFooterComponent`, dan `ListEmptyComponent` mengisi garis pemisah, judul, bagian bawah, dan pesan saat kosong.
+- Pull-to-refresh cukup `refreshing` + `onRefresh`. Matikan ikon loading di `finally`.
+- Infinite scroll memakai `onEndReached`. Jaga dengan ref `sedangMuat` dan cek `meta.totalPages` agar tidak ada tugas dobel.
+- SectionList menerima `sections=[{ title, data }]` dan `renderSectionHeader` untuk data berkelompok.
+- Supaya tetap mulus: `memo` untuk item, callback yang stabil, `getItemLayout` untuk item setinggi, dan FlashList untuk list yang sangat besar.
+
+<Callout type="capstone" title="Untuk proyek akhir">
+
+Layar daftar tugas di aplikasi akhir (`src/app/index.js` di Track 3) akan memakai FlatList persis seperti demo ini, tetapi `ambilTugas` diganti request sungguhan ke API. Komponen `TaskItem` nanti dipindah ke `src/components/task-card.js`. Berikutnya kamu akan belajar [navigasi dengan Expo Router](/belajar/react-native/expo-router) agar mengetuk tugas bisa membuka layar detail.
+
+</Callout>

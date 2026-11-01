@@ -1,0 +1,668 @@
+## Pengantar
+
+Di pelajaran [FlatList](/belajar/react-native/flatlist) kamu sudah punya daftar tugas yang rapi. Masalahnya, mengetuk sebuah tugas belum melakukan apa-apa. Aplikasi sungguhan punya banyak layar: daftar, detail, form tambah, dan profil. Pengguna harus bisa pindah dari satu layar ke layar lain, lalu kembali lagi. Urusan pindah-pindah layar ini disebut **navigasi**.
+
+Di proyek `latihan-rn`, navigasi diurus oleh **Expo Router**. Expo Router adalah library (kumpulan kode siap pakai) yang sudah terpasang di template Expo SDK 58. Buktinya, `package.json` berisi `"main": "expo-router/entry"` dan `app.json` memuat plugin `expo-router`. Jadi kamu tidak perlu menginstal apa pun.
+
+Cara kerjanya mirip website yang sedang kamu baca ini (dibuat dengan Next.js). Setiap file di folder `src/app` adalah satu layar, dan setiap layar otomatis punya satu alamat (URL).
+
+Di akhir pelajaran ini, aplikasimu punya:
+
+- daftar tugas yang bisa diketuk untuk membuka detail,
+- jendela "Tugas Baru" yang muncul di atas layar (modal),
+- dua tab di bawah layar: Tugas dan Profil,
+- halaman "tidak ditemukan" untuk alamat yang salah,
+- deep link, yaitu link yang langsung membuka detail tugas tertentu.
+
+<Callout type="note" title="Tetap di proyek latihan-rn">
+
+Lanjutkan proyek dari [Pengenalan React Native & Expo](/belajar/react-native/intro-react-native-expo). Setelah `npm run reset-project`, isinya tinggal `src/app/_layout.js` dan `src/app/index.js`. Jalankan `npx expo start`, lalu buka di HP Android (Expo Go), emulator, atau simulator.
+
+</Callout>
+
+## Routing berbasis file
+
+<Callout type="analogi" title="Seperti denah gedung fakultas">
+
+Di gedung fakultas, setiap ruangan punya nomor di pintunya, misalnya "Ruang 201". Kalau tahu nomornya, kamu bisa langsung ke sana tanpa bertanya.
+
+- Gedung = folder `src/app`.
+- Lantai = subfolder, misalnya `tasks/`.
+- Ruangan = satu file layar, misalnya `profile.js`.
+- Nomor ruangan = URL layar itu, misalnya `/profile`.
+
+Bedanya, gedung sungguhan harus dibangun dulu. Di Expo Router, kamu cukup membuat file baru, dan "ruangan" beserta nomornya langsung tersedia.
+
+</Callout>
+
+**Routing** adalah aturan yang menentukan URL mana membuka layar mana. Satu pasangan URL dan layar disebut **route**. Expo Router membaca isi folder `src/app` dan membuat semua route dari situ. Kamu tidak perlu mendaftarkan layar satu per satu. Cukup buat file dengan nama yang tepat, lalu ekspor komponen layarnya sebagai default (`export default function ...`).
+
+Ini struktur folder yang kamu punya di akhir pelajaran:
+
+<FileTree title="latihan-rn" tree={`
+src/
+  app/
+    * _layout.js # layout root: Stack
+    (tabs)/
+      _layout.js # layout Tabs
+      index.js # daftar tugas → /
+      profile.js # profil → /profile
+    tasks/
+      * [id].js # detail → /tasks/1, /tasks/2, ...
+      new.js # modal tambah → /tasks/new
+    +not-found.js # URL yang tidak cocok
+  components/
+    task-item.js # bukan layar
+  lib/
+    * data.js # data tugas bersama
+app.json # scheme untuk deep link
+`} />
+
+Beberapa nama file punya arti khusus. Tabel di bawah menunjukkan file mana menghasilkan URL apa. Satu bagian URL di antara tanda `/` disebut **segmen**. Contohnya, `/tasks/2` punya dua segmen: `tasks` dan `2`.
+
+| File | URL | Keterangan |
+| --- | --- | --- |
+| `index.js` | `/` | Layar utama sebuah folder, seperti halaman depan |
+| `profile.js` | `/profile` | Nama file menjadi segmen URL |
+| `tasks/[id].js` | `/tasks/2` | Route dinamis; `id` berisi `"2"` |
+| `tasks/new.js` | `/tasks/new` | Nama tetap (`new`) didahulukan daripada `[id]` |
+| `(tabs)/index.js` | `/` | Nama folder dalam kurung tidak ikut masuk URL |
+| `_layout.js` | tidak ada | Pembungkus layar, bukan halaman |
+| `+not-found.js` | URL lain | Muncul saat tidak ada file yang cocok |
+
+<Callout type="warning" title="Folder app hanya untuk layar">
+
+Semua file `.js` di `src/app` dianggap route. Kalau kamu menaruh `task-item.js` di sana, file itu muncul sebagai layar `/task-item`. Terminal juga menampilkan peringatan karena file itu tidak punya default export berupa layar. Simpan komponen kecil di `src/components` dan logika di `src/lib`, sesuai aturan di pelajaran pengenalan.
+
+</Callout>
+
+## Layout dan Stack
+
+File `_layout.js` disebut **layout**, yaitu pembungkus semua layar di folder yang sama. Layout tidak tampil sebagai halaman sendiri. Tugasnya memberi bingkai bersama, misalnya header di atas atau tab bar di bawah.
+
+Layout paling luar ada di `src/app/_layout.js` dan disebut layout root. Di sini kamu memilih **navigator**, yaitu komponen yang mengatur cara layar berganti. Navigator yang paling sering dipakai adalah **Stack**.
+
+<Callout type="analogi" title="Seperti tumpukan piring di warung">
+
+Pelayan warung menaruh piring bersih di atas tumpukan. Saat butuh piring, ia mengambil yang paling atas.
+
+- Membuka layar baru = menaruh piring baru di atas tumpukan.
+- Tombol kembali = mengambil piring paling atas, sehingga piring di bawahnya terlihat lagi.
+- Layar yang sedang kamu lihat = piring paling atas.
+
+Bedanya, layar di bawah tidak sekadar diam. Ia tetap menyimpan isinya, termasuk posisi scroll, sampai kamu kembali ke sana.
+
+</Callout>
+
+Di Stack, layar baru ditumpuk di atas layar lama. Di bagian atas ada header dengan tombol kembali. Menggeser dari tepi kiri layar (iOS) atau menekan tombol back (Android) mengeluarkan layar paling atas.
+
+```jsx title="src/app/_layout.js"
+import { Stack } from 'expo-router';
+
+export default function RootLayout() {
+  return (
+    <Stack
+      screenOptions={{
+        headerStyle: { backgroundColor: '#4f46e5' },
+        headerTintColor: '#fff',
+        headerTitleStyle: { fontWeight: 'bold' },
+        contentStyle: { backgroundColor: '#f8fafc' },
+      }}
+    >
+      <Stack.Screen name="index" options={{ title: 'Tugas Kuliah' }} />
+      <Stack.Screen name="tasks/[id]" options={{ title: 'Detail Tugas' }} />
+      <Stack.Screen
+        name="tasks/new"
+        options={{ title: 'Tugas Baru', presentation: 'modal' }}
+      />
+    </Stack>
+  );
+}
+```
+
+Cara membaca kode ini:
+
+- `screenOptions` berlaku untuk semua layar di Stack ini. Isinya warna latar header (`headerStyle`), warna judul dan tombol kembali (`headerTintColor`), judul tebal, dan warna latar konten (`contentStyle`).
+- `Stack.Screen` mengatur satu layar saja. Nilai `name` adalah path file relatif terhadap folder layout, tanpa `.js`. Contohnya `tasks/[id]` untuk file `src/app/tasks/[id].js`.
+- `presentation: 'modal'` membuat layar `tasks/new` muncul sebagai modal. Ini dibahas di bagian Modal nanti.
+
+Layar yang tidak kamu tulis di sini tetap terdaftar otomatis. Tulis `Stack.Screen` hanya kalau layar itu butuh opsi khusus, misalnya judul sendiri.
+
+## Data bersama di src/lib/data.js
+
+Sebelum membuat layar detail, putuskan dulu apa yang dikirim dari layar daftar ke layar detail.
+
+<Callout type="analogi" title="Cukup sebut NIM, tidak perlu bawa semua berkas">
+
+Saat mengurus surat di bagian akademik, kamu cukup menyebut NIM. Petugas mencari berkasmu sendiri di lemari arsip. Kamu tidak perlu membawa map berisi semua dokumen dari rumah.
+
+- NIM = `id` tugas yang dikirim lewat URL.
+- Lemari arsip = file `src/lib/data.js`.
+- Petugas = layar detail yang mencari data berdasarkan `id`.
+
+</Callout>
+
+Aturannya: kirim id saja, lalu cari datanya di satu sumber bersama. Ada tiga alasan:
+
+1. **Param route** adalah nilai yang ikut di URL, seperti `2` di `/tasks/2`. Karena bagian dari URL, isinya selalu teks (string). Objek tugas lengkap tidak cocok dikirim lewat situ.
+2. Deep link seperti `latihanrn://tasks/2` hanya membawa id. Jadi layar detail harus bisa mencari datanya sendiri, tanpa bantuan layar sebelumnya.
+3. Di Track 3, sumber datanya diganti API. Layar cukup memanggil fungsi lain, sedangkan cara navigasinya tidak berubah.
+
+```js title="src/lib/data.js"
+export const TASKS = [
+  { id: '1', title: 'ERD sistem perpustakaan', course: 'Basis Data', done: true, owner: 'Andi' },
+  { id: '2', title: 'Latihan query JOIN', course: 'Basis Data', done: false, owner: 'Sari' },
+  { id: '3', title: 'Layout halaman profil', course: 'Pemrograman Mobile', done: false, owner: 'Andi' },
+  { id: '4', title: 'Daftar tugas dengan FlatList', course: 'Pemrograman Mobile', done: false, owner: 'Sari' },
+];
+
+export function getTask(id) {
+  return TASKS.find((task) => task.id === id);
+}
+```
+
+File ini berisi dua hal. `TASKS` adalah array (daftar) berisi empat tugas contoh. `getTask(id)` mencari satu tugas yang `id`-nya sama dengan nilai yang diberikan. Kalau tidak ada yang cocok, hasilnya `undefined`.
+
+Perhatikan bahwa `id` di data juga ditulis sebagai string (`'1'`, bukan `1`). Dengan begitu `getTask` bisa langsung membandingkannya dengan nilai dari URL.
+
+## Daftar tugas dan Link
+
+**`Link`** adalah komponen Expo Router untuk pindah layar saat sesuatu diketuk. Fungsinya sama dengan tautan biru di website. Komponen `TaskItem` dari pelajaran FlatList dipindah ke `src/components/task-item.js`, lalu dibungkus `Link` agar bisa diketuk.
+
+```jsx title="src/components/task-item.js" {7,12}
+import { Link } from 'expo-router';
+import { memo } from 'react';
+import { Pressable, StyleSheet, Text } from 'react-native';
+
+function TaskItem({ task }) {
+  return (
+    <Link href={{ pathname: '/tasks/[id]', params: { id: task.id } }} asChild>
+      <Pressable style={({ pressed }) => [styles.item, pressed && styles.pressed]}>
+        <Text style={[styles.title, task.done && styles.done]}>{task.title}</Text>
+        <Text style={styles.course}>{task.course}</Text>
+      </Pressable>
+    </Link>
+  );
+}
+
+export default memo(TaskItem);
+
+const styles = StyleSheet.create({
+  item: { backgroundColor: 'white', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+  pressed: { backgroundColor: '#eef2ff' },
+  title: { fontSize: 16, fontWeight: '600' },
+  done: { textDecorationLine: 'line-through', color: '#94a3b8' },
+  course: { color: '#64748b', marginTop: 2 },
+});
+```
+
+```jsx title="src/app/index.js"
+import { Link } from 'expo-router';
+import { FlatList, Pressable, StyleSheet, Text } from 'react-native';
+import TaskItem from '../components/task-item';
+import { TASKS } from '../lib/data';
+
+export default function TaskListScreen() {
+  return (
+    <FlatList
+      data={TASKS}
+      keyExtractor={(item) => item.id}
+      renderItem={({ item }) => <TaskItem task={item} />}
+      ListFooterComponent={
+        <Link href="/tasks/new" asChild>
+          <Pressable style={styles.addButton}>
+            <Text style={styles.addText}>+ Tambah tugas</Text>
+          </Pressable>
+        </Link>
+      }
+    />
+  );
+}
+
+const styles = StyleSheet.create({
+  addButton: { margin: 16, padding: 14, borderRadius: 12, backgroundColor: '#4f46e5', alignItems: 'center' },
+  addText: { color: 'white', fontWeight: '700' },
+});
+```
+
+`href` bisa ditulis dalam dua bentuk:
+
+- **String**, misalnya `"/tasks/new"` atau `` `/tasks/${task.id}` ``. Ringkas dan cocok untuk path tetap.
+- **Objek** `pathname` + `params`. Expo Router mengisi `[id]` dan meng-encode nilainya, sehingga aman untuk teks berspasi seperti `"Basis Data"`. Param yang tidak cocok dengan segmen dinamis menjadi query string, misalnya `/tasks/2?from=home`.
+
+Secara bawaan `Link` merender anaknya di dalam `Text`. Itu cukup untuk tautan teks, tetapi tidak cocok untuk kartu yang berisi beberapa baris. Prop `asChild` membuat `Link` tidak membuat elemen sendiri dan meneruskan perilaku navigasinya ke anak tunggalnya, di sini `Pressable`. Style dan efek tekan tetap milik `Pressable`.
+
+## Route dinamis [id]
+
+File dengan nama berkurung siku seperti `[id].js` cocok dengan segmen apa pun: `/tasks/1`, `/tasks/2`, dan seterusnya. Nilai segmen dibaca dengan hook `useLocalSearchParams`.
+
+```jsx title="src/app/tasks/[id].js" {5-6,17}
+import { Stack, router, useLocalSearchParams } from 'expo-router';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { getTask } from '../../lib/data';
+
+export default function TaskDetailScreen() {
+  const { id } = useLocalSearchParams();
+  const task = getTask(id);
+
+  if (!task) {
+    return (
+      <View style={styles.container}>
+        <Stack.Screen options={{ title: 'Tidak ditemukan' }} />
+        <Text>Tugas dengan id {id} tidak ada.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <Stack.Screen options={{ title: task.title }} />
+      <Text style={styles.course}>{task.course}</Text>
+      <Text>Dikerjakan oleh {task.owner}</Text>
+      <Text style={styles.status}>{task.done ? 'Selesai' : 'Belum selesai'}</Text>
+      <Pressable onPress={() => router.back()} style={styles.button}>
+        <Text style={styles.buttonText}>Kembali ke daftar</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 16, gap: 8 },
+  course: { fontSize: 14, color: '#4f46e5', fontWeight: '700' },
+  status: { fontSize: 16 },
+  button: { marginTop: 16, padding: 12, borderRadius: 10, backgroundColor: '#e0e7ff', alignItems: 'center' },
+  buttonText: { color: '#3730a3', fontWeight: '600' },
+});
+```
+
+Ada tiga hal penting di sini:
+
+- **Nilai param selalu string.** Untuk `/tasks/2`, `id` berisi `"2"`. Kalau id di data berupa angka, ubah dulu dengan `Number(id)` sebelum membandingkan.
+- **`Stack.Screen` di dalam layar** mengubah opsi layar itu saat dirender. Judul header jadi judul tugas, sesuatu yang tidak bisa diketahui di `_layout.js`.
+- **Tangani data yang tidak ada.** Id dari URL bisa saja salah ketik atau sudah dihapus. Jangan langsung membaca `task.title` tanpa pengecekan.
+
+Import data memakai `'../../lib/data'` karena file ini dua tingkat di bawah `src`. Expo Router juga punya `useGlobalSearchParams`, yang ikut berubah saat URL layar *lain* berubah. Untuk layar biasa, `useLocalSearchParams` lebih aman karena hanya bereaksi pada param milik layarnya sendiri.
+
+<Callout type="tip" title="Track 3 memakai bentuk folder">
+
+Di proyek akhir, detail tugas ditulis sebagai `src/app/tasks/[id]/index.js` dan halaman edit sebagai `src/app/tasks/[id]/edit.js`. URL-nya tetap `/tasks/2` dan `/tasks/2/edit`. Bentuk folder dipakai kalau satu id punya beberapa layar.
+
+</Callout>
+
+## Berpindah layar lewat kode: router
+
+`Link` cocok untuk elemen yang diketuk. Untuk navigasi setelah sebuah aksi, misalnya selesai menyimpan atau login berhasil, pakai objek `router` dari `expo-router`. Kamu juga bisa memanggil hook `useRouter()` yang mengembalikan objek yang sama.
+
+| Method | Fungsi |
+| --- | --- |
+| `router.push(href)` | Menumpuk layar baru di atas layar sekarang |
+| `router.navigate(href)` | Pindah ke route; kalau route itu sudah ada di stack, kembali ke sana |
+| `router.back()` | Kembali satu layar |
+| `router.canGoBack()` | `true` kalau masih ada layar sebelumnya |
+| `router.replace(href)` | Mengganti layar sekarang, jadi tidak bisa kembali ke layar lama |
+| `router.dismiss(n)` | Menutup `n` layar di stack terdekat (bawaan 1) |
+| `router.dismissTo(href)` | Menutup layar sampai `href`; kalau tidak ada, layar sekarang diganti |
+| `router.dismissAll()` | Kembali ke layar pertama di stack terdekat |
+
+`href` yang diterima sama dengan `Link`: string atau objek `pathname` + `params`. Contohnya `router.push({ pathname: '/tasks/[id]', params: { id: '3' } })`. `Link` sendiri juga punya prop `push`, `replace`, dan `dismissTo` dengan arti yang sama.
+
+<Flow nodes={["Daftar /", "Detail /tasks/2", "Daftar /"]} labels={["Link atau router.push", "router.back() atau tombol back"]} caption="Stack: push menumpuk layar, back mengeluarkannya" />
+
+Kapan memakai `replace`? Saat layar lama tidak boleh dikunjungi lagi lewat tombol back. Contoh paling umum adalah layar login: setelah login berhasil, `router.replace('/')` mengganti layar login dengan daftar tugas. Kalau memakai `push`, pengguna menekan back dan kembali ke form login, padahal sudah masuk.
+
+## Modal dan form sheet
+
+Modal adalah layar yang muncul *di atas* konteks sekarang, cocok untuk form singkat seperti "Tugas Baru". Di Expo Router, modal hanyalah route biasa dengan opsi `presentation`. Kita sudah memberikannya lewat `Stack.Screen name="tasks/new"` di `_layout.js`.
+
+```jsx title="src/app/tasks/new.js"
+import { router } from 'expo-router';
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+
+export default function NewTaskScreen() {
+  const [title, setTitle] = useState('');
+
+  function simpan() {
+    console.log('Tugas baru:', title);
+    router.dismiss();
+  }
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.label}>Judul tugas</Text>
+      <TextInput
+        value={title}
+        onChangeText={setTitle}
+        placeholder="Misal: Rangkum bab normalisasi"
+        style={styles.input}
+      />
+      <View style={styles.row}>
+        <Pressable onPress={() => router.back()} style={styles.secondary}>
+          <Text>Batal</Text>
+        </Pressable>
+        <Pressable onPress={simpan} style={styles.primary}>
+          <Text style={styles.primaryText}>Simpan</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 16, gap: 12 },
+  label: { fontWeight: '600' },
+  input: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 12, backgroundColor: 'white' },
+  row: { flexDirection: 'row', gap: 12 },
+  secondary: { flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#e2e8f0', alignItems: 'center' },
+  primary: { flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#4f46e5', alignItems: 'center' },
+  primaryText: { color: 'white', fontWeight: '700' },
+});
+```
+
+Di iOS, modal naik dari bawah dan bisa ditutup dengan menggeser ke bawah. Di Android, modal tampil di atas layar sekarang dan ditutup dengan tombol back. Dari kode, `router.back()` dan `router.dismiss()` sama-sama menutupnya. Untuk sementara, tombol Simpan hanya mencetak judul ke terminal. Menyimpan tugas sungguhan dibahas di pelajaran Form & Keyboard dan State Global.
+
+Kalau ingin modal yang hanya menutupi sebagian layar dan bisa ditarik naik-turun, pakai `formSheet`:
+
+```diff title="src/app/_layout.js"
+ <Stack.Screen
+   name="tasks/new"
+-  options={{ title: 'Tugas Baru', presentation: 'modal' }}
++  options={{
++    title: 'Tugas Baru',
++    presentation: 'formSheet',
++    sheetAllowedDetents: [0.5, 1],
++    sheetGrabberVisible: true,
++  }}
+ />
+```
+
+`sheetAllowedDetents` adalah daftar tinggi tempat sheet bisa berhenti, dalam pecahan tinggi layar (Android maksimal tiga nilai). `sheetGrabberVisible` menampilkan garis pegangan di atas sheet, khusus iOS.
+
+## Tabs dan route group
+
+Banyak aplikasi punya tab bar di bawah layar. Kita tambahkan dua tab, **Tugas** dan **Profil**. Caranya dengan folder **route group**: folder yang namanya dalam kurung, seperti `(tabs)`. Group berguna untuk memberi layout bersama pada beberapa layar tanpa mengubah URL.
+
+Pindahkan `src/app/index.js` ke `src/app/(tabs)/index.js`, lalu buat `profile.js` di folder yang sama. Karena file pindah satu tingkat lebih dalam, import di `index.js` menjadi `'../../components/task-item'` dan `'../../lib/data'`. URL-nya tetap `/`, jadi semua `Link` lain tidak perlu diubah.
+
+Tab memakai ikon dari `@expo/vector-icons`. Pasang dulu dengan `npx expo install @expo/vector-icons`.
+
+```jsx title="src/app/(tabs)/_layout.js"
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { Tabs } from 'expo-router';
+
+export default function TabLayout() {
+  return (
+    <Tabs screenOptions={{ tabBarActiveTintColor: '#4f46e5' }}>
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Tugas',
+          tabBarIcon: ({ color, size }) => <Ionicons name="list" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profil',
+          tabBarIcon: ({ color, size }) => <Ionicons name="person" size={size} color={color} />,
+        }}
+      />
+    </Tabs>
+  );
+}
+```
+
+```jsx title="src/app/(tabs)/profile.js"
+import { StyleSheet, Text, View } from 'react-native';
+
+export default function ProfileScreen() {
+  return (
+    <View style={styles.container}>
+      <Text style={styles.name}>Andi Pratama</Text>
+      <Text>Sistem Informasi, semester 4</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 16, gap: 4 },
+  name: { fontSize: 20, fontWeight: '700' },
+});
+```
+
+Layout root sekarang memuat group `(tabs)` sebagai satu layar Stack. Header Stack disembunyikan karena tab sudah punya header sendiri. Detail dan modal tetap di Stack root, sehingga saat dibuka keduanya menutupi tab bar.
+
+```diff title="src/app/_layout.js"
+ import { Stack } from 'expo-router';
+
++export const unstable_settings = { anchor: '(tabs)' };
++
+ export default function RootLayout() {
+   return (
+     <Stack screenOptions={{ /* sama seperti sebelumnya */ }}>
+-      <Stack.Screen name="index" options={{ title: 'Tugas Kuliah' }} />
++      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+       <Stack.Screen name="tasks/[id]" options={{ title: 'Detail Tugas' }} />
+```
+
+`unstable_settings.anchor` memberi tahu Expo Router layar mana yang harus ada di bawah layar lain. Saat aplikasi dibuka langsung ke `/tasks/2` lewat deep link, tab tetap disiapkan di belakangnya sehingga tombol back punya tujuan.
+
+<Callout type="note" title="NativeTabs">
+
+Komponen `Tabs` di atas digambar dengan JavaScript, jadi tampilannya sama di Android dan iOS. Sejak SDK 58, Expo Router juga menyediakan `NativeTabs` dari `expo-router/native-tabs`, yang memakai tab bar bawaan sistem (SDK 54–57 memakai path `expo-router/unstable-native-tabs`). Cara menulisnya berbeda: setiap tab didaftarkan dengan `NativeTabs.Trigger`. Kita tetap memakai `Tabs` karena opsinya mirip Stack.
+
+</Callout>
+
+Route group juga dipakai untuk merapikan folder. Di Track 3, layar login ditaruh di `src/app/(auth)/login.js` dengan URL `/login`, terpisah dari layar yang butuh login.
+
+## Halaman tidak ditemukan
+
+Kalau sebuah URL tidak cocok dengan file apa pun, misalnya dari deep link lama, Expo Router menampilkan layar bawaan berjudul **Unmatched Route**. Layar itu berguna saat development, tetapi kurang ramah untuk pengguna. Buat versimu sendiri dengan file `+not-found.js`:
+
+```jsx title="src/app/+not-found.js"
+import { Link, Stack } from 'expo-router';
+import { StyleSheet, Text, View } from 'react-native';
+
+export default function NotFoundScreen() {
+  return (
+    <View style={styles.container}>
+      <Stack.Screen options={{ title: 'Oops!' }} />
+      <Text style={styles.title}>Halaman ini tidak ada.</Text>
+      <Link href="/" replace style={styles.link}>
+        Kembali ke daftar tugas
+      </Link>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  title: { fontSize: 18, fontWeight: '700' },
+  link: { color: '#4f46e5', fontSize: 16 },
+});
+```
+
+Prop `replace` membuat halaman rusak itu diganti, bukan ditumpuk, sehingga tombol back tidak membawa pengguna kembali ke sana.
+
+## Deep link
+
+Deep link adalah URL yang membuka aplikasi langsung ke layar tertentu, misalnya dari notifikasi atau pesan WhatsApp. Karena routing berbasis file, setiap layar otomatis punya alamat. Yang perlu diatur hanya **scheme**, awalan URL milik aplikasimu, di `app.json`:
+
+```json title="app.json"
+{
+  "expo": {
+    "name": "latihan-rn",
+    "scheme": "latihanrn"
+  }
+}
+```
+
+Template biasanya sudah mengisi `scheme` dari nama proyek. Cek nilainya dan samakan menjadi `latihanrn`. Setelah itu `latihanrn://tasks/2` membuka `src/app/tasks/[id].js` dengan `id` bernilai `"2"`.
+
+<Flow nodes={["latihanrn://tasks/2", "Expo Router", "src/app/tasks/[id].js", "getTask('2')"]} labels={["cocokkan path", "param id = '2'", "cari data"]} caption="Deep link hanya membawa id; layar mencari datanya sendiri" />
+
+Scheme `latihanrn://` baru terdaftar di HP setelah aplikasi dibangun sebagai development build. Selama memakai Expo Go, uji dengan alamat `exp://` milik Metro, lalu tambahkan `/--/` sebelum path. Ganti IP dengan alamat yang tampil di terminal `npx expo start`.
+
+<Tabs items={["Android", "iOS Simulator (macOS)"]}>
+<Tab>
+
+```bash
+npx uri-scheme open "exp://192.168.1.5:8081/--/tasks/2" --android
+```
+
+</Tab>
+<Tab>
+
+```bash
+npx uri-scheme open "exp://127.0.0.1:8081/--/tasks/2" --ios
+```
+
+</Tab>
+</Tabs>
+
+Coba juga `/--/tasks/99`. Layar detail menampilkan "Tugas dengan id 99 tidak ada", karena route-nya cocok tetapi datanya kosong. Untuk `/--/tugas/2` yang tidak cocok dengan file apa pun, yang muncul adalah `+not-found.js`.
+
+## Kesalahan umum
+
+**Lupa default export.** Kalau sebuah layar ditulis `export function TaskDetailScreen()` tanpa `default`, terminal menampilkan peringatan seperti ini:
+
+```txt
+Route "./tasks/[id].js" is missing the required default export. Ensure a React component is exported as default.
+```
+
+Artinya Expo Router menemukan file itu tetapi tidak tahu komponen mana yang harus dirender. Perbaikannya: tambahkan `export default` pada komponen layar.
+
+**Data tidak ditemukan padahal id benar.** Kalau data memakai id angka (`id: 2`), `getTask('2')` mengembalikan `undefined` karena `2 === '2'` bernilai `false`. Samakan tipenya: simpan id sebagai string, atau bandingkan dengan `Number(id)`.
+
+**Kartu tugas tampil berantakan.** `Link` tanpa `asChild` membungkus `Pressable` di dalam `Text`, sehingga layout baris jadi aneh. Tambahkan `asChild` dan pastikan anaknya hanya satu elemen.
+
+**Layar "Unmatched Route" muncul.** Biasanya karena salah ketik path, misalnya `/task/2` padahal foldernya `tasks`. Cocokkan `href` dengan struktur folder di `src/app`.
+
+## Latihan
+
+<Exercise title="Layar Tentang dari tab Profil" difficulty="mudah" hints={["Buat file baru `src/app/about.js`; URL-nya otomatis `/about`.", "Pakai `Link href=\"/about\"` di `profile.js`.", "Judul header bisa diatur dengan `Stack.Screen` di dalam layar."]}>
+
+Tambahkan layar "Tentang Aplikasi" yang dibuka dari tab Profil. Layar itu menampilkan versi aplikasi dan punya tombol "Tutup" yang kembali ke Profil. Layar harus menutupi tab bar.
+
+<Solution>
+
+```jsx title="src/app/about.js"
+import { Stack, router } from 'expo-router';
+import { Pressable, Text, View } from 'react-native';
+
+export default function AboutScreen() {
+  return (
+    <View style={{ flex: 1, padding: 16, gap: 12 }}>
+      <Stack.Screen options={{ title: 'Tentang Aplikasi' }} />
+      <Text>Tugas Kuliah v1.0, dibuat oleh Andi dan Sari.</Text>
+      <Pressable onPress={() => router.back()}>
+        <Text style={{ color: '#4f46e5' }}>Tutup</Text>
+      </Pressable>
+    </View>
+  );
+}
+```
+
+```jsx title="src/app/(tabs)/profile.js"
+import { Link } from 'expo-router';
+// ...di dalam View
+<Link href="/about" style={{ color: '#4f46e5' }}>Tentang aplikasi</Link>
+```
+
+`about.js` berada di `src/app`, bukan di `(tabs)`, sehingga ia menjadi layar Stack root dan tampil di atas tab bar. Kalau ditaruh di `(tabs)`, ia akan dianggap bagian dari navigator tab.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Daftar tugas per mata kuliah" difficulty="sedang" hints={["Buat route dinamis `src/app/courses/[name].js`.", "Kirim nama mata kuliah lewat objek `href` agar spasi di-encode otomatis.", "Saring `TASKS` dengan `filter`."]}>
+
+Di layar detail tugas, buat nama mata kuliah bisa diketuk. Ketukan itu membuka layar baru berisi semua tugas mata kuliah tersebut, misalnya semua tugas "Basis Data". Judul header harus nama mata kuliahnya.
+
+<Solution>
+
+```jsx title="src/app/tasks/[id].js"
+// ganti Text mata kuliah di layar detail
+<Link href={{ pathname: '/courses/[name]', params: { name: task.course } }} style={styles.course}>
+  {task.course}
+</Link>
+```
+
+```jsx title="src/app/courses/[name].js"
+import { Stack, useLocalSearchParams } from 'expo-router';
+import { FlatList } from 'react-native';
+import TaskItem from '../../components/task-item';
+import { TASKS } from '../../lib/data';
+
+export default function CourseScreen() {
+  const { name } = useLocalSearchParams();
+  const tasks = TASKS.filter((task) => task.course === name);
+
+  return (
+    <>
+      <Stack.Screen options={{ title: name }} />
+      <FlatList
+        data={tasks}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => <TaskItem task={item} />}
+      />
+    </>
+  );
+}
+```
+
+Objek `href` mengubah "Basis Data" menjadi `/courses/Basis%20Data`, dan `useLocalSearchParams` mengembalikannya sebagai `"Basis Data"` lagi. Layar ini memakai ulang `TaskItem`, jadi mengetuk tugas di sini juga membuka detail. Jangan lupa import `Link` di `[id].js`.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "File mana yang menghasilkan layar dengan URL `/tasks/7`?",
+    options: ["`src/app/tasks/7.js` saja", "`src/app/tasks/[id].js`", "`src/app/(tasks)/[id].js`", "`src/components/tasks/[id].js`"],
+    answer: 1,
+    explain: "`[id].js` adalah route dinamis yang cocok dengan segmen apa pun di bawah `tasks`. Folder `(tasks)` adalah group yang tidak masuk URL, dan file di `src/components` bukan route.",
+  },
+  {
+    q: "Pengguna membuka `/tasks/2`. Nilai `id` dari `useLocalSearchParams()` adalah…",
+    options: ["Angka `2`", "Objek tugas lengkap", "`undefined` sampai data dimuat", "String `\"2\"`"],
+    answer: 3,
+    explain: "Param route berasal dari URL, jadi selalu string. Data tugas tidak ikut dikirim; layar detail mencarinya sendiri dengan `getTask(id)`.",
+  },
+  {
+    q: "Setelah login berhasil, kamu ingin pindah ke daftar tugas dan tombol back tidak kembali ke form login. Method yang tepat adalah…",
+    options: ["`router.replace('/')`", "`router.push('/')`", "`router.back()`", "`router.canGoBack()`"],
+    answer: 0,
+    explain: "`replace` mengganti layar sekarang sehingga login hilang dari riwayat. `push` menumpuk layar baru di atas login, `back` kembali ke layar sebelumnya, dan `canGoBack` hanya mengecek.",
+  },
+  {
+    q: "Kenapa kartu tugas memakai `Link` dengan `asChild`?",
+    code: "<Link href={{ pathname: '/tasks/[id]', params: { id: task.id } }} asChild>\n  <Pressable style={styles.item}>...</Pressable>\n</Link>",
+    options: ["Agar URL di-encode otomatis", "Agar layar detail dibuka sebagai modal", "Agar navigasi diteruskan ke `Pressable` dan kartu tidak dibungkus `Text`", "Agar `id` dikirim sebagai angka"],
+    answer: 2,
+    explain: "Tanpa `asChild`, `Link` merender anaknya di dalam `Text`. Dengan `asChild`, perilaku navigasi diteruskan ke `Pressable` sehingga style kartu tetap utuh. Encoding datang dari objek `href`, bukan `asChild`.",
+  },
+  {
+    q: "Kamu memindahkan `src/app/index.js` ke `src/app/(tabs)/index.js`. Apa yang terjadi pada URL-nya?",
+    options: ["Berubah menjadi `/(tabs)`", "Tetap `/` karena group tidak masuk URL", "Berubah menjadi `/tabs/index`", "Layar tidak lagi bisa dibuka"],
+    answer: 1,
+    explain: "Folder berkurung adalah route group: ia memberi layout bersama (di sini `Tabs`) tanpa mengubah URL. Yang perlu diperbarui hanya path import relatif di file yang dipindah.",
+  },
+]} />
+
+## Ringkasan
+
+- Setiap file di `src/app` dengan default export adalah satu layar dan satu URL. `index` adalah route bawaan, `_layout` adalah pembungkus, dan komponen lain disimpan di `src/components`.
+- `Stack` di `_layout.js` menumpuk layar. `screenOptions` mengatur semua layar, sedangkan `Stack.Screen` mengatur satu layar, baik di layout maupun di dalam layar itu sendiri.
+- Route dinamis `[id].js` membaca param dengan `useLocalSearchParams`. Nilainya selalu string, jadi kirim id saja dan cari datanya di `src/lib/data.js`.
+- Pindah layar dengan `Link` (string atau objek `href`, `asChild` untuk `Pressable`) atau `router.push`, `back`, `replace`, `dismiss`, dan `dismissTo`.
+- Modal adalah route biasa dengan `presentation: 'modal'` atau `'formSheet'`.
+- Route group `(tabs)` memberi layout `Tabs` tanpa mengubah URL. `+not-found.js` menangkap URL yang tidak cocok, dan `scheme` di `app.json` mengaktifkan deep link.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Aplikasi akhir di Track 3 memakai struktur yang sama: Stack di `src/app/_layout.js`, daftar di `src/app/index.js`, detail di `src/app/tasks/[id]/index.js`, form di `src/app/tasks/new.js` dan `src/app/tasks/[id]/edit.js`, serta login di `src/app/(auth)/login.js` yang dijaga `Stack.Protected`. Bedanya, `getTask` di `src/lib/data.js` diganti request ke API. Berikutnya, di [Form & Keyboard](/belajar/react-native/form-keyboard), kamu mengisi modal "Tugas Baru" dengan form yang nyaman dipakai.
+
+</Callout>

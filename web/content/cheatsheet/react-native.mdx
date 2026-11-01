@@ -1,0 +1,492 @@
+## Perintah Expo CLI
+
+Semua perintah dijalankan dari folder proyek (misalnya `latihan-rn`). **Expo CLI** (alat perintah terminal milik Expo) sudah ikut terpasang di proyek. Jadi cukup panggil lewat `npx`, tanpa instalasi global.
+
+**Contoh sehari-hari:** `npx expo start` seperti menyalakan dapur warung. **Metro** (bundler, alat yang menggabungkan semua file JavaScript jadi satu paket) memasak kodemu. **Expo Go** (aplikasi di HP untuk mencoba proyek) mengambil hasilnya setelah kamu memindai QR code. Setiap file disimpan, dapur langsung mengirim versi baru.
+
+```bash
+npx create-expo-app@latest latihan-rn   # proyek baru (template SDK 58 + Expo Router)
+cd latihan-rn
+npm run reset-project                   # kosongkan contoh, jawab "n"
+npx expo start                          # nyalakan Metro, pindai QR dengan Expo Go
+```
+
+| Perintah | Fungsi |
+| --- | --- |
+| `npx create-expo-app@latest nama-app` | Membuat proyek baru dari template default terbaru |
+| `npx expo start` | Menjalankan Metro (bundler JavaScript) di port 8081 |
+| `npx expo start --tunnel` | Untuk Wi-Fi kampus yang memblokir koneksi antarperangkat |
+| `npx expo start --clear` | Menghapus cache Metro (simpanan hasil olahan lama), untuk error aneh setelah memindah file atau nilai `.env` yang tidak ikut berubah |
+| `npx expo install nama-paket` | Memasang library dengan versi yang cocok dengan SDK proyek |
+| `npx expo install --check` | Mengecek paket yang versinya tidak cocok dengan SDK |
+| `npx expo install --fix` | Memperbaiki versi paket yang tidak cocok |
+| `npx expo-doctor@latest` | Memeriksa kesehatan proyek: versi, duplikat, konfigurasi |
+
+<Callout type="warning" title="Pakai npx expo install, bukan npm install">
+
+SDK adalah nomor versi paket Expo, di kursus ini SDK 58. `npm install expo-image` mengambil versi **terbaru** di npm, yang belum tentu cocok dengan SDK 58 dan bisa membuat aplikasi crash di Expo Go. `npx expo install expo-image` memilih versi yang sudah diuji untuk SDK proyekmu. Mirip membeli suku cadang motor. Pilih yang cocok dengan tipe motormu, bukan yang paling baru. Untuk paket yang bukan bagian dari Expo (misalnya `zod`), `npx expo install` otomatis meneruskannya ke npm.
+
+</Callout>
+
+Tombol pintas di terminal saat `npx expo start` berjalan:
+
+| Tombol | Aksi |
+| --- | --- |
+| <Kbd>r</Kbd> | Reload aplikasi di semua perangkat yang terhubung |
+| <Kbd>m</Kbd> | Membuka dev menu (menu khusus pengembang) di perangkat |
+| <Kbd>j</Kbd> | Membuka React Native DevTools (debugger, alat untuk mencari bug) |
+| <Kbd>a</Kbd> | Membuka di emulator Android |
+| <Kbd>i</Kbd> | Membuka di simulator iOS (hanya macOS) |
+| <Kbd>w</Kbd> | Membuka versi web di browser |
+| <Kbd>?</Kbd> | Menampilkan semua tombol pintas |
+| <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd> | Menghentikan server |
+
+Di HP, dev menu juga bisa dibuka dengan menggoyang perangkat, atau <Kbd>Ctrl</Kbd> + <Kbd>M</Kbd> di emulator Android.
+
+## Komponen inti
+
+Semua komponen di bawah diimpor dari `react-native`, kecuali `Image` versi `expo-image` dan `SafeAreaView` dari `react-native-safe-area-context`. Tidak ada `div`, `span`, atau `button` seperti di web.
+
+**Contoh sehari-hari:** komponen inti seperti balok LEGO bawaan dalam satu kotak. `View` adalah papan dasar, `Text` adalah balok bertulisan, dan `Pressable` adalah balok yang bisa ditekan. Layar kamu susun dari balok-balok ini. **Props** adalah pengaturan yang kamu kirim ke tiap balok, misalnya `placeholder` atau `onPress`.
+
+```jsx
+import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
+import { Image } from "expo-image";
+```
+
+| Komponen | Setara web | Props penting | Catatan |
+| --- | --- | --- | --- |
+| `View` | `div` | `style`, `onLayout`, `accessibilityRole` | Wadah layout, selalu flexbox |
+| `Text` | `p`, `span` | `numberOfLines`, `ellipsizeMode`, `onPress`, `selectable` | Satu-satunya tempat teks boleh berada |
+| `Image` (RN) | `img` | `source`, `resizeMode`, `style` | Gambar jaringan wajib diberi `width` dan `height` |
+| `Image` (`expo-image`) | `img` | `source`, `contentFit`, `placeholder`, `transition`, `cachePolicy` | Lebih cepat dan punya cache, pilihan utama |
+| `TextInput` | `input`, `textarea` | `value`, `onChangeText`, `placeholder`, `keyboardType`, `secureTextEntry`, `multiline` | Dipakai sebagai *controlled input* (isinya selalu dibaca dari `useState`) |
+| `Pressable` | `button` | `onPress`, `onLongPress`, `disabled`, `hitSlop`, `style` berupa fungsi | Pengganti tombol yang bisa diberi gaya bebas |
+| `ScrollView` | `div` dengan overflow | `contentContainerStyle`, `horizontal`, `keyboardShouldPersistTaps`, `refreshControl` | Merender **semua** anak sekaligus, cocok untuk konten pendek |
+| `FlatList` | `ul` panjang | `data`, `renderItem`, `keyExtractor`, `ListEmptyComponent`, `onRefresh`, `refreshing`, `onEndReached` | Hanya merender item di sekitar area yang terlihat, untuk list panjang |
+| `Switch` | checkbox | `value`, `onValueChange`, `trackColor`, `thumbColor` | Tampilan toggle bawaan OS |
+| `ActivityIndicator` | spinner | `size` (`"small"`/`"large"`), `color`, `animating` | Indikator loading |
+| `Modal` | dialog | `visible`, `animationType`, `transparent`, `onRequestClose` | Lapisan di atas layar; `onRequestClose` dipanggil saat tombol back Android ditekan |
+
+```jsx title="Pola yang paling sering dipakai"
+<Text numberOfLines={1}>Laporan praktikum Basis Data yang sangat panjang</Text>
+
+<Image
+  source="https://picsum.photos/seed/kuliah/400/240"
+  style={{ width: "100%", aspectRatio: 5 / 3, borderRadius: 12 }}
+  contentFit="cover"
+  transition={200}
+/>
+
+<TextInput
+  value={title}
+  onChangeText={setTitle} // menerima string, bukan event
+  placeholder="Judul tugas"
+  style={styles.input}
+/>
+
+<Pressable
+  onPress={() => setDone((d) => !d)}
+  style={({ pressed }) => [styles.button, pressed && { opacity: 0.6 }]}
+  accessibilityRole="button"
+>
+  <Text style={styles.buttonText}>Tandai selesai</Text>
+</Pressable>
+
+<Switch value={done} onValueChange={setDone} />
+
+{loading && <ActivityIndicator size="large" />}
+```
+
+`FlatList` bekerja seperti pelayan yang hanya melayani meja yang terlihat. Item yang jauh di luar layar belum digambar, jadi list berisi ribuan tugas tetap ringan.
+
+```jsx title="FlatList minimal"
+<FlatList
+  data={tasks}
+  keyExtractor={(item) => String(item.id)}
+  renderItem={({ item }) => <Text>{item.title}</Text>}
+  ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+  ListEmptyComponent={<Text>Belum ada tugas</Text>}
+  contentContainerStyle={{ padding: 16 }}
+/>
+```
+
+```jsx title="Modal konfirmasi"
+<Modal visible={open} animationType="slide" transparent onRequestClose={() => setOpen(false)}>
+  <View style={styles.backdrop}>
+    <View style={styles.sheet}>
+      <Text>Hapus tugas "UTS Basis Data"?</Text>
+      <Pressable onPress={() => setOpen(false)}>
+        <Text>Batal</Text>
+      </Pressable>
+    </View>
+  </View>
+</Modal>
+```
+
+<Callout type="danger" title="Text strings must be rendered within a <Text> component">
+
+Error ini muncul jika ada teks (atau angka, atau spasi dari `{" "}`) langsung di dalam `View`. Bungkus semua teks dengan `Text`. Jebakan yang sering terjadi: `{count && <Text>...</Text>}` saat `count` bernilai `0` akan merender angka `0` mentah. Ganti dengan `{count > 0 && ...}`.
+
+</Callout>
+
+## StyleSheet
+
+Style ditulis sebagai objek JavaScript, bukan file CSS. Nama properti memakai camelCase (kata kedua dan seterusnya diawali huruf kapital, misalnya `backgroundColor`). Angka tanpa satuan berarti **dp** (*density-independent pixel*), yaitu ukuran yang terlihat sama di layar dengan kerapatan piksel berbeda.
+
+**Contoh sehari-hari:** CSS di web seperti satu papan harga di depan toko yang berlaku untuk semua barang. Style di React Native seperti label harga yang ditempel di tiap barang. Tiap komponen membawa gayanya sendiri, jadi gaya induk tidak menurun ke anak (kecuali `Text` di dalam `Text`).
+
+```jsx title="Membuat dan menggabungkan style"
+import { StyleSheet, Text, View } from "react-native";
+
+export function TaskRow({ title, done }) {
+  return (
+    <View style={styles.row}>
+      <Text style={[styles.title, done && styles.titleDone]}>{title}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  row: { padding: 12, borderRadius: 8, backgroundColor: "#fff" },
+  title: { fontSize: 16, fontWeight: "600" },
+  titleDone: { color: "#888", textDecorationLine: "line-through" },
+});
+```
+
+Di array style, nilai yang `false`, `null`, atau `undefined` diabaikan, dan style yang ditulis belakangan menimpa yang sebelumnya.
+
+| CSS web | React Native | Catatan |
+| --- | --- | --- |
+| `background-color: #fff` | `backgroundColor: "#fff"` | camelCase, nilai berupa string |
+| `padding: 12px 16px` | `paddingVertical: 12, paddingHorizontal: 16` | Tidak ada bentuk singkat bertingkat |
+| `font-weight: bold` | `fontWeight: "700"` | Nilai string |
+| `width: 50%` | `width: "50%"` | Persentase ditulis sebagai string |
+| `box-shadow: ...` | `boxShadow: "0 2px 8px rgba(0,0,0,0.15)"` | Didukung di New Architecture (mesin baru React Native yang dipakai SDK 58) |
+| `class` dan cascade | prop `style` per komponen | Style **tidak menurun**, kecuali dari `Text` ke `Text` di dalamnya |
+| `display: flex` | (otomatis) | Semua `View` sudah flexbox |
+
+<Callout type="note" title="Properti teks hanya untuk Text">
+
+`color`, `fontSize`, `fontWeight`, dan `textAlign` tidak berefek jika dipasang di `View`. Pasang di `Text`-nya langsung.
+
+</Callout>
+
+## Flexbox
+
+**Flexbox** adalah aturan untuk menyusun anak-anak sebuah `View` dalam kolom atau baris.
+
+**Contoh sehari-hari:** menata buku di rak. `flexDirection` memilih buku ditumpuk ke bawah (`column`) atau dijajarkan ke samping (`row`). Arah susunan ini disebut **sumbu utama**, arah tegak lurusnya disebut **sumbu silang**. `justifyContent` mengatur posisi buku di sumbu utama, `alignItems` di sumbu silang, dan `gap` adalah jarak antarbuku.
+
+Perbedaan terbesar dengan web: `flexDirection` default-nya **`column`** (atas ke bawah), `alignItems` default-nya `stretch`, dan `flexShrink` default-nya `0`. Coba semua properti di bawah secara interaktif di [Flexbox Playground](/lab/flexbox).
+
+| Properti | Mengatur | Nilai |
+| --- | --- | --- |
+| `flexDirection` | Arah sumbu utama | `"column"` (default), `"row"`, `"column-reverse"`, `"row-reverse"` |
+| `justifyContent` | Posisi anak di **sumbu utama** | `"flex-start"` (default), `"center"`, `"flex-end"`, `"space-between"`, `"space-around"`, `"space-evenly"` |
+| `alignItems` | Posisi anak di **sumbu silang** | `"stretch"` (default), `"flex-start"`, `"center"`, `"flex-end"`, `"baseline"` |
+| `alignSelf` | Menimpa `alignItems` untuk satu anak | `"auto"`, `"center"`, `"flex-end"`, dan lainnya |
+| `gap` / `rowGap` / `columnGap` | Jarak antaranak | angka, misalnya `12` |
+| `flexWrap` | Anak boleh pindah baris | `"nowrap"` (default), `"wrap"` |
+| `flex` | Porsi ruang kosong yang diambil | satu angka: `1`, `2` |
+
+Cara cepat mengingat: di layout kolom, `justifyContent` mengatur **vertikal** dan `alignItems` mengatur **horizontal**. Begitu `flexDirection: "row"`, keduanya bertukar peran.
+
+```jsx title="Resep layout"
+const styles = StyleSheet.create({
+  // Layar penuh, isi di tengah
+  screen: { flex: 1, justifyContent: "center", alignItems: "center" },
+
+  // Baris: judul mengisi ruang, label prioritas di kanan
+  row: { flexDirection: "row", alignItems: "center", gap: 12 },
+  rowTitle: { flex: 1 },
+
+  // Header: kiri dan kanan berjauhan
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+
+  // Grid 2 kolom
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  gridItem: { width: "48%" },
+});
+```
+
+<Callout type="tip" title="Konten terpotong atau keluar layar?">
+
+Karena `flexShrink` bernilai `0`, anak tidak mengecil otomatis. Beri `flex: 1` pada anak yang boleh menyusut (misalnya teks judul), atau tambahkan `flexWrap: "wrap"` pada induknya.
+
+</Callout>
+
+## Hooks
+
+Hooks adalah fungsi React berawalan `use` yang memberi komponen "ingatan" dan akses ke fitur React. Semuanya diimpor dari `react`.
+
+**Contoh sehari-hari:** `useState` seperti papan skor pertandingan. Begitu angkanya diganti, penonton langsung melihat skor baru. Begitu juga tampilan: saat state berubah, komponen digambar ulang (*render ulang*). `useEffect` seperti alarm yang berbunyi setelah sesuatu terjadi, misalnya "setelah layar terbuka, ambil data dari API".
+
+| Hook | Untuk | Bentuk singkat |
+| --- | --- | --- |
+| `useState` | Data yang berubah dan memicu render ulang | `const [title, setTitle] = useState("")` |
+| `useEffect` | Efek samping setelah render: fetch, timer, listener | `useEffect(() => { ...; return cleanup; }, [deps])` |
+| `useMemo` | Menyimpan hasil hitungan mahal | `const hasil = useMemo(() => hitung(a), [a])` |
+| `useCallback` | Menyimpan fungsi supaya tetap fungsi yang sama antar-render | `const fn = useCallback(() => {...}, [deps])` |
+| `useRef` | Nilai yang tidak memicu render, atau referensi ke komponen | `const inputRef = useRef(null)` |
+| `useReducer` | State kompleks dengan banyak aksi | `const [state, dispatch] = useReducer(reducer, awal)` |
+| `useContext` | Membaca data global dari Provider (komponen pembungkus yang membagikan data) | `const theme = useContext(ThemeContext)` |
+
+```jsx title="useState: update berdasarkan nilai lama"
+const [tasks, setTasks] = useState([]);
+
+// Tambah: buat array baru, jangan push
+setTasks((prev) => [...prev, { id: Date.now(), title: "Kuis Basis Data", done: false }]);
+
+// Ubah satu item
+setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
+
+// Hapus
+setTasks((prev) => prev.filter((t) => t.id !== id));
+```
+
+`prev` adalah isi state terakhir. Selalu kembalikan array baru, karena React hanya menggambar ulang kalau melihat array yang berbeda.
+
+```jsx title="useEffect: fetch dengan cleanup"
+useEffect(() => {
+  const controller = new AbortController();
+  fetch(`${process.env.EXPO_PUBLIC_API_URL}/api/tasks`, { signal: controller.signal })
+    .then((res) => res.json())
+    .then((json) => setTasks(json.data))
+    .catch((error) => {
+      if (error.name !== "AbortError") setError(error.message);
+    });
+  return () => controller.abort(); // dibatalkan saat layar ditutup
+}, []); // [] = hanya sekali setelah render pertama
+```
+
+`AbortController` membatalkan fetch kalau layar ditutup sebelum data datang. Fungsi yang di-`return` disebut *cleanup* (beres-beres). Array di akhir disebut array dependensi, yaitu daftar nilai yang diawasi efek.
+
+| Array dependensi | Efek dijalankan |
+| --- | --- |
+| tidak ada | Setelah **setiap** render (jarang benar) |
+| `[]` | Sekali, setelah render pertama |
+| `[courseId]` | Setelah render pertama dan setiap `courseId` berubah |
+
+```jsx title="useMemo dan useCallback"
+const belumSelesai = useMemo(() => tasks.filter((t) => !t.done), [tasks]);
+
+const handleToggle = useCallback((id) => {
+  setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
+}, []);
+```
+
+<Callout type="info" title="React Compiler">
+
+Template SDK 58 mengaktifkan React Compiler (`"experiments": { "reactCompiler": true }` di `app.json`). Compiler ini otomatis melakukan memoization (menyimpan hasil supaya tidak dihitung ulang), jadi `useMemo` dan `useCallback` manual jarang diperlukan. Tetap kenali keduanya karena banyak kode dan library lain memakainya.
+
+</Callout>
+
+```jsx title="useRef: pindah fokus ke input berikutnya"
+const deskripsiRef = useRef(null);
+
+<TextInput
+  placeholder="Judul"
+  returnKeyType="next"
+  submitBehavior="submit"
+  onSubmitEditing={() => deskripsiRef.current?.focus()}
+/>
+<TextInput ref={deskripsiRef} placeholder="Deskripsi" multiline />
+```
+
+```jsx title="useReducer: semua aksi di satu tempat"
+function tasksReducer(state, action) {
+  switch (action.type) {
+    case "added":
+      return [...state, action.task];
+    case "toggled":
+      return state.map((t) => (t.id === action.id ? { ...t, done: !t.done } : t));
+    case "deleted":
+      return state.filter((t) => t.id !== action.id);
+    default:
+      throw new Error(`Aksi tidak dikenal: ${action.type}`);
+  }
+}
+
+const [tasks, dispatch] = useReducer(tasksReducer, []);
+dispatch({ type: "toggled", id: 3 });
+```
+
+```jsx title="useContext: tema global (React 19)"
+import { createContext, useContext } from "react";
+
+const ThemeContext = createContext("light");
+
+export function App() {
+  return (
+    <ThemeContext value="dark">
+      <TaskScreen />
+    </ThemeContext>
+  );
+}
+
+function TaskScreen() {
+  const theme = useContext(ThemeContext); // → "dark"
+  // ...
+}
+```
+
+Context seperti pengumuman di grup WA kelas. Sekali dikirim lewat `<ThemeContext value>`, semua komponen di dalamnya bisa membaca, tanpa diteruskan satu per satu lewat props. Sejak React 19, context bisa langsung dirender sebagai provider (`<ThemeContext value>`); bentuk lama `<ThemeContext.Provider>` masih berfungsi.
+
+<Callout type="warning" title="Aturan hooks">
+
+Panggil hooks hanya di **tingkat atas** komponen fungsi atau custom hook: jangan di dalam `if`, loop, atau fungsi biasa. Melanggar aturan ini menghasilkan error `Invalid hook call` atau `Rendered more hooks than during the previous render`.
+
+</Callout>
+
+## Platform, safe area, dan dark mode
+
+Satu kode berjalan di Android, iOS, dan web, tetapi kadang tiap platform butuh nilai berbeda. `Platform.OS` memberi tahu sedang berjalan di mana, dan `Platform.select` memilih nilai sesuai platform (kunci `ios`, `android`, `web`, `native`, dan `default` sebagai cadangan).
+
+**Contoh sehari-hari:** satu resep nasi goreng untuk semua pembeli, tapi tingkat pedasnya disesuaikan per pembeli. Kodenya sama, hanya beberapa nilai yang dipilih sesuai jenis perangkat.
+
+```jsx title="Platform"
+import { Platform, StyleSheet } from "react-native";
+
+Platform.OS; // → "android", "ios", atau "web"
+
+const styles = StyleSheet.create({
+  code: {
+    fontSize: 14,
+    ...Platform.select({
+      ios: { fontFamily: "Menlo" },
+      android: { fontFamily: "monospace" },
+      default: { fontFamily: "monospace" },
+    }),
+  },
+});
+```
+
+Untuk perbedaan yang besar, buat file terpisah: `date-picker.ios.js` dan `date-picker.android.js`, lalu impor `./date-picker` saja. Metro otomatis memilih file sesuai platform.
+
+**Safe area** adalah bagian layar yang tidak tertutup poni kamera (*notch*), status bar, atau bar navigasi. Seperti foto dalam bingkai. Taruh wajah di tengah, jangan di tepi yang tertutup bingkai.
+
+```jsx title="Safe area: hindari notch dan navigation bar"
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+
+<SafeAreaView style={{ flex: 1 }} edges={["top", "bottom"]}>
+  {/* isi layar */}
+</SafeAreaView>
+
+// atau ambil angkanya untuk dipakai manual
+const insets = useSafeAreaInsets();
+<View style={{ paddingBottom: insets.bottom + 16 }} />
+```
+
+Jangan impor `SafeAreaView` dari `react-native`: versi itu sudah deprecated (usang dan akan dihapus) dan hanya berefek di iOS. Di proyek Expo Router, `SafeAreaProvider` sudah dipasang otomatis.
+
+```jsx title="Dark mode"
+import { StatusBar } from "expo-status-bar";
+import { Text, useColorScheme, View } from "react-native";
+
+const colors = {
+  light: { bg: "#ffffff", text: "#111827", card: "#f3f4f6" },
+  dark: { bg: "#0b0f19", text: "#f9fafb", card: "#1f2937" },
+};
+
+export default function Index() {
+  const scheme = useColorScheme(); // "light", "dark", atau null
+  const c = colors[scheme === "dark" ? "dark" : "light"];
+
+  return (
+    <View style={{ flex: 1, backgroundColor: c.bg }}>
+      <Text style={{ color: c.text }}>Tugas hari ini</Text>
+      <StatusBar style="auto" />
+    </View>
+  );
+}
+```
+
+Aplikasi mengikuti tema sistem karena `app.json` berisi `"userInterfaceStyle": "automatic"`. Pasang `expo-status-bar` dengan `npx expo install expo-status-bar` jika belum ada.
+
+## Keyboard
+
+Keyboard virtual bisa menutupi input di bagian bawah layar. Kombinasi berikut cukup untuk sebagian besar form.
+
+**Contoh sehari-hari:** seperti menonton di bioskop lalu orang tinggi duduk di depanmu. `KeyboardAvoidingView` menggeser isi layar ke atas supaya input yang sedang diisi tetap terlihat. `ScrollView` membuatmu tetap bisa menggulir ke input lain.
+
+```jsx title="Form yang aman dari keyboard"
+import { KeyboardAvoidingView, Platform, ScrollView, TextInput } from "react-native";
+
+<KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+  <ScrollView
+    contentContainerStyle={{ padding: 16, gap: 12 }}
+    keyboardShouldPersistTaps="handled"
+    keyboardDismissMode="on-drag"
+  >
+    <TextInput placeholder="Email" keyboardType="email-address" autoCapitalize="none" autoComplete="email" />
+    <TextInput placeholder="Password" secureTextEntry autoComplete="password" />
+  </ScrollView>
+</KeyboardAvoidingView>
+```
+
+| Prop atau API | Fungsi |
+| --- | --- |
+| `behavior="padding"` (iOS) | Menambah padding bawah setinggi keyboard. Di Android cukup `undefined` |
+| `keyboardShouldPersistTaps="handled"` | Tap pertama pada tombol langsung diproses, tidak hanya menutup keyboard |
+| `keyboardDismissMode="on-drag"` | Keyboard tertutup saat list digeser |
+| `Keyboard.dismiss()` | Menutup keyboard dari kode, misalnya sebelum submit atau lewat `<Pressable onPress={Keyboard.dismiss}>` yang membungkus area kosong |
+| `keyboardType` | `"default"`, `"email-address"`, `"numeric"`, `"number-pad"`, `"decimal-pad"`, `"phone-pad"` |
+| `returnKeyType` | Label tombol Enter: `"next"`, `"done"`, `"send"`, `"search"` |
+| `submitBehavior` | `"submit"` (fokus tetap), `"blurAndSubmit"`, `"newline"` |
+| `autoCapitalize="none"` | Wajib untuk email dan username |
+| `secureTextEntry` | Menyembunyikan isi password |
+
+<Callout type="tip" title="Form panjang">
+
+Untuk form dengan banyak input, Expo menyarankan library `react-native-keyboard-controller` (`KeyboardAwareScrollView`). Library ini butuh development build (versi aplikasi buatanmu sendiri yang bisa memuat kode native tambahan), tidak tersedia di Expo Go. Detailnya ada di pelajaran [Form, Input & Keyboard](/belajar/react-native/form-keyboard).
+
+</Callout>
+
+## Debugging
+
+Saat aplikasi berperilaku aneh, periksa berurutan: baca pesan error di layar, lihat log di terminal, lalu buka DevTools.
+
+**Contoh sehari-hari:** seperti montir bengkel. Ia mendengar keluhan dulu (pesan error), membaca catatan servis (log), baru membongkar mesin (DevTools).
+
+| Alat | Cara membuka | Untuk apa |
+| --- | --- | --- |
+| `console.log` | Langsung di kode | Output muncul di terminal `npx expo start` dan di DevTools |
+| React Native DevTools | Tekan <Kbd>j</Kbd> di terminal, atau dev menu | Console, breakpoint (titik berhenti untuk memeriksa isi variabel) di tab Sources, inspeksi komponen, Network, Profiler |
+| LogBox | Otomatis | Layar merah = error yang menghentikan aplikasi, notifikasi kuning = warning |
+| Dev menu | <Kbd>m</Kbd>, goyang HP, atau <Kbd>Ctrl</Kbd> + <Kbd>M</Kbd> | Reload, buka DevTools, toggle Element Inspector |
+| `npx expo start --clear` | Terminal | Membersihkan cache Metro |
+| `npx expo-doctor@latest` | Terminal | Menemukan versi paket yang tidak cocok |
+
+```jsx title="Log yang mudah dibaca"
+console.log("tasks:", JSON.stringify(tasks, null, 2));
+console.warn("Token hampir kedaluwarsa"); // muncul sebagai notifikasi kuning
+console.error("Gagal memuat:", error.message); // muncul sebagai notifikasi merah
+```
+
+| Pesan error | Arti | Solusi |
+| --- | --- | --- |
+| `Text strings must be rendered within a <Text> component` | Ada teks atau angka di luar `Text` | Bungkus dengan `Text`, hindari `{0 && ...}` |
+| `Each child in a list should have a unique "key" prop` | Elemen hasil `.map()` tanpa prop `key` | Beri `key={task.id}` di elemen terluar; di `FlatList` pakai `keyExtractor` |
+| `Too many re-renders. React limits the number of renders...` | `setState` dipanggil langsung saat render, misalnya `onPress={setOpen(true)}` | Bungkus dengan arrow function: `onPress={() => setOpen(true)}` |
+| `VirtualizedLists should never be nested inside plain ScrollViews` | `FlatList` di dalam `ScrollView` searah | Pakai `ListHeaderComponent` milik `FlatList` |
+| `Unable to resolve module ...` | Path impor salah atau paket belum dipasang | Periksa path, lalu `npx expo install nama-paket` dan `--clear` |
+| `Network request failed` | HP tidak bisa menjangkau API, sering karena memakai `localhost` | Pakai IP LAN laptop di `EXPO_PUBLIC_API_URL`, `10.0.2.2` untuk emulator Android |
+| `Project is incompatible with this version of Expo Go` | Versi Expo Go tidak cocok dengan SDK proyek | Perbarui Expo Go, lalu jalankan `npx expo-doctor@latest` |
+| `Invalid hook call` | Hook dipanggil di luar komponen atau di dalam kondisi | Panggil hook di tingkat atas komponen |
+
+<Callout type="warning" title="Perubahan .env tidak terbaca">
+
+Nilai `process.env.EXPO_PUBLIC_*` ditanam ke bundle (paket JavaScript hasil Metro). Setelah mengubah `.env`, lakukan reload penuh (tekan <Kbd>r</Kbd>). Jika nilai lama masih terbaca, hentikan server lalu jalankan `npx expo start --clear`. Tulis selalu dengan titik, `process.env.EXPO_PUBLIC_API_URL`: bentuk destructuring `const { EXPO_PUBLIC_API_URL } = process.env` tidak akan terisi. Variabel ini ikut masuk ke aplikasi dalam bentuk teks biasa, jadi jangan simpan rahasia di sana.
+
+</Callout>
+
+## Pelajari lebih lanjut
+
+- [Pengenalan React Native & Expo](/belajar/react-native/intro-react-native-expo): membuat proyek dan menjalankan Expo Go.
+- [Komponen Inti React Native](/belajar/react-native/core-components) dan [Styling & Flexbox](/belajar/react-native/styling-flexbox).
+- [List Performan dengan FlatList](/belajar/react-native/flatlist) dan [Form, Input & Keyboard](/belajar/react-native/form-keyboard).
+- [State & Event](/belajar/react-native/state-event), [useEffect, List & Custom Hook](/belajar/react-native/effect-list-custom-hook), dan [State Global & Penyimpanan Lokal](/belajar/react-native/state-global-storage).
+- [UI yang Terasa Native](/belajar/react-native/ui-native): tema, status bar, dan haptics.
+- Coba kode langsung di [Expo Snack Playground](/lab/expo-snack) dan [Flexbox Playground](/lab/flexbox).
+- Cheatsheet terkait: [Expo Router](/cheatsheet/expo-router), [TanStack Query](/cheatsheet/tanstack-query), dan [JavaScript](/cheatsheet/javascript). Istilah [Expo](/glosarium#expo) juga ada di glosarium.

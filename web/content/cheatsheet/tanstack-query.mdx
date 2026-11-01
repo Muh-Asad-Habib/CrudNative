@@ -1,0 +1,652 @@
+## Instalasi
+
+<Callout type="analogi" title="Seperti catatan jawaban di papan tulis kelas">
+
+Banyak teman ingin tahu deadline tugas Basis Data. Daripada semua orang chat dosen (server), satu orang bertanya lalu menulis jawabannya di papan tulis (cache). Yang lain cukup melihat papan. Kalau catatannya sudah lama (basi), seseorang bertanya ulang dan memperbarui papan. TanStack Query adalah ketua kelas yang mengurus papan itu. Bedanya, papan ini ada di HP masing-masing pengguna, tidak dibagi ke pengguna lain.
+
+</Callout>
+
+TanStack Query (dulu React Query) mengurus *server state*, yaitu data milik API yang sedang ditampilkan di aplikasi. Ia menyimpan salinan data (cache), mencatat status loading dan error, mengulang request yang gagal (retry), dan mengambil ulang data yang sudah lama (refetch). Hasilnya, layar tidak perlu lagi `useEffect` + `useState` untuk mengambil data.
+
+Cheatsheet ini memakai **TanStack Query v5** dan nama proyek `kuliah-app`.
+
+<Tabs items={["Expo (kuliah-app)", "React web"]}>
+<Tab>
+
+```bash
+npx expo install @tanstack/react-query expo-network
+npx expo install @dev-plugins/react-query
+```
+
+`expo-network` dipakai untuk mengetahui HP sedang online atau offline. Baris kedua opsional, untuk devtools (alat untuk mengintip isi cache).
+
+</Tab>
+<Tab>
+
+```bash
+npm install @tanstack/react-query
+npm install -D @tanstack/react-query-devtools
+```
+
+Devtools versi ini menggambar elemen HTML (DOM), jadi hanya untuk proyek web.
+
+</Tab>
+</Tabs>
+
+<FileTree title="kuliah-app" tree={`
+src/
+  app/
+    * _layout.js # QueryClientProvider membungkus Stack
+    index.js # useTasks (infinite) + useDeleteTask
+    tasks/
+      new.js # useCreateTask
+      [id]/
+        index.js # useTask
+        edit.js # useTask + useUpdateTask
+  features/
+    tasks/
+      * queries.js # taskKeys + semua hook tugas
+  lib/
+    api.js # apiFetch + ApiError
+    * query-client.js # QueryClient, focusManager, onlineManager
+`} />
+
+## QueryClient dan provider
+
+`QueryClient` adalah papan tulisnya, tempat semua cache disimpan. Buat **satu** saja untuk seluruh aplikasi di file tersendiri. Lalu pasang lewat `QueryClientProvider` supaya semua layar bisa membacanya.
+
+```js title="src/lib/query-client.js"
+import { QueryClient } from "@tanstack/react-query";
+import { ApiError } from "./api";
+
+function shouldRetry(failureCount, error) {
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false; // 4xx: percuma diulang
+  return failureCount < 2;
+}
+
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30 * 1000,
+      retry: shouldRetry,
+    },
+  },
+});
+```
+
+```jsx title="src/app/_layout.js"
+import { QueryClientProvider } from "@tanstack/react-query";
+import { Stack } from "expo-router";
+import { queryClient } from "../lib/query-client";
+
+export default function RootLayout() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Stack />
+    </QueryClientProvider>
+  );
+}
+```
+
+Artinya: data dianggap segar selama 30 detik. Request yang gagal diulang paling banyak 2 kali, kecuali error 4xx (salah dari sisi aplikasi, misalnya 404), karena mengulangnya hasilnya akan sama saja.
+
+| Opsi | Bawaan v5 | Artinya |
+| --- | --- | --- |
+| `staleTime` | `0` | Berapa lama data dianggap segar (fresh). `0` = langsung basi (stale), yaitu boleh diambil ulang kapan saja |
+| `gcTime` | `5 * 60 * 1000` | Berapa lama data yang tidak dipakai layar mana pun tetap disimpan sebelum dibuang |
+| `retry` (query) | `3` | Query gagal diulang 3 kali dengan jeda 1, 2, 4 detik |
+| `retry` (mutation) | `0` | Mutation tidak pernah diulang otomatis |
+| `refetchOnWindowFocus` | `true` | Ambil ulang data basi saat aplikasi dibuka lagi |
+| `refetchOnReconnect` | `true` | Ambil ulang data basi saat koneksi pulih |
+| `refetchOnMount` | `true` | Ambil ulang data basi saat komponen baru memakai key-nya |
+| `networkMode` | `"online"` | Saat offline, query ditunda (paused), tidak dianggap gagal |
+
+<Callout type="warning" title="Jangan buat QueryClient di dalam komponen">
+
+`const queryClient = new QueryClient()` di badan `RootLayout` membuat cache baru yang kosong di setiap render. Taruh di modul seperti di atas, atau bungkus dengan `useState(() => new QueryClient())`.
+
+</Callout>
+
+## Query key factory
+
+Query key adalah **alamat data di cache**, bentuknya array. Dua komponen dengan key yang sama memakai satu catatan cache dan satu request yang sama. Tulis semua key di satu objek "pabrik" (factory) supaya tidak ada salah ketik.
+
+<Callout type="analogi" title="Seperti label map di lemari arsip">
+
+`["tasks", "detail", 5]` itu seperti label "Lemari Tugas › Laci Detail › Map nomor 5". Kalau kamu bilang "cek ulang lemari Tugas" (`["tasks"]`), semua laci dan map di dalamnya ikut dicek. Bedanya dengan lemari sungguhan: label harus ditulis persis sama, `5` dan `"5"` dianggap dua map berbeda.
+
+</Callout>
+
+```js title="src/features/tasks/queries.js"
+import { Alert } from "react-native";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiFetch } from "../../lib/api";
+
+export const PAGE_SIZE = 10;
+
+export const taskKeys = {
+  all: ["tasks"],
+  lists: () => [...taskKeys.all, "list"],
+  list: (filters) => [...taskKeys.lists(), filters],
+  details: () => [...taskKeys.all, "detail"],
+  detail: (id) => [...taskKeys.details(), id],
+};
+
+console.log(taskKeys.list({ status: "TODO" })); // → [ 'tasks', 'list', { status: 'TODO' } ]
+console.log(taskKeys.detail(5)); // → [ 'tasks', 'detail', 5 ]
+```
+
+Fungsi seperti `invalidateQueries` (tandai perlu dicek ulang) dan `cancelQueries` (batalkan request) mencocokkan key berdasarkan **awalan**:
+
+| Filter `queryKey` | `["tasks","list",{}]` | `["tasks","list",{status:"DONE"}]` | `["tasks","detail",5]` |
+| --- | --- | --- | --- |
+| `taskKeys.all` | cocok | cocok | cocok |
+| `taskKeys.lists()` | cocok | cocok | tidak |
+| `taskKeys.list({ status: "DONE" })` | tidak | cocok | tidak |
+| `taskKeys.list({})` | cocok | cocok | tidak |
+| `taskKeys.list({})` + `exact: true` | cocok | tidak | tidak |
+| `taskKeys.detail(5)` | tidak | tidak | cocok |
+| `taskKeys.lists()` + `exact: true` | tidak | tidak | tidak |
+
+- Objek di dalam key juga dicocokkan sebagian: `list({})` cocok dengan semua daftar karena objek kosong termuat di objek filter mana pun. Tambahkan `exact: true` kalau yang dimaksud hanya satu key persis.
+- Urutan properti objek tidak berpengaruh: `{ status, q }` sama dengan `{ q, status }`.
+- Tipe data berpengaruh: `5` dan `"5"` adalah dua key berbeda. `useLocalSearchParams()` selalu memberi string, jadi ubah dengan `Number(id)`.
+- Setiap variabel yang dipakai `queryFn` (id, filter, halaman) wajib masuk ke key. Kalau tidak, ganti filter tidak memicu request baru.
+
+## useQuery
+
+`useQuery` dipakai untuk membaca data. Ia jalan sendiri saat komponen tampil, lalu memberi data beserta statusnya. Caranya seperti ketua kelas tadi: lihat papan dulu, baru tanya dosen kalau catatannya belum ada atau sudah basi.
+
+```js title="src/features/tasks/queries.js"
+export function useTask(id) {
+  return useQuery({
+    queryKey: taskKeys.detail(id),
+    queryFn: async ({ signal }) => {
+      const json = await apiFetch(`/api/tasks/${id}`, { signal });
+      return json.data; // jangan sampai undefined
+    },
+  });
+}
+```
+
+```jsx title="src/app/tasks/[id]/index.js (potongan)"
+const { id } = useLocalSearchParams();
+const { data: task, isPending, error } = useTask(Number(id));
+
+if (isPending) return <ActivityIndicator />;
+if (error && !task) return <Text>{error.message}</Text>;
+```
+
+`queryFn` menerima objek berisi `signal` (alat untuk membatalkan request kalau layar sudah ditutup), `queryKey`, dan `pageParam` (khusus infinite query).
+
+| Opsi | Contoh | Fungsi |
+| --- | --- | --- |
+| `queryKey` | `taskKeys.detail(5)` | Wajib. Alamat cache. Kalau berubah, dianggap query baru |
+| `queryFn` | `({ signal }) => ...` | Wajib. Mengembalikan data atau melempar error |
+| `enabled` | `Number.isInteger(id)` | `false` = query belum jalan, menunggu syarat terpenuhi |
+| `staleTime` | `5 * 60 * 1000` | Lama data dianggap segar. `Infinity` = tidak pernah basi |
+| `gcTime` | `10 * 60 * 1000` | Lama data yang tidak dipakai layar mana pun disimpan sebelum dibuang |
+| `select` | `(courses) => courses.length` | Ubah bentuk data untuk komponen ini saja, cache tetap utuh |
+| `placeholderData` | `keepPreviousData` | Data sementara selama key baru dimuat (tidak masuk cache) |
+| `initialData` | `task` dari daftar | Data awal yang **masuk** cache dan dianggap asli |
+| `retry` | `false` atau `(count, error) => ...` | Atur percobaan ulang saat gagal |
+| `refetchInterval` | `60 * 1000` | Ambil ulang tiap sekian milidetik (polling), `false` untuk mematikan |
+| `subscribed` | `false` | Berhenti mengikuti perubahan cache, misalnya saat layar tidak tampil |
+
+```js title="enabled, staleTime, dan select"
+export const courseKeys = {
+  all: ["courses"],
+  list: () => [...courseKeys.all, "list"],
+  search: (q) => [...courseKeys.all, "search", q],
+};
+
+export function useCourseOptions(enabled = true) {
+  return useQuery({
+    queryKey: courseKeys.list(),
+    queryFn: async ({ signal }) => (await apiFetch("/api/courses?limit=50", { signal })).data,
+    enabled, // misalnya hanya saat form terbuka
+    staleTime: 5 * 60 * 1000, // mata kuliah jarang berubah
+    select: (courses) => courses.map((course) => ({ label: course.name, value: course.id })),
+  });
+}
+// data → [ { label: "Basis Data", value: 1 }, { label: "Pemrograman Mobile", value: 2 } ]
+```
+
+```js title="placeholderData: tetap tampilkan data lama saat ganti filter"
+import { keepPreviousData } from "@tanstack/react-query";
+
+// q = isi TextInput pencarian (useState)
+const { data, isPlaceholderData } = useQuery({
+  queryKey: courseKeys.search(q),
+  queryFn: async ({ signal }) =>
+    (await apiFetch(`/api/courses?q=${encodeURIComponent(q)}`, { signal })).data,
+  enabled: q.trim().length >= 2,
+  placeholderData: keepPreviousData,
+});
+```
+
+<Callout type="info" title="placeholderData atau initialData?">
+
+`placeholderData` hanya "pura-pura" selama loading: tidak disimpan di cache dan `isPlaceholderData` bernilai `true`. `initialData` disimpan sebagai data sungguhan, jadi kalau `staleTime` belum lewat, request tidak dikirim sama sekali. Untuk data sementara dari layar lain, pilih `placeholderData`.
+
+</Callout>
+
+## Status query
+
+Ada dua hal yang berbeda: **`status`** menjawab "sudah ada catatan di papan?", sedangkan **`fetchStatus`** menjawab "ada yang sedang bertanya ke dosen sekarang?". Keduanya bisa berjalan bersamaan, misalnya data sudah tampil sambil diam-diam diambil ulang.
+
+| Properti | `true` saat | Pakai untuk |
+| --- | --- | --- |
+| `isPending` | `status === "pending"`: belum ada data sama sekali | Spinner layar penuh |
+| `isSuccess` | `status === "success"`: data tersedia | Render data |
+| `isError` | `status === "error"`: percobaan terakhir gagal (data lama bisa masih ada) | Pesan error |
+| `isFetching` | `fetchStatus === "fetching"`: request berjalan, termasuk ambil ulang diam-diam di belakang layar | Indikator kecil "menyegarkan" |
+| `isLoading` | `isPending && isFetching`: pengambilan pertama sedang berjalan | Spinner, tapi `false` kalau query belum boleh jalan (`enabled: false`) |
+| `isRefetching` | `isFetching && !isPending` | Ambil ulang saat data lama sudah ada |
+| `isPaused` | `fetchStatus === "paused"`: ingin mengambil data tapi offline | Banner "Tidak ada koneksi" |
+| `isPlaceholderData` | Data yang tampil berasal dari `placeholderData` | Meredupkan daftar |
+
+| Situasi | `status` | `fetchStatus` |
+| --- | --- | --- |
+| Layar baru dibuka, request jalan | `pending` | `fetching` |
+| Data tampil, tidak ada request | `success` | `idle` |
+| Data tampil, ambil ulang di belakang layar | `success` | `fetching` |
+| Ambil ulang gagal, data lama masih ada | `error` | `idle` |
+| Dibuka saat offline | `pending` | `paused` |
+| `enabled: false` dan belum ada data | `pending` | `idle` |
+
+<Compare>
+<CompareItem title="Layar berkedip ke error" tone="bad">
+
+```jsx
+if (isPending) return <ActivityIndicator />;
+if (isError) return <Text>{error.message}</Text>;
+```
+
+Kalau pengambilan ulang di belakang layar gagal, seluruh layar diganti pesan error, padahal data lama masih ada.
+
+</CompareItem>
+<CompareItem title="Data lama tetap tampil" tone="good">
+
+```jsx
+if (isPending) return <ActivityIndicator />;
+if (error && !data) return <Text>{error.message}</Text>;
+```
+
+Error layar penuh hanya saat benar-benar tidak ada data.
+
+</CompareItem>
+</Compare>
+
+## useMutation dan invalidateQueries
+
+Query untuk **membaca**, mutation untuk **mengubah** data di server (POST, PATCH, DELETE). Mutation tidak jalan sendiri, kamu yang memanggil `mutate`. Setelah berhasil, `invalidateQueries` menempelkan catatan "perlu dicek ulang" di papan, supaya daftar diambil ulang dari server.
+
+```js title="src/features/tasks/queries.js"
+export function useCreateTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input) => {
+      const json = await apiFetch("/api/tasks", { method: "POST", body: input });
+      return json.data;
+    },
+    onSuccess: (task) => {
+      queryClient.setQueryData(taskKeys.detail(task.id), task);
+      return queryClient.invalidateQueries({ queryKey: taskKeys.lists() }); // di-return: tunggu sampai segar
+    },
+  });
+}
+```
+
+```jsx title="src/app/tasks/new.js"
+import { router } from "expo-router";
+import TaskForm from "../../components/task-form";
+import { useCreateTask } from "../../features/tasks/queries";
+
+export default function NewTaskScreen() {
+  const createTask = useCreateTask();
+
+  function handleSubmit(values) {
+    createTask.mutate(values, { onSuccess: () => router.back() });
+  }
+
+  return <TaskForm onSubmit={handleSubmit} submitting={createTask.isPending} error={createTask.error} />;
+}
+```
+
+| API mutation | Fungsi |
+| --- | --- |
+| `mutate(vars, { onSuccess, onError, onSettled })` | Jalankan. Tidak mengembalikan promise, dan error tidak perlu ditangkap sendiri |
+| `mutateAsync(vars)` | Mengembalikan promise. Wajib dibungkus `try/catch` |
+| `isPending`, `isSuccess`, `isError`, `isIdle` | Status mutation (`isLoading` di v4 sekarang `isPending`) |
+| `data`, `error`, `variables` | Hasil, error, dan data yang dikirim pada panggilan terakhir |
+| `reset()` | Kembalikan ke `idle` (belum dipanggil), misalnya untuk menghapus pesan error |
+
+Urutan callback: `onMutate` → `mutationFn` → `onSuccess` **atau** `onError` (di hook) → `onSettled` (di hook) → callback yang sama di `mutate`. Callback di `mutate` dilewati kalau komponennya sudah hilang dari layar (unmount). Jadi taruh urusan cache di hook, dan urusan tampilan (pindah layar, *toast* atau pesan kecil yang muncul sebentar) di `mutate`.
+
+| Opsi `invalidateQueries` | Bawaan | Fungsi |
+| --- | --- | --- |
+| `queryKey` | semua | Awalan key yang ditandai basi |
+| `exact` | `false` | `true` = hanya key yang persis sama |
+| `refetchType` | `"active"` | `"active"` ambil ulang yang sedang dipakai layar, `"all"` semuanya, `"none"` hanya tandai basi |
+
+## Menulis cache langsung
+
+Kalau server sudah mengirim data terbaru, tulis langsung ke cache dengan `setQueryData`, tidak perlu menunggu ambil ulang. Ibaratnya dosen sudah memberi jawaban baru di tanganmu, jadi kamu sendiri yang menulisnya di papan.
+
+```js title="src/features/tasks/queries.js"
+export function useUpdateTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, input }) => {
+      const json = await apiFetch(`/api/tasks/${id}`, { method: "PATCH", body: input });
+      return json.data;
+    },
+    onSuccess: (task) => {
+      queryClient.setQueryData(taskKeys.detail(task.id), task); // detail langsung versi baru
+      return queryClient.invalidateQueries({ queryKey: taskKeys.lists() }); // daftar: ambil ulang
+    },
+  });
+}
+```
+
+| Method `queryClient` | Fungsi |
+| --- | --- |
+| `getQueryData(key)` | Baca isi cache satu key (bisa `undefined`) |
+| `setQueryData(key, dataAtauUpdater)` | Tulis satu key. Updater yang mengembalikan `undefined` tidak mengubah apa pun |
+| `getQueriesData({ queryKey })` | Salin isi banyak key sekaligus (snapshot): array `[queryKey, data]` |
+| `setQueriesData({ queryKey }, updater)` | Ubah semua key yang cocok dengan awalan |
+| `invalidateQueries({ queryKey })` | Tandai basi, lalu ambil ulang yang sedang dipakai |
+| `refetchQueries({ queryKey, stale, type })` | Paksa ambil ulang sekarang |
+| `cancelQueries({ queryKey })` | Batalkan request yang sedang berjalan |
+| `removeQueries({ queryKey })` | Buang dari cache tanpa refetch |
+| `prefetchQuery({ queryKey, queryFn })` | Isi cache sebelum layar dibuka |
+| `ensureQueryData({ queryKey, queryFn })` | Pakai cache kalau ada, kalau tidak fetch |
+| `clear()` | Kosongkan semua cache, misalnya saat logout |
+
+<Compare>
+<CompareItem title="Mengubah objek lama" tone="bad">
+
+```js
+queryClient.setQueryData(taskKeys.detail(5), (old) => {
+  old.status = "DONE"; // mutasi langsung
+  return old;
+});
+```
+
+Objeknya tetap objek yang sama, jadi komponen bisa tidak digambar ulang (re-render). Salinan cadangan untuk rollback juga ikut berubah.
+
+</CompareItem>
+<CompareItem title="Buat objek baru" tone="good">
+
+```js
+queryClient.setQueryData(taskKeys.detail(5), (old) =>
+  old ? { ...old, status: "DONE" } : old
+);
+```
+
+Data di cache harus diperlakukan *immutable* (tidak diubah di tempat): selalu kembalikan salinan baru.
+
+</CompareItem>
+</Compare>
+
+## Optimistic update
+
+*Optimistic update* berarti mengubah cache **sebelum** server menjawab, lalu mengembalikannya (rollback) kalau gagal. Pola ini sama dengan rollback manual di [Delete & Optimistic Update](/belajar/fullstack/delete-optimistic), hanya saja yang diubah adalah cache.
+
+<Callout type="analogi" title="Seperti langsung mencoret daftar belanja">
+
+Kamu langsung mencoret "beli gula" di daftar begitu menitip ke teman, tanpa menunggu kabar. Kalau ternyata gulanya habis, kamu tulis lagi. Di kode, "tulis lagi" artinya mengembalikan salinan cache yang disimpan di `onMutate`. Tanpa salinan itu, kamu tidak tahu isi daftar sebelumnya.
+
+</Callout>
+
+```js title="src/features/tasks/queries.js"
+function removeTaskFromPages(old, id) {
+  if (!old) return old;
+  return {
+    ...old,
+    pages: old.pages.map((page) => ({
+      ...page,
+      data: page.data.filter((task) => task.id !== id),
+    })),
+  };
+}
+
+export function useDeleteTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => apiFetch(`/api/tasks/${id}`, { method: "DELETE" }),
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: taskKeys.lists() });
+      const previousLists = queryClient.getQueriesData({ queryKey: taskKeys.lists() });
+      queryClient.setQueriesData({ queryKey: taskKeys.lists() }, (old) => removeTaskFromPages(old, id));
+      return { previousLists };
+    },
+    onError: (error, id, context) => {
+      context?.previousLists.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+      Alert.alert("Gagal menghapus tugas", error.message);
+    },
+    onSuccess: (data, id) => {
+      queryClient.removeQueries({ queryKey: taskKeys.detail(id) });
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: taskKeys.lists() }),
+  });
+}
+```
+
+<Flow nodes={["mutate(id)", "onMutate", "DELETE /api/tasks/:id", "onSuccess / onError", "onSettled"]} labels={["cancel + snapshot", "cache sudah tanpa tugas", "204 atau error", "selalu jalan"]} caption="Urutan callback optimistic update" />
+
+| Langkah | Kenapa |
+| --- | --- |
+| `await cancelQueries` | Batalkan pengambilan ulang yang sedang jalan, supaya hasilnya tidak menimpa perubahan optimis dengan data lama |
+| `getQueriesData` | Simpan salinan cache (snapshot) untuk rollback |
+| `setQueriesData` | Ubah semua daftar (semua filter, semua halaman) sekaligus |
+| `return { previousLists }` | Diteruskan ke `onError`, `onSuccess`, dan `onSettled` untuk rollback |
+| `onError` | Kembalikan salinan tadi, beri tahu pengguna |
+| `onSettled` | Sukses atau gagal, cocokkan ulang dengan data server |
+
+<Callout type="note" title="Nama argumen ketiga">
+
+Dokumentasi v5 terbaru menamai nilai kembalian `onMutate` sebagai `onMutateResult`, lalu menambah satu argumen terakhir `context` berisi `client`. Kode `(error, id, context) => ...` di atas tetap benar karena yang menentukan adalah **posisi**, bukan nama:
+
+| Callback | Argumen | Posisi hasil `onMutate` |
+| --- | --- | --- |
+| `onSuccess` | `(data, variables, onMutateResult, context)` | ketiga |
+| `onError` | `(error, variables, onMutateResult, context)` | ketiga |
+| `onSettled` | `(data, error, variables, onMutateResult, context)` | keempat |
+
+</Callout>
+
+Untuk kasus sederhana (satu layar, misalnya menambah item), ada cara tanpa menyentuh cache: tampilkan `createTask.variables` sebagai item sementara selama `createTask.isPending`, lalu biarkan `invalidateQueries` di `onSettled` membawa data asli.
+
+## useInfiniteQuery
+
+`useInfiniteQuery` dipakai untuk daftar yang dibagi per halaman (`{ data, meta: { page, limit, total, totalPages } }`) dan dimuat terus saat digulir ke bawah (*infinite scroll*). Mirip feed marketplace: begitu kamu hampir sampai bawah, halaman berikutnya ikut dimuat dan disambung di ujung daftar.
+
+```js title="src/features/tasks/queries.js"
+function toQueryString(params) {
+  return Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join("&");
+}
+
+export function useTasks(filters = {}) {
+  return useInfiniteQuery({
+    queryKey: taskKeys.list(filters),
+    queryFn: ({ pageParam, signal }) =>
+      apiFetch(`/api/tasks?${toQueryString({ ...filters, page: pageParam, limit: PAGE_SIZE })}`, { signal }),
+    initialPageParam: 1, // wajib di v5
+    getNextPageParam: (lastPage) =>
+      lastPage.meta.page < lastPage.meta.totalPages ? lastPage.meta.page + 1 : undefined,
+  });
+}
+```
+
+```jsx title="src/app/index.js (potongan)"
+const { data, isPending, fetchNextPage, hasNextPage, isFetchingNextPage } = useTasks();
+const tasks = data?.pages.flatMap((page) => page.data) ?? [];
+
+if (isPending) return <ActivityIndicator />;
+
+return (
+  <FlatList
+    data={tasks}
+    keyExtractor={(item) => String(item.id)}
+    renderItem={({ item }) => <TaskCard task={item} />}
+    onEndReached={() => {
+      if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+    }}
+    onEndReachedThreshold={0.5}
+    ListFooterComponent={isFetchingNextPage ? <ActivityIndicator /> : null}
+  />
+);
+```
+
+```txt title="Bentuk data setelah 3 halaman (10 tugas, limit 4)"
+data.pageParams: [1, 2, 3]
+data.pages[0]: { data: [4 tugas], meta: { page: 1, totalPages: 3 } }
+data.pages[1]: { data: [4 tugas], meta: { page: 2, totalPages: 3 } }
+data.pages[2]: { data: [2 tugas], meta: { page: 3, totalPages: 3 } }
+hasNextPage: false
+```
+
+| Opsi / hasil | Fungsi |
+| --- | --- |
+| `initialPageParam` | `pageParam` untuk halaman pertama (wajib) |
+| `getNextPageParam(lastPage, allPages)` | Kembalikan nomor halaman berikutnya, atau `undefined` kalau sudah habis |
+| `getPreviousPageParam` | Sama, untuk arah ke atas (opsional) |
+| `maxPages` | Batasi jumlah halaman yang disimpan di cache |
+| `fetchNextPage()` | Muat halaman berikutnya |
+| `hasNextPage` | `false` saat `getNextPageParam` mengembalikan `undefined` |
+| `isFetchingNextPage` | `true` selama halaman berikutnya dimuat (untuk spinner di bawah daftar) |
+| `refetch()` | Ambil ulang **semua** halaman yang sudah dimuat, mulai dari halaman 1 |
+
+<Callout type="danger" title="Satu key, satu jenis query">
+
+Jangan memakai key yang sama untuk `useQuery` dan `useInfiniteQuery`. Infinite query menyimpan `{ pages, pageParams }`, sedangkan query biasa menyimpan data apa adanya. Bentuk yang tertukar membuat aplikasi crash, misalnya `TypeError: Cannot read property 'length' of undefined` (infinite query mencari `pages` yang tidak ada) atau `data.map is not a function` (query biasa menerima `{ pages, pageParams }`). Beri key berbeda, misalnya `taskKeys.list(filters)` untuk infinite dan `taskKeys.detail(id)` untuk biasa.
+
+</Callout>
+
+## React Native: fokus, jaringan, dan layar
+
+Di browser, TanStack Query bisa tahu sendiri kapan tab dibuka lagi dan kapan internet putus. Di HP tidak bisa, jadi kamu yang harus memberi tahu: "aplikasi baru dibuka lagi" atau "sinyal hilang".
+
+Ibaratnya ibu kos. Di browser, ia bisa melihat sendiri lampu kamarmu menyala. Di HP, ia tidak bisa melihat, jadi kamu yang mengabari lewat WA "aku sudah pulang" (aplikasi aktif lagi) atau "sinyalku hilang" (offline).
+
+Ada dua "pesan WA" yang perlu disambungkan:
+
+- `focusManager` diberi tahu lewat `AppState` (modul React Native yang melaporkan aplikasi sedang aktif atau di latar belakang).
+- `onlineManager` diberi tahu lewat `expo-network` (melaporkan HP tersambung ke jaringan atau tidak).
+
+Sambungkan keduanya di `query-client.js` (gabungkan import-nya dengan import di bagian atas file).
+
+```js title="src/lib/query-client.js (tambahan)"
+import { AppState, Platform } from "react-native";
+import { focusManager, onlineManager } from "@tanstack/react-query";
+import * as Network from "expo-network";
+
+// Aplikasi kembali dari latar belakang → query basi diambil ulang
+AppState.addEventListener("change", (status) => {
+  if (Platform.OS !== "web") {
+    focusManager.setFocused(status === "active");
+  }
+});
+
+// Offline → query dijeda (fetchStatus "paused"), lanjut otomatis saat online
+onlineManager.setEventListener((setOnline) => {
+  let initialized = false;
+  const subscription = Network.addNetworkStateListener((state) => {
+    initialized = true;
+    setOnline(!!state.isConnected);
+  });
+  Network.getNetworkStateAsync()
+    .then((state) => {
+      if (!initialized) setOnline(!!state.isConnected);
+    })
+    .catch(() => {});
+  return () => subscription.remove();
+});
+```
+
+<Callout type="warning" title="isConnected, bukan isInternetReachable">
+
+Selama pengembangan, API berjalan di laptop pada Wi-Fi yang sama. Wi-Fi tanpa kuota internet tetap bisa menjangkau laptop, tapi `isInternetReachable` bernilai `false`, sehingga semua query akan dijeda selamanya.
+
+</Callout>
+
+Aplikasi dibuka lagi berbeda dengan **layar** dibuka lagi. Kembali dari layar detail ke daftar tidak memicu `focusManager`. Biasanya ini tidak masalah, karena mutation sudah menandai daftar perlu diambil ulang. Kalau data bisa berubah dari tempat lain (misalnya diubah lewat tablet), ambil ulang saat layar tampil lagi:
+
+```js title="src/lib/use-refresh-on-focus.js"
+import { useCallback, useRef } from "react";
+import { useFocusEffect } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
+
+export function useRefreshOnFocus() {
+  const queryClient = useQueryClient();
+  const firstTimeRef = useRef(true);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (firstTimeRef.current) {
+        firstTimeRef.current = false; // fokus pertama = mount, query sudah fetch sendiri
+        return;
+      }
+      queryClient.refetchQueries({ stale: true, type: "active" });
+    }, [queryClient])
+  );
+}
+```
+
+| Kebutuhan | Alat |
+| --- | --- |
+| Ambil ulang saat aplikasi dibuka lagi | `focusManager` + `AppState` |
+| Tunda saat offline, lanjut saat online | `onlineManager` + `expo-network` |
+| Ambil ulang saat layar tampil lagi | `useFocusEffect` + `refetchQueries` |
+| Hentikan update untuk layar yang tidak terlihat | opsi `subscribed: false` |
+| Lihat isi cache | `useReactQueryDevTools(queryClient)` dari `@dev-plugins/react-query`, lalu tekan <Kbd>Shift</Kbd> + <Kbd>M</Kbd> di terminal Expo |
+
+## Dari v4 ke v5
+
+Banyak tutorial di internet masih v4. Mirip kurikulum kampus yang direvisi: isi mata kuliahnya hampir sama, tapi beberapa nama dan aturannya berubah. Kalau kamu menyalin contoh v4, cocokkan dulu dengan tabel ini.
+
+| v4 | v5 |
+| --- | --- |
+| `useQuery(["tasks"], fetchTasks)` | `useQuery({ queryKey: ["tasks"], queryFn: fetchTasks })` (hanya bentuk objek) |
+| `cacheTime` | `gcTime` |
+| `isLoading` (belum ada data) | `isPending` (`isLoading` kini `isPending && isFetching`) |
+| Mutation `isLoading` | Mutation `isPending` |
+| `keepPreviousData: true` | `placeholderData: keepPreviousData` |
+| `onSuccess`/`onError` di `useQuery` | Dihapus. Pakai `useEffect` atau tangani di `queryFn` |
+| `useInfiniteQuery` tanpa param awal | `initialPageParam` wajib |
+| `status: "loading"` | `status: "pending"` |
+
+## Kesalahan umum
+
+Pakai tabel ini seperti daftar gejala di apotek: cari pesan error atau gejala yang kamu lihat di kolom pertama, lalu baca penyebab dan "obatnya".
+
+| Gejala atau pesan | Penyebab | Solusi |
+| --- | --- | --- |
+| `No QueryClient set, use QueryClientProvider to set one` | Hook dipanggil di luar provider | Bungkus `<Stack>` di `_layout.js` dengan `QueryClientProvider` |
+| `Bad argument type. Starting with v5, only the "Object" form is allowed...` | Sintaks v4 `useQuery(key, fn)` | Pakai `useQuery({ queryKey, queryFn })` |
+| `Query data cannot be undefined...` | `queryFn` lupa `return`, atau endpoint 204 dipakai sebagai query | Kembalikan `json.data`. DELETE pakai mutation |
+| Daftar tidak berubah setelah tambah/ubah | Lupa `invalidateQueries`, atau key beda tulis | Selalu pakai `taskKeys`, invalidate `taskKeys.lists()` |
+| Detail tetap loading padahal sudah ada di cache | Key `"5"` vs `5` | `Number(id)` sebelum `useTask` |
+| Ganti filter tapi data tidak berubah | Filter tidak dimasukkan ke `queryKey` | Semua variabel `queryFn` masuk key |
+| Optimistic update tertimpa data lama | Lupa `await cancelQueries` di `onMutate` | Batalkan dulu, baru snapshot dan ubah |
+| UI tidak update setelah `setQueryData` | Objek lama dimutasi | Kembalikan objek baru dengan spread |
+| Spinner sekitar 7 detik sebelum "Tugas tidak ditemukan" | Bawaannya, 404 pun diulang 3 kali | `retry` yang melewati error 4xx |
+| `fetchStatus` selalu `paused` | `onlineManager` mengira offline | Pakai `isConnected` |
+| Halaman sama dimuat dua kali | `onEndReached` terpanggil beruntun | Jaga dengan `hasNextPage && !isFetchingNextPage` |
+| Data user lama sempat tampil setelah ganti akun | Cache tidak dikosongkan saat logout | `queryClient.clear()` saat logout |
+
+## Pelajari lebih lanjut
+
+- [Data Fetching dengan TanStack Query](/belajar/fullstack/tanstack-query): refactor `kuliah-app` langkah demi langkah dari `useEffect` ke query dan mutation.
+- [Menampilkan Data](/belajar/fullstack/read-data), [Create & Update](/belajar/fullstack/create-update), dan [Delete & Optimistic Update](/belajar/fullstack/delete-optimistic): versi manual yang digantikan TanStack Query.
+- [FlatList](/belajar/react-native/flatlist): `onEndReached`, pull-to-refresh, dan performa daftar.
+- [Autentikasi](/belajar/fullstack/autentikasi): token, logout, dan `queryClient.clear()`.
+- Cheatsheet [HTTP & REST](/cheatsheet/http) dan [JavaScript](/cheatsheet/javascript).
+- Dokumentasi resmi: [TanStack Query v5 untuk React](https://tanstack.com/query/latest/docs/framework/react/overview) dan [panduan React Native](https://tanstack.com/query/latest/docs/framework/react/react-native).

@@ -1,0 +1,1171 @@
+## Pengantar
+
+Buka modal "Tugas Baru" yang kamu buat di [Expo Router](/belajar/react-native/expo-router). **Modal** adalah layar yang muncul menutupi layar sebelumnya, mirip jendela pop-up. Sekarang ketuk kolom judul. Keyboard naik dan menutupi separuh layar. Kalau form-nya lebih panjang, tombol Simpan ikut tertutup. Ketukan pertama di tombol itu pun hanya menutup keyboard, belum menyimpan. Masalah kecil seperti ini membuat aplikasi terasa belum jadi.
+
+Di pelajaran ini, modal tersebut kita ubah menjadi form tugas lengkap. Isinya judul, mata kuliah, deadline, deskripsi, prioritas, dan status selesai. Kamu akan belajar tiga hal:
+
+- membuat form **terkontrol**: semua isi form disimpan di satu objek state, dan pesan error muncul tepat di bawah kolom yang salah;
+- memunculkan jenis keyboard yang cocok untuk tiap kolom, lalu memindahkan kursor ke kolom berikutnya dengan tombol "Next";
+- menjaga agar keyboard tidak menutupi kolom yang sedang diisi, dengan `KeyboardAvoidingView` atau library `react-native-keyboard-controller`.
+
+Kita masih memakai project `latihan-rn`. Tombol Simpan belum menyimpan ke mana pun. Datanya hanya dicetak ke terminal, lalu modal ditutup. Penyimpanan sungguhan dibahas di [State Global & Storage](/belajar/react-native/state-global-storage).
+
+## Form terkontrol di React Native
+
+<Callout type="analogi" title="Seperti mendikte formulir ke petugas teller">
+
+Di bank, kamu menyebut nama dan nomor rekening, lalu petugas teller menuliskannya di formulir. Yang tertulis di formulir hanyalah apa yang dicatat petugas. Kalau petugas lupa mencatat, kolomnya tetap kosong walaupun kamu sudah bicara.
+
+Di form terkontrol: kamu mengetik = kamu menyebut data. `onChangeText` = telinga petugas. State = formulir di meja petugas. `value` = tulisan yang terbaca di formulir itu. Bedanya, "petugas" di aplikasi mencatat secepat kamu mengetik, jadi kamu tidak merasakan jeda.
+
+</Callout>
+
+Kamu sudah mengenal [controlled input](/glosarium#controlled-input) di [State & Event](/belajar/react-native/state-event). Artinya, nilai input disimpan di state, dan setiap ketikan memperbarui state itu. Layar lalu menampilkan isi state. Di React Native polanya sama, hanya nama prop-nya yang berbeda. `TextInput` (komponen kolom isian teks) menerima dua prop penting:
+
+- `value`: teks yang ditampilkan, diambil dari state;
+- `onChangeText`: fungsi yang dipanggil setiap kali teks berubah.
+
+Argumen `onChangeText` langsung berupa **string** (teks biasa). Di web kamu harus membaca `e.target.value` dari objek event. Di React Native langkah itu tidak ada.
+
+Form tugas punya enam kolom. Kamu bisa saja membuat enam `useState`, tetapi itu merepotkan. Lebih rapi kalau semuanya disimpan dalam satu objek, lalu diubah lewat satu fungsi:
+
+```jsx
+const [form, setForm] = useState({
+  title: '',
+  course: '',
+  deadline: '',
+  description: '',
+  priority: 'sedang',
+  done: false,
+});
+
+function setField(name, value) {
+  setForm((prev) => ({ ...prev, [name]: value }));
+}
+
+// di JSX
+<TextInput value={form.title} onChangeText={(text) => setField('title', text)} />
+```
+
+Cara membaca kode di atas:
+
+- `form` adalah satu objek berisi enam kolom. Nilai awalnya kosong, kecuali prioritas `'sedang'` dan `done` bernilai `false`.
+- `setField('title', 'Rangkum bab 3')` hanya mengganti kolom `title`. Kolom lain tidak berubah.
+- `prev => ...` artinya "ambil isi form yang paling baru dulu". Ini mencegah dua ketikan cepat saling menimpa.
+- `...prev` (**spread**) menyalin semua kolom lama. Setelah itu `[name]: value` menimpa satu kolom saja. Tanda kurung siku berarti nama kolomnya diambil dari isi variabel `name`.
+
+Setiap kolom sebaiknya memunculkan keyboard yang cocok dengan isinya. Kolom email butuh tombol `@`, kolom angka cukup menampilkan angka. Berikut prop `TextInput` yang paling sering dipakai di form:
+
+| Prop | Contoh nilai | Gunanya |
+| --- | --- | --- |
+| `keyboardType` | `email-address`, `numeric`, `number-pad`, `phone-pad` | Jenis keyboard yang muncul |
+| `returnKeyType` | `next`, `done`, `go`, `send`, `search` | Label tombol Enter di keyboard |
+| `autoCapitalize` | `none`, `sentences`, `words`, `characters` | Huruf besar otomatis |
+| `autoCorrect` | `false` | Mematikan koreksi otomatis (untuk email, kode) |
+| `autoComplete` | `email`, `current-password`, `name`, `off` | Memberi tahu HP jenis isiannya, supaya bisa diisi otomatis |
+| `secureTextEntry` | `true` | Menyembunyikan teks (untuk password) |
+| `multiline` | `true` | Teks banyak baris, Enter menambah baris |
+| `maxLength` | `200` | Batas jumlah karakter |
+
+## Merancang form tugas
+
+Berikut file yang kita sentuh di `latihan-rn`. File bertanda bintang adalah file baru atau file yang diubah. Aturan validasi ditaruh di file sendiri, supaya bisa diuji tanpa membuka aplikasi.
+
+<FileTree title="latihan-rn" tree={`
+src/
+  app/
+    _layout.js # Stack root, tasks/new = modal
+    (tabs)/
+      _layout.js
+      index.js
+      profile.js
+    tasks/
+      [id].js
+      * new.js # form tugas (pelajaran ini)
+    * login.js # contoh kecil secureTextEntry
+    about.js
+    +not-found.js
+  components/
+    task-item.js
+  lib/
+    data.js
+    * validate-task.js # aturan validasi, fungsi murni
+app.json
+package.json
+`} />
+
+Rancangan kolomnya:
+
+- **Judul** wajib, 3–200 karakter. Huruf pertama otomatis kapital (`autoCapitalize="sentences"`).
+- **Mata kuliah** opsional. Setiap kata dikapitalkan (`autoCapitalize="words"`). Koreksi otomatis dimatikan, karena nama mata kuliah sering berupa singkatan.
+- **Deadline** opsional, ditulis sebagai teks `YYYY-MM-DD`. Formatnya sama dengan yang dipakai API (server penyimpan data) di Track 3.
+- **Deskripsi** opsional, `multiline`, maksimal 2000 karakter.
+- **Prioritas** dipilih dari tiga tombol berjajar (rendah, sedang, tinggi).
+- **Selesai** memakai `Switch`.
+
+<Callout type="analogi" title="Seperti memesan es teh di kedai">
+
+Penjual tidak memintamu menulis ukuran gelas. Ia menunjuk tiga pilihan di menu: kecil, sedang, besar. Kamu cukup menunjuk satu. Untuk "pakai gula atau tidak", jawabannya hanya ya atau tidak, mirip saklar lampu.
+
+Prioritas = pilihan ukuran gelas, jadi cukup tiga tombol. Status selesai = saklar lampu, jadi pakai `Switch`. Bedanya, penjual bisa mengangguk saat kamu menunjuk. Di aplikasi, tombol yang terpilih harus kamu tandai sendiri dengan warna.
+
+</Callout>
+
+Untuk prioritas, kita pakai tiga [Pressable](/glosarium#pressable) (komponen yang bisa diketuk) yang disusun seperti *segmented control*, yaitu deretan tombol yang hanya boleh dipilih satu:
+
+```jsx
+// PRIORITIES = ['rendah', 'sedang', 'tinggi'], diekspor dari src/lib/validate-task.js
+const PRIORITY_LABEL = { rendah: 'Rendah', sedang: 'Sedang', tinggi: 'Tinggi' };
+
+<View style={styles.segment} accessibilityRole="radiogroup">
+  {PRIORITIES.map((p) => {
+    const selected = form.priority === p;
+    return (
+      <Pressable
+        key={p}
+        onPress={() => setField('priority', p)}
+        accessibilityRole="radio"
+        accessibilityState={{ checked: selected }}
+        style={[styles.segmentItem, selected && styles.segmentItemActive]}
+      >
+        <Text style={[styles.segmentText, selected && styles.segmentTextActive]}>
+          {PRIORITY_LABEL[p]}
+        </Text>
+      </Pressable>
+    );
+  })}
+</View>
+```
+
+`PRIORITIES.map` membuat satu tombol untuk tiap prioritas. Tombol yang sedang dipilih (`selected`) diberi gaya berwarna. `accessibilityRole` dan `accessibilityState` memberi tahu pembaca layar bahwa ini pilihan radio dan mana yang sedang aktif. Bagian aksesibilitas di bawah membahasnya lebih lanjut.
+
+`Switch` adalah tombol geser on/off. Cara kerjanya sama seperti input terkontrol, hanya nilainya **boolean** (`true` atau `false`). `value` dipakai untuk membaca, `onValueChange` untuk mengubah.
+
+```jsx
+<View style={styles.switchRow}>
+  <Text style={styles.label}>Sudah selesai</Text>
+  <Switch
+    value={form.done}
+    onValueChange={(value) => setField('done', value)}
+    trackColor={{ true: '#4f46e5' }}
+    accessibilityLabel="Tandai tugas sudah selesai"
+  />
+</View>
+```
+
+## Validasi dan pesan error
+
+<Callout type="analogi" title="Seperti petugas akademik memeriksa formulir">
+
+Saat daftar ulang, petugas akademik memeriksa formulirmu. NIM harus terisi, tanggal lahir harus tanggal yang benar. Kolom yang salah diberi catatan kecil di sebelahnya. Petugas yang baik tidak menegur kolom yang belum sempat kamu isi. Ia baru menegur setelah kamu selesai dengan kolom itu.
+
+Petugas = fungsi `validateTask`. Catatan kecil = objek error. "Selesai dengan kolom itu" = kolom sudah ditinggalkan dan tercatat di `touched`. Bedanya, petugas di aplikasi memeriksa ulang seluruh formulir setiap kali kamu mengetik satu huruf.
+
+</Callout>
+
+[Validasi](/glosarium#validation) ditulis sebagai **fungsi murni**. Artinya, fungsi ini hanya membaca masukan lalu mengembalikan hasil, tanpa mengubah apa pun di luar dirinya. Masukan yang sama selalu memberi hasil yang sama, seperti kalkulator. Masukannya isi form, keluarannya objek error. Kolom yang lolos tidak masuk ke objek itu. Jadi, form dianggap valid kalau objek error kosong.
+
+```js title="src/lib/validate-task.js"
+export const PRIORITIES = ['rendah', 'sedang', 'tinggi'];
+
+export function isRealDate(text) {
+  const [y, m, d] = text.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return (
+    date.getUTCFullYear() === y &&
+    date.getUTCMonth() === m - 1 &&
+    date.getUTCDate() === d
+  );
+}
+
+export function validateTask(values) {
+  const errors = {};
+  const title = values.title.trim();
+
+  if (!title) errors.title = 'Judul wajib diisi';
+  else if (title.length < 3) errors.title = 'Judul minimal 3 karakter';
+  else if (title.length > 200) errors.title = 'Judul maksimal 200 karakter';
+
+  if (values.course.length > 100) errors.course = 'Mata kuliah maksimal 100 karakter';
+
+  if (values.deadline) {
+    if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(values.deadline)) {
+      errors.deadline = 'Format tanggal: YYYY-MM-DD';
+    } else if (!isRealDate(values.deadline)) {
+      errors.deadline = 'Tanggal itu tidak ada di kalender';
+    }
+  }
+
+  if (values.description.length > 2000) {
+    errors.description = 'Deskripsi maksimal 2000 karakter';
+  }
+
+  if (!PRIORITIES.includes(values.priority)) errors.priority = 'Pilih prioritas';
+
+  return errors;
+}
+```
+
+Cara membaca `validateTask`:
+
+- `trim()` membuang spasi di awal dan akhir judul. Judul yang isinya spasi saja dianggap kosong.
+- Judul dicek berurutan: kosong, kurang dari 3 karakter, lebih dari 200 karakter. Hanya pesan pertama yang cocok yang disimpan.
+- Deadline hanya dicek kalau diisi, karena kolom ini opsional.
+- Prioritas harus salah satu isi `PRIORITIES`.
+
+Deadline diperiksa dua kali. Pertama, **regex** (pola pencocok teks) hanya mengecek bentuk `0000-00-00`. Kedua, `isRealDate` mengecek apakah tanggal itu benar-benar ada di kalender. `Date` di JavaScript diam-diam "membetulkan" tanggal yang tidak ada: 31 Februari diubah menjadi 3 Maret. Jadi, kalau tahun, bulan, atau tanggal hasilnya berbeda dari yang diketik, tanggal itu palsu. Coba panggil fungsinya dengan dua contoh:
+
+```js
+validateTask({ title: '  ', course: '', deadline: '2026-02-31', description: '', priority: 'sedang' });
+validateTask({ title: 'Rangkum bab 3', course: 'Basis Data', deadline: '2026-07-15', description: '', priority: 'tinggi' });
+```
+
+```txt
+{
+  title: 'Judul wajib diisi',
+  deadline: 'Tanggal itu tidak ada di kalender'
+}
+{}
+```
+
+Contoh pertama gagal di dua kolom. Contoh kedua lolos semua, jadi hasilnya objek kosong `{}`.
+
+Lalu, kapan pesan error ditampilkan? Kalau langsung muncul saat layar dibuka, pengguna sudah ditegur sebelum sempat mengetik. Caranya: catat kolom yang sudah pernah ditinggalkan di state `touched`. Kolom dianggap ditinggalkan saat `onBlur` terpanggil (**blur** = kursor keluar dari kolom itu). Error hanya ditampilkan untuk kolom yang sudah tercatat.
+
+```jsx
+const [touched, setTouched] = useState({});
+const errors = validateTask(form);
+const isValid = Object.keys(errors).length === 0;
+
+function touch(name) {
+  setTouched((prev) => ({ ...prev, [name]: true }));
+}
+
+function FieldError({ message }) {
+  if (!message) return null;
+  return (
+    <Text style={styles.error} accessibilityLiveRegion="polite">
+      {message}
+    </Text>
+  );
+}
+
+// di JSX, tepat di bawah TextInput judul
+<FieldError message={touched.title ? errors.title : undefined} />
+```
+
+Isi kode ini:
+
+- `touched` mulai dari objek kosong. Setelah kolom judul ditinggalkan, `touch('title')` membuatnya berisi `{ title: true }`.
+- `isValid` bernilai `true` kalau objek `errors` tidak punya satu kunci pun.
+- `FieldError` adalah komponen kecil untuk menampilkan pesan merah. Kalau tidak ada pesan, ia tidak menampilkan apa-apa (`return null`).
+- `touched.title ? errors.title : undefined` artinya: tampilkan error judul hanya kalau judul sudah pernah ditinggalkan.
+
+`errors` dihitung ulang setiap **render** (setiap kali layar digambar ulang), bukan disimpan di state. Nilainya selalu bisa dihitung dari `form`. Kalau disimpan terpisah, suatu saat keduanya bisa tidak cocok. Misalnya, judul sudah benar tetapi pesan error lama masih tampil.
+
+Tombol Simpan dinonaktifkan selama form belum valid:
+
+```jsx
+<Pressable
+  onPress={simpan}
+  disabled={!isValid}
+  accessibilityRole="button"
+  accessibilityState={{ disabled: !isValid }}
+  style={[styles.primary, !isValid && styles.primaryDisabled]}
+>
+  <Text style={styles.primaryText}>Simpan</Text>
+</Pressable>
+```
+
+Saat `isValid` bernilai `false`, prop `disabled` membuat tombol tidak bisa diketuk, dan gaya `primaryDisabled` membuatnya tampak pudar. Diagram berikut merangkum apa yang terjadi setiap kali kamu mengetik satu huruf:
+
+<Flow nodes={["Ketik di TextInput", "setField", "Render ulang", "validateTask(form)", "Pesan error & tombol"]} labels={["onChangeText", "state form berubah", "hitung errors", "touched + isValid"]} caption="Satu ketikan memicu validasi ulang" />
+
+<Callout type="tip" title="Tombol nonaktif perlu penjelasan">
+
+Tombol abu-abu tanpa keterangan membingungkan, karena pengguna tidak tahu apa yang kurang. Itu sebabnya pesan error tetap muncul di bawah kolom setelah kolom ditinggalkan. Ada juga pola lain yang umum: tombol selalu aktif, lalu saat ditekan semua error ditampilkan sekaligus. Kamu akan mencobanya di Latihan 2.
+
+</Callout>
+
+## Fokus berantai dengan returnKeyType dan useRef
+
+<Callout type="analogi" title="Seperti petugas loket yang menunjuk kolom berikutnya">
+
+Di loket pendaftaran, setiap kali kamu selesai menulis satu kolom, petugas menunjuk kolom berikutnya: "Sekarang nomor HP, Kak." Kamu tidak perlu mencari-cari kolom sendiri.
+
+Petugas yang menunjuk = `onSubmitEditing`. Supaya bisa menunjuk, petugas harus tahu letak kolom berikutnya. Catatan letak itu = `ref`. Gerakan menunjuk = `focus()`. Tulisan "Next" di tombol Enter hanya papan petunjuk. Ia tidak memindahkan apa pun sendiri.
+
+</Callout>
+
+Di form yang enak dipakai, pengguna mengisi kolom satu per satu tanpa mengangkat jari dari keyboard. Tombol Enter di kolom judul berlabel "Next", dan menekannya memindahkan kursor ke kolom berikutnya. Kolom yang sedang menerima ketikan disebut kolom yang punya **fokus**. Untuk memindahkan fokus, dibutuhkan tiga hal:
+
+1. `returnKeyType="next"` mengganti label tombol Enter menjadi "Next".
+2. `useRef(null)` membuat **ref**, yaitu wadah untuk menyimpan "pegangan" ke `TextInput` berikutnya. Wadah itu diisi lewat prop `ref` di kolom tujuan.
+3. `onSubmitEditing` memanggil `ref.current?.focus()` saat Enter ditekan. Tanda `?.` berarti "panggil hanya kalau pegangannya sudah ada".
+
+```jsx
+const courseRef = useRef(null);
+const deadlineRef = useRef(null);
+const descriptionRef = useRef(null);
+
+<TextInput
+  value={form.title}
+  onChangeText={(text) => setField('title', text)}
+  returnKeyType="next"
+  submitBehavior="submit"
+  onSubmitEditing={() => courseRef.current?.focus()}
+/>
+<TextInput
+  ref={courseRef}
+  value={form.course}
+  onChangeText={(text) => setField('course', text)}
+  returnKeyType="next"
+  submitBehavior="submit"
+  onSubmitEditing={() => deadlineRef.current?.focus()}
+/>
+```
+
+Hasilnya, Enter di kolom judul memindahkan kursor ke kolom mata kuliah, lalu dari sana ke kolom deadline.
+
+`submitBehavior="submit"` membuat Enter hanya mengirim sinyal "selesai", tanpa melepas fokus. Tanpa prop ini, kolom satu baris memakai perilaku `blurAndSubmit`: fokus dilepas dulu, sehingga keyboard sempat turun lalu naik lagi. Prop ini menggantikan `blurOnSubmit` yang sudah usang.
+
+Kolom deskripsi sengaja diletakkan sebagai kolom teks terakhir. Di kolom `multiline` (banyak baris), Enter dipakai untuk membuat baris baru, jadi rantai fokus berhenti di situ. Kalau kamu memaksanya dengan `submitBehavior="submit"`, pengguna tidak bisa lagi membuat baris baru.
+
+## Contoh kecil: login dengan secureTextEntry
+
+Form login berguna untuk mencoba prop yang belum terpakai di form tugas, terutama `secureTextEntry`. Prop ini mengganti huruf password dengan titik, seperti layar ATM yang hanya menampilkan bintang saat kamu mengetik PIN. Buat file latihan `src/app/login.js`. Layar login sungguhan, lengkap dengan token (tanda sudah masuk dari server), dibangun di Track 3.
+
+```jsx title="src/app/login.js"
+import { router } from 'expo-router';
+import { useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+
+export default function LoginScreen() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const passwordRef = useRef(null);
+
+  function masuk() {
+    console.log('Login dengan', email);
+    router.back();
+  }
+
+  return (
+    <View style={styles.container}>
+      <TextInput
+        value={email}
+        onChangeText={setEmail}
+        placeholder="demo@kampus.ac.id"
+        keyboardType="email-address"
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="email"
+        textContentType="emailAddress"
+        returnKeyType="next"
+        submitBehavior="submit"
+        onSubmitEditing={() => passwordRef.current?.focus()}
+        accessibilityLabel="Email"
+        style={styles.input}
+      />
+      <View style={styles.row}>
+        <TextInput
+          ref={passwordRef}
+          value={password}
+          onChangeText={setPassword}
+          placeholder="Password"
+          secureTextEntry={!showPassword}
+          autoCapitalize="none"
+          autoComplete="current-password"
+          textContentType="password"
+          returnKeyType="go"
+          onSubmitEditing={masuk}
+          accessibilityLabel="Password"
+          style={[styles.input, styles.flex]}
+        />
+        <Pressable
+          onPress={() => setShowPassword((v) => !v)}
+          accessibilityRole="button"
+          accessibilityLabel={showPassword ? 'Sembunyikan password' : 'Tampilkan password'}
+          hitSlop={8}
+          style={styles.toggle}
+        >
+          <Text>{showPassword ? 'Sembunyikan' : 'Lihat'}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 16, gap: 12 },
+  row: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  flex: { flex: 1 },
+  input: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 12, backgroundColor: 'white' },
+  toggle: { padding: 12 },
+});
+```
+
+Hal-hal yang perlu kamu perhatikan di kode ini:
+
+- `keyboardType="email-address"` memunculkan keyboard yang punya tombol `@`.
+- `autoCapitalize="none"` penting untuk email. Tanpa ini, huruf pertama email menjadi kapital, dan login bisa gagal di server yang membedakan huruf besar dan kecil.
+- `autoComplete` berlaku di Android dan iOS, sedangkan `textContentType` khusus iOS. Keduanya membantu password manager (aplikasi penyimpan password) mengisi akun otomatis.
+- `secureTextEntry={!showPassword}` menyembunyikan password, kecuali saat tombol "Lihat" sedang aktif.
+- Kolom password memakai `returnKeyType="go"`, dan `onSubmitEditing` langsung memanggil `masuk`. Jadi Enter di kolom ini sama dengan menekan tombol masuk.
+- `hitSlop={8}` memperluas area ketuk tombol "Lihat" sebesar 8 poin ke segala arah.
+
+Untuk membuka layar ini, tambahkan `<Link href="/login">` di `profile.js` atau ketik URL `/login` di web.
+
+## Keyboard tidak boleh menutupi input
+
+<Callout type="analogi" title="Seperti nampan yang ditaruh di atas buku catatan">
+
+Kamu sedang menulis di buku catatan di meja kantin. Tiba-tiba teman menaruh nampan di separuh bawah buku. Supaya tetap bisa menulis, kamu geser bukunya ke atas, atau kamu balik halamannya sampai baris yang ingin ditulis terlihat.
+
+Nampan = keyboard. Menggeser buku ke atas = `KeyboardAvoidingView` yang menambah ruang di bawah. Membalik ke baris yang terlihat = `ScrollView` yang bisa digulir. Bedanya, keyboard memberi tahu tingginya ke aplikasi, jadi geserannya bisa dihitung pas dan terjadi otomatis.
+
+</Callout>
+
+Ada tiga alat bawaan React Native yang dipakai bersama:
+
+- **`KeyboardAvoidingView`** memberi ruang saat keyboard naik. Di iOS, pakai `behavior="padding"`: komponen menambah ruang kosong di bawah setinggi keyboard. Di Android, panduan Expo menyarankan `undefined`, karena Android sudah menggeser jendela sendiri.
+- **`ScrollView`** dengan `keyboardShouldPersistTaps="handled"` membuat ketukan pada tombol tetap diproses saat keyboard terbuka. Nilai bawaannya `"never"`, sehingga ketukan pertama hanya menutup keyboard.
+- **`Keyboard.dismiss()`** menutup keyboard lewat kode, misalnya tepat sebelum modal ditutup.
+
+```jsx
+<KeyboardAvoidingView
+  style={{ flex: 1 }}
+  behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+>
+  <ScrollView
+    contentContainerStyle={styles.container}
+    keyboardShouldPersistTaps="handled"
+    keyboardDismissMode="on-drag"
+  >
+    {/* semua kolom dan tombol */}
+  </ScrollView>
+</KeyboardAvoidingView>
+```
+
+`Platform.OS === 'ios' ? 'padding' : undefined` artinya: kalau berjalan di iOS pakai `padding`, selain itu jangan pakai apa-apa.
+
+`style={{ flex: 1 }}` wajib ada. Tanpa itu, `KeyboardAvoidingView` hanya setinggi isinya, sehingga ruang tambahan tidak mendorong apa pun. `keyboardDismissMode="on-drag"` menutup keyboard saat pengguna menggulir layar. Kalau bagian bawah masih sedikit tertutup di iOS, misalnya karena ada header Stack di atas, naikkan `keyboardVerticalOffset` sebesar tinggi header itu.
+
+Untuk form yang lebih panjang, ada library khusus: [`react-native-keyboard-controller`](https://kirillzyusko.github.io/react-native-keyboard-controller). Komponen `KeyboardAwareScrollView` di dalamnya otomatis menggulir ke kolom yang sedang fokus. `KeyboardToolbar` menampilkan tombol sebelumnya, berikutnya, dan selesai di atas keyboard, termasuk untuk kolom `multiline`.
+
+<Compare>
+<CompareItem title="KeyboardAvoidingView" tone="neutral">
+
+- Bawaan React Native, tanpa instalasi.
+- Perlu `behavior` berbeda untuk iOS dan Android.
+- Tidak menggulir otomatis ke kolom yang fokus.
+- Cukup untuk form pendek seperti form tugas ini.
+
+</CompareItem>
+<CompareItem title="react-native-keyboard-controller" tone="good">
+
+- Perilaku sama di Android dan iOS, animasi mengikuti keyboard.
+- Menggulir otomatis ke kolom yang fokus.
+- Butuh `react-native-reanimated` dan `KeyboardProvider` di layout root.
+- Cocok untuk form panjang dan layar chat.
+
+</CompareItem>
+</Compare>
+
+Pasang dengan `npx expo install` agar versinya cocok dengan versi Expo (SDK) project-mu:
+
+```bash
+npx expo install react-native-keyboard-controller
+```
+
+```diff title="src/app/_layout.js"
+ import { Stack } from 'expo-router';
++import { KeyboardProvider } from 'react-native-keyboard-controller';
+
+ export const unstable_settings = { anchor: '(tabs)' };
+
+ export default function RootLayout() {
+   return (
+-    <Stack screenOptions={{ /* sama seperti sebelumnya */ }}>
+-      {/* Stack.Screen ... */}
+-    </Stack>
++    <KeyboardProvider>
++      <Stack screenOptions={{ /* sama seperti sebelumnya */ }}>
++        {/* Stack.Screen ... */}
++      </Stack>
++    </KeyboardProvider>
+   );
+ }
+```
+
+Baris bertanda `+` adalah baris baru, dan `-` adalah baris yang dihapus. `KeyboardProvider` cukup dipasang sekali di layout root, membungkus seluruh `Stack`. Setelah itu, layar form bisa memakai komponen dari library ini:
+
+```jsx
+import { KeyboardAwareScrollView, KeyboardToolbar } from 'react-native-keyboard-controller';
+
+return (
+  <>
+    <KeyboardAwareScrollView
+      bottomOffset={62}
+      contentContainerStyle={styles.container}
+      keyboardShouldPersistTaps="handled"
+    >
+      {/* kolom yang sama */}
+    </KeyboardAwareScrollView>
+    <KeyboardToolbar />
+  </>
+);
+```
+
+`bottomOffset` adalah jarak antara kolom yang fokus dan tepi atas keyboard. Angka 62 memberi tempat untuk toolbar. Pasangan `<>` dan `</>` (**fragment**) membungkus dua komponen tanpa menambah elemen di layar.
+
+<Callout type="info" title="Expo Go atau development build?">
+
+Menurut referensi SDK 58, `react-native-keyboard-controller` sudah termasuk di [Expo Go](/glosarium#expo-go), dan `react-native-reanimated` sudah ada di template bawaan. Panduan Expo yang lebih lama masih menyebut library ini butuh [development build](/glosarium#development-build), yaitu versi aplikasi yang kamu build sendiri. Itu berlaku untuk SDK lama. Kalau Expo Go menampilkan error modul native tidak ditemukan, tetap pakai `KeyboardAvoidingView` atau buat development build.
+
+</Callout>
+
+Satu catatan untuk Android: tab bar bawah kadang ikut terdorong naik bersama keyboard. Untuk mencegahnya, pasang opsi `tabBarHideOnKeyboard: true` di layout `(tabs)`. Cara lain, set `"softwareKeyboardLayoutMode": "pan"` di bagian `android` pada `app.json`.
+
+### Kolom tanggal dengan date picker
+
+Mengetik `YYYY-MM-DD` bagus untuk belajar validasi. Tetapi pengguna lebih suka memilih dari kalender, sama seperti kamu lebih suka melingkari tanggal di kalender meja daripada menulis angkanya. Library `@react-native-community/datetimepicker` sudah termasuk di Expo Go:
+
+```bash
+npx expo install @react-native-community/datetimepicker
+```
+
+Cara pakainya berbeda di tiap OS. Di iOS, picker berupa komponen yang tampil langsung di layar. Di Android, picker berupa dialog (jendela kecil) yang dibuka dari kode. Sejak versi 9.1, callback-nya (fungsi yang dipanggil setelah tanggal dipilih) bernama `onValueChange(event, date)`. Nama ini menggantikan `onChange` yang sudah usang.
+
+<Tabs items={["iOS", "Android"]}>
+<Tab>
+
+```jsx
+import DateTimePicker from '@react-native-community/datetimepicker';
+
+<DateTimePicker
+  value={deadlineDate}
+  mode="date"
+  display="compact"
+  minimumDate={new Date()}
+  onValueChange={(event, date) => setField('deadline', toDateText(date))}
+/>
+```
+
+</Tab>
+<Tab>
+
+```jsx
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+
+function bukaKalender() {
+  DateTimePickerAndroid.open({
+    value: deadlineDate,
+    mode: 'date',
+    minimumDate: new Date(),
+    onValueChange: (event, date) => setField('deadline', toDateText(date)),
+  });
+}
+
+<Pressable onPress={bukaKalender} accessibilityRole="button" style={styles.input}>
+  <Text>{form.deadline || 'Pilih tanggal'}</Text>
+</Pressable>
+```
+
+</Tab>
+</Tabs>
+
+Kedua tab memakai dua fungsi bantu berikut:
+
+```js
+function toDateText(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + d;
+}
+
+function parseDateText(text) {
+  const [y, m, d] = text.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+const deadlineDate =
+  form.deadline && !errors.deadline ? parseDateText(form.deadline) : new Date();
+```
+
+- `toDateText` mengubah objek `Date` menjadi teks seperti `2026-07-15`. `padStart(2, '0')` menambah nol di depan, jadi bulan 7 ditulis `07`.
+- `parseDateText` melakukan kebalikannya, dari teks menjadi `Date`.
+- `deadlineDate` adalah tanggal yang ditunjukkan picker saat dibuka: deadline yang sudah diisi, atau hari ini kalau kolomnya kosong atau salah.
+
+<Callout type="warning" title="Jangan pakai toISOString untuk tanggal lokal">
+
+`date.toISOString().slice(0, 10)` mengubah waktu ke UTC dulu. **UTC** adalah jam patokan dunia, tujuh jam di belakang WIB. Tanggal 15 Juli pukul 00.30 WIB sama dengan 14 Juli pukul 17.30 UTC, sehingga deadline mundur sehari. Gunakan `getFullYear`, `getMonth`, dan `getDate` seperti `toDateText` di atas.
+
+</Callout>
+
+## Aksesibilitas form
+
+<Callout type="analogi" title="Seperti membacakan formulir untuk teman">
+
+Bayangkan temanmu tidak bisa melihat, dan kamu membacakan formulir untuknya. Ada kolom yang hanya berisi tulisan pensil tipis "misal: Basis Data", dan tulisan itu terhapus begitu kolomnya diisi. Kamu jadi bingung harus menyebut kolom itu apa.
+
+Kamu yang membacakan = pembaca layar. Nama kolom yang tercetak jelas = `accessibilityLabel`. Tulisan pensil tipis = placeholder. Bedanya, pembaca layar tidak bisa menebak dari tampilan. Ia hanya membacakan apa yang kamu tulis di kode.
+
+</Callout>
+
+**Pembaca layar** (TalkBack di Android, VoiceOver di iOS) adalah fitur HP yang membacakan isi layar dengan suara. Beberapa kebiasaan kecil yang membantu penggunanya:
+
+- Beri `accessibilityLabel` pada setiap `TextInput`. Placeholder bukan label, karena placeholder hilang begitu pengguna mengetik.
+- Tambahkan `accessibilityHint` untuk aturan yang tidak terlihat, misalnya "Format tahun-bulan-tanggal".
+- Tombol pilihan memakai `accessibilityRole="radio"` dengan `accessibilityState` berisi `checked`. Tombol Simpan memakai `accessibilityState` berisi `disabled`.
+- Pesan error memakai `accessibilityLiveRegion="polite"`, supaya langsung dibacakan di Android saat muncul. Di iOS, panggil `AccessibilityInfo.announceForAccessibility(pesan)` kalau perlu.
+- Area ketuk minimal sekitar 44 poin, kira-kira selebar ujung jari. Untuk tombol kecil seperti "Lihat", perluas dengan `hitSlop`.
+
+## Coba di Snack
+
+Demo berikut adalah versi ringkas form tugas dalam satu file. Pratinjau web tidak menampilkan keyboard HP. Untuk mencoba `KeyboardAvoidingView` dan tombol "Next", buka Snack di HP dengan Expo Go (lihat [Expo Snack](/lab/expo-snack)).
+
+<SnackEmbed name="Form tugas" height={600} code={`import { useRef, useState } from 'react';
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+
+const PRIORITIES = ['rendah', 'sedang', 'tinggi'];
+
+function validate(form) {
+  const errors = {};
+  const title = form.title.trim();
+  if (!title) errors.title = 'Judul wajib diisi';
+  else if (title.length < 3) errors.title = 'Judul minimal 3 karakter';
+  if (form.deadline && !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(form.deadline)) {
+    errors.deadline = 'Format tanggal: YYYY-MM-DD';
+  }
+  return errors;
+}
+
+export default function App() {
+  const [form, setForm] = useState({
+    title: '',
+    course: '',
+    deadline: '',
+    priority: 'sedang',
+    done: false,
+  });
+  const [touched, setTouched] = useState({});
+  const [hasil, setHasil] = useState('');
+  const courseRef = useRef(null);
+  const deadlineRef = useRef(null);
+
+  const errors = validate(form);
+  const isValid = Object.keys(errors).length === 0;
+
+  function setField(name, value) {
+    setForm((prev) => ({ ...prev, [name]: value }));
+  }
+
+  function touch(name) {
+    setTouched((prev) => ({ ...prev, [name]: true }));
+  }
+
+  function simpan() {
+    if (!isValid) return;
+    Keyboard.dismiss();
+    setHasil(JSON.stringify(form, null, 2));
+  }
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.label}>Judul tugas</Text>
+        <TextInput
+          value={form.title}
+          onChangeText={(text) => setField('title', text)}
+          onBlur={() => touch('title')}
+          placeholder="Misal: Rangkum bab normalisasi"
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => courseRef.current?.focus()}
+          accessibilityLabel="Judul tugas"
+          style={styles.input}
+        />
+        {touched.title && errors.title ? (
+          <Text style={styles.error}>{errors.title}</Text>
+        ) : null}
+
+        <Text style={styles.label}>Mata kuliah</Text>
+        <TextInput
+          ref={courseRef}
+          value={form.course}
+          onChangeText={(text) => setField('course', text)}
+          placeholder="Basis Data"
+          autoCapitalize="words"
+          autoCorrect={false}
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => deadlineRef.current?.focus()}
+          accessibilityLabel="Mata kuliah"
+          style={styles.input}
+        />
+
+        <Text style={styles.label}>Deadline</Text>
+        <TextInput
+          ref={deadlineRef}
+          value={form.deadline}
+          onChangeText={(text) => setField('deadline', text)}
+          onBlur={() => touch('deadline')}
+          placeholder="2026-07-15"
+          keyboardType="numbers-and-punctuation"
+          maxLength={10}
+          returnKeyType="done"
+          onSubmitEditing={simpan}
+          accessibilityLabel="Deadline"
+          style={styles.input}
+        />
+        {touched.deadline && errors.deadline ? (
+          <Text style={styles.error}>{errors.deadline}</Text>
+        ) : null}
+
+        <Text style={styles.label}>Prioritas</Text>
+        <View style={styles.segment}>
+          {PRIORITIES.map((p) => (
+            <Pressable
+              key={p}
+              onPress={() => setField('priority', p)}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: form.priority === p }}
+              style={[styles.segmentItem, form.priority === p && styles.segmentActive]}
+            >
+              <Text style={form.priority === p ? styles.segmentTextActive : null}>{p}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <View style={styles.switchRow}>
+          <Text style={styles.label}>Sudah selesai</Text>
+          <Switch
+            value={form.done}
+            onValueChange={(value) => setField('done', value)}
+            accessibilityLabel="Tandai tugas sudah selesai"
+          />
+        </View>
+
+        <Pressable
+          onPress={simpan}
+          disabled={!isValid}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !isValid }}
+          style={[styles.primary, !isValid && styles.primaryDisabled]}
+        >
+          <Text style={styles.primaryText}>Simpan</Text>
+        </Pressable>
+
+        {hasil ? <Text style={styles.result}>{hasil}</Text> : null}
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  container: { padding: 16, paddingTop: 48, gap: 8 },
+  label: { fontWeight: '600', marginTop: 8 },
+  input: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 12, backgroundColor: 'white' },
+  error: { color: '#dc2626' },
+  segment: { flexDirection: 'row', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, overflow: 'hidden' },
+  segmentItem: { flex: 1, padding: 10, alignItems: 'center' },
+  segmentActive: { backgroundColor: '#4f46e5' },
+  segmentTextActive: { color: 'white', fontWeight: '700' },
+  switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  primary: { marginTop: 12, padding: 14, borderRadius: 10, backgroundColor: '#4f46e5', alignItems: 'center' },
+  primaryDisabled: { opacity: 0.4 },
+  primaryText: { color: 'white', fontWeight: '700' },
+  result: { fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', marginTop: 12 },
+});
+`} />
+
+Coba tiga hal ini di demo:
+
+1. Isi judul dengan satu huruf, lalu pindah ke kolom lain. Pesan "Judul minimal 3 karakter" muncul, dan tombol tetap abu-abu.
+2. Lengkapi judul, lalu tekan Enter di kolom judul dan mata kuliah. Kursor pindah sendiri ke kolom berikutnya.
+3. Tekan Enter di kolom deadline. Form tersimpan tanpa menyentuh tombol, dan isinya tampil di bawah.
+
+## Layar lengkap src/app/tasks/new.js
+
+Berikut versi akhir modal "Tugas Baru" yang menggabungkan semua bagian di atas. Ganti seluruh kode lama dari pelajaran Expo Router dengan kode ini.
+
+```jsx title="src/app/tasks/new.js"
+import { router } from 'expo-router';
+import { useRef, useState } from 'react';
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { PRIORITIES, validateTask } from '../../lib/validate-task';
+
+const EMPTY = {
+  title: '',
+  course: '',
+  deadline: '',
+  description: '',
+  priority: 'sedang',
+  done: false,
+};
+
+const PRIORITY_LABEL = { rendah: 'Rendah', sedang: 'Sedang', tinggi: 'Tinggi' };
+
+function FieldError({ message }) {
+  if (!message) return null;
+  return (
+    <Text style={styles.error} accessibilityLiveRegion="polite">
+      {message}
+    </Text>
+  );
+}
+
+export default function NewTaskScreen() {
+  const [form, setForm] = useState(EMPTY);
+  const [touched, setTouched] = useState({});
+  const courseRef = useRef(null);
+  const deadlineRef = useRef(null);
+  const descriptionRef = useRef(null);
+
+  const errors = validateTask(form);
+  const isValid = Object.keys(errors).length === 0;
+
+  function setField(name, value) {
+    setForm((prev) => ({ ...prev, [name]: value }));
+  }
+
+  function touch(name) {
+    setTouched((prev) => ({ ...prev, [name]: true }));
+  }
+
+  function errorFor(name) {
+    return touched[name] ? errors[name] : undefined;
+  }
+
+  function simpan() {
+    if (!isValid) return;
+    Keyboard.dismiss();
+    console.log('Tugas baru:', { ...form, title: form.title.trim() });
+    router.back();
+  }
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
+        <Text style={styles.label}>Judul tugas</Text>
+        <TextInput
+          value={form.title}
+          onChangeText={(text) => setField('title', text)}
+          onBlur={() => touch('title')}
+          placeholder="Misal: Rangkum bab normalisasi"
+          autoCapitalize="sentences"
+          maxLength={200}
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => courseRef.current?.focus()}
+          accessibilityLabel="Judul tugas"
+          style={[styles.input, errorFor('title') && styles.inputError]}
+        />
+        <FieldError message={errorFor('title')} />
+
+        <Text style={styles.label}>Mata kuliah</Text>
+        <TextInput
+          ref={courseRef}
+          value={form.course}
+          onChangeText={(text) => setField('course', text)}
+          onBlur={() => touch('course')}
+          placeholder="Misal: Basis Data"
+          autoCapitalize="words"
+          autoCorrect={false}
+          maxLength={100}
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => deadlineRef.current?.focus()}
+          accessibilityLabel="Mata kuliah"
+          style={styles.input}
+        />
+        <FieldError message={errorFor('course')} />
+
+        <Text style={styles.label}>Deadline (opsional)</Text>
+        <TextInput
+          ref={deadlineRef}
+          value={form.deadline}
+          onChangeText={(text) => setField('deadline', text)}
+          onBlur={() => touch('deadline')}
+          placeholder="YYYY-MM-DD"
+          keyboardType="numbers-and-punctuation"
+          maxLength={10}
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => descriptionRef.current?.focus()}
+          accessibilityLabel="Deadline"
+          accessibilityHint="Format tahun-bulan-tanggal, misalnya 2026-07-15"
+          style={[styles.input, errorFor('deadline') && styles.inputError]}
+        />
+        <FieldError message={errorFor('deadline')} />
+
+        <Text style={styles.label}>Deskripsi</Text>
+        <TextInput
+          ref={descriptionRef}
+          value={form.description}
+          onChangeText={(text) => setField('description', text)}
+          onBlur={() => touch('description')}
+          placeholder="Catatan tambahan"
+          multiline
+          textAlignVertical="top"
+          maxLength={2000}
+          accessibilityLabel="Deskripsi tugas"
+          style={[styles.input, styles.multiline]}
+        />
+        <FieldError message={errorFor('description')} />
+
+        <Text style={styles.label}>Prioritas</Text>
+        <View style={styles.segment} accessibilityRole="radiogroup">
+          {PRIORITIES.map((p) => {
+            const selected = form.priority === p;
+            return (
+              <Pressable
+                key={p}
+                onPress={() => setField('priority', p)}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: selected }}
+                style={[styles.segmentItem, selected && styles.segmentItemActive]}
+              >
+                <Text style={[styles.segmentText, selected && styles.segmentTextActive]}>
+                  {PRIORITY_LABEL[p]}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <View style={styles.switchRow}>
+          <Text style={styles.label}>Sudah selesai</Text>
+          <Switch
+            value={form.done}
+            onValueChange={(value) => setField('done', value)}
+            trackColor={{ true: '#4f46e5' }}
+            accessibilityLabel="Tandai tugas sudah selesai"
+          />
+        </View>
+
+        <View style={styles.row}>
+          <Pressable
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            style={styles.secondary}
+          >
+            <Text>Batal</Text>
+          </Pressable>
+          <Pressable
+            onPress={simpan}
+            disabled={!isValid}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !isValid }}
+            style={[styles.primary, !isValid && styles.primaryDisabled]}
+          >
+            <Text style={styles.primaryText}>Simpan</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  container: { padding: 16, gap: 8 },
+  label: { fontWeight: '600', marginTop: 8 },
+  input: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 12, backgroundColor: 'white' },
+  inputError: { borderColor: '#dc2626' },
+  multiline: { minHeight: 100 },
+  error: { color: '#dc2626' },
+  segment: { flexDirection: 'row', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, overflow: 'hidden' },
+  segmentItem: { flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: 'white' },
+  segmentItemActive: { backgroundColor: '#4f46e5' },
+  segmentText: { color: '#334155' },
+  segmentTextActive: { color: 'white', fontWeight: '700' },
+  switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  row: { flexDirection: 'row', gap: 12, marginTop: 16 },
+  secondary: { flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#e2e8f0', alignItems: 'center' },
+  primary: { flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#4f46e5', alignItems: 'center' },
+  primaryDisabled: { opacity: 0.4 },
+  primaryText: { color: 'white', fontWeight: '700' },
+});
+```
+
+Isinya gabungan potongan yang sudah kamu kenal, dari atas ke bawah:
+
+- `EMPTY` adalah isi form saat modal baru dibuka.
+- `errorFor(name)` menggabungkan `touched` dan `errors`: pesan hanya muncul untuk kolom yang sudah ditinggalkan.
+- `simpan` berhenti kalau form belum valid. Kalau valid, keyboard ditutup, data dicetak ke terminal, lalu `router.back()` menutup modal.
+- Bagian JSX berisi kolom-kolom dengan urutan fokus judul → mata kuliah → deadline → deskripsi, disusul prioritas, `Switch`, dan tombol Batal/Simpan.
+- `styles.inputError` memberi garis merah pada kolom yang salah.
+
+`FieldError` ditulis di luar `NewTaskScreen`. Kalau ditulis di dalamnya, setiap render membuat komponen baru, dan React menganggapnya komponen yang berbeda. Untuk form yang lebih besar, [react-hook-form](https://react-hook-form.com) bisa mengurus state, `touched`, dan error untukmu. Setiap input dibungkus `Controller`, dan aturannya bisa ditulis dengan [Zod](/glosarium#zod) (library validasi). Pahami dulu versi manual ini, supaya kamu tahu apa yang dikerjakan library tersebut di balik layar.
+
+## Kesalahan umum
+
+| Gejala / pesan | Penyebab | Perbaikan |
+| --- | --- | --- |
+| `TypeError: Cannot read property 'value' of undefined` | Menulis `onChangeText={(e) => setField('title', e.target.value)}` seperti di web | Argumen `onChangeText` sudah berupa string: `(text) => setField('title', text)` |
+| Ketikan tidak muncul, kolom selalu kosong | `value` dipasang tetapi state tidak pernah diubah, atau `setField` menimpa seluruh objek tanpa `...prev` | Pastikan `onChangeText` memanggil setter, dan pakai spread `...prev` |
+| `TypeError: Cannot read property 'focus' of null` | `ref` tidak terpasang ke `TextInput`, misalnya dipasang ke komponen buatan sendiri yang tidak meneruskan `ref` | Pasang `ref={courseRef}` langsung di `TextInput`, dan pakai `courseRef.current?.focus()` |
+| `Error: Text strings must be rendered within a <Text> component.` | Menulis `{form.title.length && <Text>…</Text>}`. Saat judul kosong, hasilnya angka `0`, dan angka itu dirender di luar `Text` | Pakai ternary `kondisi ? <Text>…</Text> : null`, artinya kalau kondisi benar tampilkan `Text`, kalau salah tampilkan kosong. Bisa juga pakai kondisi boolean seperti `length > 0` |
+| Ketukan pertama di tombol hanya menutup keyboard | `ScrollView` memakai nilai bawaan `keyboardShouldPersistTaps="never"` | Tambahkan `keyboardShouldPersistTaps="handled"` |
+| Keyboard tetap menutupi input di iOS | `KeyboardAvoidingView` tanpa `style={{ flex: 1 }}` atau tanpa `behavior` | Pasang `flex: 1` dan `behavior="padding"`. Atur `keyboardVerticalOffset` bila ada header |
+| `Unable to resolve module react-native-keyboard-controller` | Library belum dipasang | Jalankan `npx expo install react-native-keyboard-controller`, lalu restart Metro (server pembuat bundle JavaScript) |
+
+## Latihan
+
+<Exercise title="Deadline tidak boleh di masa lalu" difficulty="mudah" hints={["Tanggal berformat `YYYY-MM-DD` bisa dibandingkan sebagai string biasa.", "Terima tanggal hari ini sebagai parameter agar fungsi mudah diuji."]}>
+
+Tolak deadline yang sudah lewat, seperti petugas yang menolak formulir bertanggal kemarin.
+
+1. Buka `src/lib/validate-task.js`.
+2. Tambahkan parameter kedua `today` ke `validateTask`, dengan nilai bawaan tanggal hari ini.
+3. Kalau deadline valid tetapi lebih awal dari `today`, isi error "Deadline tidak boleh di masa lalu".
+
+Fungsi harus tetap murni. Karena itu, tanggal hari ini dikirim dari luar sebagai parameter, bukan dibaca langsung di dalam fungsi.
+
+<Solution>
+
+```diff title="src/lib/validate-task.js"
+-export function validateTask(values) {
++export function validateTask(values, today = toDateText(new Date())) {
+   const errors = {};
+   ...
+     } else if (!isRealDate(values.deadline)) {
+       errors.deadline = 'Tanggal itu tidak ada di kalender';
++    } else if (values.deadline < today) {
++      errors.deadline = 'Deadline tidak boleh di masa lalu';
+     }
+```
+
+Pindahkan juga `toDateText` dari bagian date picker ke file ini, lalu ekspor. String `YYYY-MM-DD` bisa dibandingkan langsung dengan `<`, karena urutannya tahun, bulan, lalu tanggal, dan panjang tiap bagiannya tetap. Mirip mengurutkan NIM: yang angkanya lebih kecil selalu lebih dulu. Untuk menguji, panggil `validateTask(form, '2026-07-01')`, supaya hasilnya tidak bergantung pada tanggal hari ini.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Simpan selalu aktif, error muncul saat ditekan" difficulty="sedang" hints={["Tambahkan state `submitted` yang menjadi `true` saat Simpan ditekan.", "Cari kolom error pertama dengan urutan `['title', 'course', 'deadline', 'description']`, lalu fokuskan ref-nya."]}>
+
+Ubah `new.js` supaya tombol Simpan tidak pernah nonaktif.
+
+1. Hapus `disabled`, `accessibilityState`, dan gaya `primaryDisabled` dari tombol Simpan.
+2. Tambahkan state `submitted`, lalu ubah menjadi `true` setiap kali Simpan ditekan.
+3. Kalau `submitted` bernilai `true`, tampilkan semua pesan error sekaligus.
+4. Pindahkan kursor ke kolom pertama yang salah.
+
+<Solution>
+
+```jsx
+const titleRef = useRef(null);
+const [submitted, setSubmitted] = useState(false);
+const refs = { title: titleRef, course: courseRef, deadline: deadlineRef, description: descriptionRef };
+
+function errorFor(name) {
+  return touched[name] || submitted ? errors[name] : undefined;
+}
+
+function simpan() {
+  setSubmitted(true);
+  const firstError = ['title', 'course', 'deadline', 'description'].find((name) => errors[name]);
+  if (firstError) {
+    refs[firstError].current?.focus();
+    return;
+  }
+  Keyboard.dismiss();
+  console.log('Tugas baru:', form);
+  router.back();
+}
+```
+
+Pasang `ref={titleRef}` di kolom judul, lalu hapus `disabled`, `accessibilityState`, dan `primaryDisabled` dari tombol Simpan. `submitted` membuat `errorFor` menampilkan semua error, termasuk kolom yang belum pernah disentuh. `find` mencari nama kolom pertama yang punya error, sesuai urutan kolom di layar.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Apa argumen yang diterima `onChangeText` pada `TextInput`?",
+    options: ["Objek event, isinya dibaca dari `e.target.value`", "Objek `{ text }`", "String berisi teks terbaru", "Tidak ada argumen, nilainya dibaca dari ref"],
+    answer: 2,
+    explain: "`onChangeText` langsung memberi teks terbaru dalam bentuk string. `e.target.value` adalah cara di web. Di React Native cara itu error karena `e.target` tidak ada.",
+  },
+  {
+    q: "Form ada di dalam `ScrollView`. Saat keyboard terbuka, ketukan pertama di tombol Simpan hanya menutup keyboard. Apa perbaikannya?",
+    options: ["Tambahkan `keyboardShouldPersistTaps=\"handled\"` pada `ScrollView`", "Panggil `Keyboard.dismiss()` di `onPress`", "Ganti `Pressable` dengan `Button`", "Bungkus tombol dengan `KeyboardAvoidingView`"],
+    answer: 0,
+    explain: "Nilai bawaan `keyboardShouldPersistTaps` adalah `never`. Artinya, ketukan pertama hanya dipakai untuk menutup keyboard. Dengan `handled`, ketukan pada tombol langsung diproses. `Keyboard.dismiss()` di `onPress` tidak menolong, karena `onPress` sendiri belum terpanggil.",
+  },
+  {
+    q: "Menurut panduan Expo, nilai `behavior` mana yang paling umum untuk `KeyboardAvoidingView`?",
+    options: ["`height` di iOS dan Android", "`position` di iOS, `padding` di Android", "Tidak perlu `behavior` sama sekali", "`padding` di iOS, `undefined` di Android"],
+    answer: 3,
+    explain: "Di iOS, `padding` menambah ruang kosong setinggi keyboard. Di Android, sistem sudah menggeser layar sendiri, jadi `undefined` mencegah ruang dobel. Tanpa `behavior`, iOS tidak menggeser apa pun.",
+  },
+  {
+    q: "Kolom judul memakai `returnKeyType=\"next\"`. Apa yang masih dibutuhkan agar Enter memindahkan kursor ke kolom mata kuliah?",
+    options: ["Tidak ada, `next` otomatis pindah ke input berikutnya", "`onSubmitEditing` yang memanggil `courseRef.current?.focus()`, dengan `ref={courseRef}` di kolom mata kuliah", "`autoFocus` di kolom mata kuliah", "`multiline` di kolom judul"],
+    answer: 1,
+    explain: "`returnKeyType` hanya mengganti tulisan di tombol Enter. Pindah kolom harus kamu tulis sendiri lewat `onSubmitEditing` dan ref. `autoFocus` hanya bekerja saat layar pertama muncul. `multiline` malah membuat Enter menambah baris baru.",
+  },
+  {
+    q: "Pengguna di WIB (UTC+7) memilih 15 Juli pukul 00.30. Apa hasil kode berikut?",
+    code: "const date = new Date(2026, 6, 15, 0, 30);\nconsole.log(date.toISOString().slice(0, 10));",
+    options: ["`2026-07-15`", "`2026-07-16`", "`2026-07-14`", "`2026-06-15`"],
+    answer: 2,
+    explain: "`toISOString` mengubah waktu ke UTC, jam patokan dunia. Pukul 00.30 WIB sama dengan 17.30 UTC hari sebelumnya, jadi tanggal mundur ke 14 Juli. Bulan di `new Date` dihitung dari 0, jadi `6` berarti Juli.",
+  },
+]} />
+
+## Ringkasan
+
+- Form terkontrol memakai `value` dan `onChangeText`. `onChangeText` langsung memberi string. Simpan semua kolom dalam satu objek `form` dan ubah lewat `setField(name, value)`.
+- Validasi adalah fungsi murni yang mengembalikan objek error. Error muncul setelah kolom disentuh. Tombol Simpan mati selama form belum valid.
+- `keyboardType`, `autoCapitalize`, `autoCorrect`, `autoComplete`, dan `secureTextEntry` memilih keyboard yang cocok untuk tiap kolom.
+- Untuk pindah kolom dengan Enter, pakai `returnKeyType="next"`, `submitBehavior="submit"`, dan `onSubmitEditing` yang memanggil `ref.current?.focus()`.
+- Agar kolom tidak tertutup keyboard, pakai `KeyboardAvoidingView` (iOS `padding`, Android `undefined`, `flex: 1`) dan `ScrollView` dengan `keyboardShouldPersistTaps="handled"`. Untuk form panjang, pakai `react-native-keyboard-controller`.
+- Prioritas memakai deretan `Pressable`, status memakai `Switch`. Setiap kontrol diberi label dan peran untuk pembaca layar.
+
+<Callout type="capstone" title="Menuju aplikasi akhir">
+
+Di Track 3, form ini pindah ke komponen `src/components/task-form.js`. Komponen itu dipakai layar tambah (`src/app/tasks/new.js`) dan layar edit (`src/app/tasks/[id]/edit.js`). Polanya sama: state form satu objek, pesan error di bawah kolom, `KeyboardAvoidingView` dengan `ScrollView` yang `keyboardShouldPersistTaps="handled"`, dan deadline berformat `YYYY-MM-DD`. Bedanya, tombol Simpan mengirim data ke API, dan error dari server ikut ditampilkan. Kamu akan membuatnya di [Create & Update](/belajar/fullstack/create-update). Sebelum itu, di [State Global & Storage](/belajar/react-native/state-global-storage), tugas dari form ini akhirnya muncul di daftar.
+
+</Callout>

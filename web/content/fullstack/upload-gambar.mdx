@@ -1,0 +1,1228 @@
+## Pengantar
+
+Andi baru selesai kuliah **Basis Data**. Dosen menggambar rancangan ERD di papan tulis dan berkata, "Ini bahan tugas
+minggu depan." Andi memotretnya. Ia ingin foto itu menempel di tugas "Rancang ERD perpustakaan" di aplikasinya.
+Kalau hanya disimpan di galeri, foto itu akan tenggelam di antara ratusan foto lain.
+
+Fitur ini disebut **lampiran gambar**. Ini fitur terakhir sebelum capstone. Di pelajaran ini kamu mengikuti
+perjalanan satu foto. Foto dipilih dari kamera atau galeri HP, dikirim ke server, lalu disimpan. Setelah itu foto
+tampil lagi sebagai **thumbnail** (gambar kecil untuk pratinjau) di layar detail tugas.
+
+<Flow
+  nodes={["Galeri / Kamera", "expo-image-picker", "FormData", "multer", "Folder uploads/", "Tabel Attachment"]}
+  labels={["pilih foto", "uri + name + type", "multipart/form-data", "simpan file", "catat metadata"]}
+  caption="Perjalanan satu foto dari HP ke server"
+/>
+
+Pelajaran ini melanjutkan `kuliah-app` dari [Autentikasi](/belajar/fullstack/autentikasi). Kamu sudah bisa login
+sungguhan, dan `apiFetch` sudah otomatis mengirim token. Sebelum mulai, jalankan API pendamping dengan `npm run dev`
+di folder `api`.
+
+## Cara file dikirim lewat HTTP: multipart/form-data
+
+<Callout type="analogi" title="Seperti mengirim satu kardus berisi barang berlabel">
+
+Selama ini kamu mengirim data seperti mengisi formulir: kolomnya tetap dan isinya tulisan. Foto tidak cocok
+dimasukkan ke formulir. Kamu harus menyalinnya dulu menjadi deretan huruf yang panjang sekali.
+
+Lebih masuk akal memasukkan foto ke kardus. Tiap barang di dalam kardus diberi label, misalnya "foto,
+papan-tulis.jpg". Antarbarang dipasang sekat bertuliskan kode unik. Petugas pengemas juga menulis kode sekat itu di
+label luar kardus, supaya petugas yang membongkar tahu sekat mana yang harus dicari.
+
+Formulir = JSON. Kardus = body request **multipart**. Barang berlabel = **part**. Sekat berkode = **boundary**.
+Label luar kardus = header `Content-Type`.
+
+</Callout>
+
+Selama ini **body** request (isi kiriman) berupa JSON dengan header `Content-Type: application/json`. **Header**
+adalah keterangan tambahan di luar isi kiriman, mirip tulisan di bagian luar paket. JSON berbentuk **teks**. Foto
+berbentuk **data biner**, yaitu deretan byte mentah yang bukan huruf.
+
+Foto memang bisa diubah menjadi teks **Base64** (cara menulis byte memakai huruf dan angka biasa), lalu diselipkan ke
+JSON. Tapi cara itu boros, seperti terlihat di perbandingan di bawah.
+
+Untuk mengirim file, web punya format khusus bernama **multipart/form-data**. Body request dipecah menjadi beberapa
+**part** (bagian). Setiap part punya header sendiri: nama field, nama file, dan tipe file. Antarpart dipisahkan oleh
+string pembatas unik yang disebut **boundary**. Begini kira-kira bentuk request yang akan dikirim aplikasimu:
+
+```http
+POST /api/tasks/3/attachments HTTP/1.1
+Host: 192.168.1.10:3000
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...
+Content-Type: multipart/form-data; boundary=----batas7MA4YWxkTrZu0gW
+
+------batas7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="papan-tulis.jpg"
+Content-Type: image/jpeg
+
+(isi biner foto, sekitar 800 KB)
+------batas7MA4YWxkTrZu0gW--
+```
+
+Perhatikan tiga hal:
+
+1. Nama field-nya `file`. Nama inilah yang dicari server.
+2. Tiap part membawa `Content-Type` sendiri, di sini `image/jpeg`. Nilai seperti ini disebut **MIME type** (atau
+mimetype), yaitu label jenis isi file.
+3. Nilai `boundary` di header utama harus sama persis dengan pembatas di dalam body.
+
+Pembatas itu dibuat acak oleh **klien HTTP** (program pengirim request, misalnya `fetch` atau curl) saat menyusun
+body. Jadi hanya klien HTTP yang tahu nilainya. Fakta ini dipakai lagi di bagian `apiFetch` nanti.
+
+<Compare>
+<CompareItem title="JSON + Base64" tone="bad">
+
+- Ukuran naik sekitar 33%. Foto 3 MB menjadi sekitar 4 MB.
+- Server harus menampung seluruh teks itu di memori sekaligus.
+- Perlu kode tambahan untuk mengubah teks kembali menjadi file.
+
+</CompareItem>
+<CompareItem title="multipart/form-data" tone="good">
+
+- Byte foto dikirim apa adanya, tanpa diubah.
+- Server bisa menulis data ke disk sedikit demi sedikit (*stream*), seperti air yang dialirkan lewat selang, bukan
+diangkut seember penuh.
+- Didukung `FormData` di React Native, browser, dan curl.
+
+</CompareItem>
+</Compare>
+
+## Sisi server: multer di API pendamping
+
+<Callout type="analogi" title="Seperti petugas penerima paket di gudang ekspedisi">
+
+Kardus tiba di gudang JNE. Petugas membongkarnya dan mengambil barang dari sekat berlabel "file". Ia mengecek label
+jenis barang: hanya foto yang diterima. Ia juga menimbang barang: yang melewati batas ditolak. Barang lalu diberi
+nomor rak buatan gudang, bukan nama dari pengirim. Terakhir, barang ditaruh di rak dan dicatat di buku register.
+
+Petugas = **multer**. Cek label jenis = `fileFilter`. Timbangan = `limits`. Nomor rak = `filename`. Rak = folder
+`uploads/`. Buku register = tabel `Attachment`. Ada satu bagian yang tidak cocok: petugas sungguhan bisa mengintip isi
+kardus, sedangkan multer hanya membaca label yang ditulis pengirim.
+
+</Callout>
+
+Express hanya bisa membaca body JSON (`express.json()`) dan form biasa. Untuk multipart, API pendamping memakai
+**multer**. Multer adalah **middleware**, yaitu fungsi yang dijalankan sebelum handler route. Tugasnya membaca body
+multipart, menyimpan file, lalu menaruh keterangan file di `req.file`. Semua kodenya sudah ada di folder `api/`. Di
+bagian ini kamu cukup membaca dan memahaminya, tidak perlu menulis ulang.
+
+### Konfigurasi upload di upload.ts
+
+```ts title="api/src/middleware/upload.ts"
+import { randomBytes } from "node:crypto";
+import type { RequestHandler } from "express";
+import multer from "multer";
+import { HttpError } from "../lib/http-error.ts";
+import { uploadDir } from "../lib/storage.ts";
+
+export const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+
+// Hanya gambar yang diizinkan. Ekstensi file ditentukan dari mimetype,
+// bukan dari nama file kiriman client.
+const EXTENSIONS: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+};
+
+const storage = multer.diskStorage({
+  destination: uploadDir,
+  filename: (_req, file, cb) => {
+    const uniqueName = `${Date.now()}-${randomBytes(8).toString("hex")}${EXTENSIONS[file.mimetype]}`;
+    cb(null, uniqueName);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: MAX_FILE_SIZE, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype in EXTENSIONS) {
+      cb(null, true);
+    } else {
+      cb(new HttpError(415, "UNSUPPORTED_MEDIA_TYPE", "Format file harus JPEG, PNG, atau WEBP"));
+    }
+  },
+});
+
+// Middleware untuk satu file pada field "file"; hasilnya tersedia di req.file.
+// Tipe generiknya `any` agar bisa dirangkai setelah validate() tanpa menghilangkan tipe req.params.
+export const uploadImage: RequestHandler<any, any, any, any> = upload.single("file");
+```
+
+Kode ini cukup padat, jadi kita bedah per bagian:
+
+- **`storage`** memakai `multer.diskStorage`. Artinya file langsung ditulis ke disk sedikit demi sedikit, tidak
+  ditampung utuh di memori. `destination` adalah folder tujuan. `filename` menentukan nama file di disk.
+- **`cb`** (singkatan *callback*) adalah fungsi milik multer untuk menerima jawabanmu. `cb(null, uniqueName)` artinya
+  "tidak ada error, pakai nama ini".
+- **Nama file dibuat server.** Isinya waktu sekarang, 16 karakter acak, lalu ekstensi, misalnya
+  `1793404812345-9f2c4a1b7e3d5c60.jpg`. Nama asli dari klien tidak dipakai karena tiga alasan. Nama bisa bentrok
+  (dua mahasiswa sama-sama mengirim `IMG_0001.jpg`). Nama bisa berisi trik seperti `../../.env` untuk menulis ke
+  folder lain. Nama juga bisa berekstensi berbahaya seperti `.html`.
+- **Ekstensi diambil dari tabel `EXTENSIONS`** berdasarkan mimetype. Hasilnya hanya `.jpg`, `.png`, atau `.webp`.
+- **`limits`** membatasi ukuran file maksimal 5 MB dan satu file per request. Begitu file melewati 5 MB, multer
+  berhenti membaca dan melempar error `LIMIT_FILE_SIZE`.
+- **`fileFilter`** dipanggil sebelum file disimpan. Kalau mimetype bukan jpeg, png, atau webp, multer menerima
+  `HttpError` 415 dan file ditolak. Status **415** artinya "jenis isi tidak didukung".
+- **`upload.single("file")`** menghasilkan middleware yang menerima tepat satu file dari field bernama `file`.
+
+<Callout type="warning" title="Mimetype berasal dari klien">
+
+Nilai `file.mimetype` diambil dari header `Content-Type` milik part, dan header itu ditulis oleh klien. Klien nakal
+bisa mengaku mengirim `image/png` padahal isinya bukan gambar. Untuk aplikasi kuliah ini, risikonya masih bisa
+diterima. File tetap disimpan dengan ekstensi gambar dan tidak pernah dijalankan sebagai program. Aplikasi produksi
+biasanya menambah pemeriksaan isi file (*magic bytes*, yaitu beberapa byte pertama yang menandai jenis file). File juga
+disimpan di layanan penyimpanan terpisah.
+
+</Callout>
+
+### Folder penyimpanan dan static serving
+
+<Callout type="analogi" title="Seperti loker tanpa gembok dengan nomor acak">
+
+Bayangkan deretan loker di lorong kampus tanpa gembok. Siapa pun yang tahu nomor lokernya bisa membuka dan melihat
+isinya. Karena itu nomor loker sengaja dibuat panjang dan acak, misalnya `9f2c4a1b7e3d5c60`, supaya orang iseng sulit
+menebaknya.
+
+Deretan loker = folder `uploads/` yang dibuka untuk umum. Nomor loker = nama file acak di URL. Untuk barang rahasia,
+kamu butuh loker bergembok dengan kunci yang kedaluwarsa. Di web, kunci seperti itu disebut *signed URL*.
+
+</Callout>
+
+Lokasi folder diatur oleh variabel `UPLOAD_DIR` di file `.env`, bawaannya `uploads`. File `storage.ts` melakukan tiga
+hal. Ia mengubah nilai itu menjadi **path absolut** (alamat folder lengkap dari akar disk), memastikan foldernya ada,
+lalu menyediakan dua fungsi bantu:
+
+```ts title="api/src/lib/storage.ts"
+// Folder fisik tempat file lampiran disimpan (path absolut).
+export const uploadDir = path.resolve(env.UPLOAD_DIR);
+mkdirSync(uploadDir, { recursive: true });
+
+// URL publik file, dilayani oleh express.static di /uploads.
+export function toPublicUrl(storedName: string): string {
+  return `/uploads/${storedName}`;
+}
+
+// Hapus file berdasarkan URL publiknya. Tidak melempar error kalau file sudah tidak ada.
+export async function removeUploadedFile(url: string): Promise<void> {
+  // path.basename mencegah path traversal (mis. "/uploads/../../.env").
+  const filePath = path.join(uploadDir, path.basename(url));
+  await rm(filePath, { force: true });
+}
+```
+
+`toPublicUrl` mengubah nama file di disk menjadi URL yang bisa dibuka, misalnya
+`/uploads/1793404812345-9f2c4a1b7e3d5c60.jpg`.
+`removeUploadedFile` menghapus file berdasarkan URL itu. `path.basename` hanya mengambil bagian paling akhir dari
+path. URL nakal seperti `/uploads/../../.env` jadi menunjuk ke `.env` di dalam folder uploads, bukan file `.env`
+milik server. Trik menyelinap ke folder lain lewat `../` ini disebut **path traversal**.
+
+Agar aplikasi bisa **menampilkan** foto, folder itu dibuka untuk umum di `app.ts`:
+
+```ts title="api/src/app.ts"
+// Gambar di /uploads boleh ditampilkan dari origin lain (mis. Expo Web).
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+// ...
+app.use("/uploads", express.static(uploadDir));
+```
+
+`express.static` adalah middleware bawaan Express yang melayani file apa adanya. Request
+`GET /uploads/1793404812345-9f2c4a1b7e3d5c60.jpg` langsung dijawab dengan isi file tersebut.
+
+Baris helmet butuh penjelasan sendiri. **helmet** adalah middleware keamanan yang menambahkan banyak header
+pelindung. Salah satu aturannya melarang gambar dimuat dari **origin** lain. Origin adalah gabungan alamat dan port,
+misalnya `http://localhost:8081`. Expo Web berjalan di port 8081, sedangkan API di port 3000, jadi keduanya dianggap
+origin berbeda. Opsi `crossOriginResourcePolicy` dilonggarkan supaya Expo Web boleh menampilkan gambar dari API.
+
+Akibatnya, **siapa pun yang tahu URL-nya bisa melihat foto**, tanpa token. Bagian acak di nama file membuat URL sulit
+ditebak, dan itu cukup untuk latihan. Untuk data sensitif, aplikasi produksi memakai **signed URL**, yaitu URL
+bertanda tangan yang kedaluwarsa setelah beberapa menit.
+
+### Route dan service
+
+Route upload merangkai beberapa middleware secara berurutan, seperti meja pemeriksaan yang harus dilewati satu per
+satu:
+
+```ts title="api/src/modules/tasks/tasks.routes.ts"
+// Upload lampiran: multipart/form-data dengan field "file".
+tasksRouter.post(
+  "/:id/attachments",
+  validate({ params: taskIdParamsSchema }),
+  uploadImage,
+  async (req, res) => {
+    if (!req.file) {
+      throw HttpError.validation([{ field: "file", message: "File gambar wajib diunggah" }]);
+    }
+    const attachment = await tasksService.addAttachment(getUserId(req), req.params.id, req.file);
+    res.status(201).json({ data: attachment });
+  },
+);
+```
+
+Urutan pemeriksaannya:
+
+1. `requireAuth` memeriksa token. Middleware ini sudah dipasang untuk semua route tugas, jadi tidak terlihat di
+potongan kode ini.
+2. `validate` memastikan `:id` berupa angka.
+3. `uploadImage` (multer) menyimpan file ke disk.
+4. Handler memeriksa `req.file`, lalu memanggil service.
+
+Kalau request tidak membawa file sama sekali, `req.file` bernilai `undefined`. Handler lalu membalas
+`400 VALIDATION_ERROR`, dengan format yang sama seperti error lain yang kamu kenal dari
+[Validasi & Error Handling](/belajar/crud-backend/validasi-error-handling). Kalau berhasil, handler membalas
+`201 Created` berisi data lampiran baru.
+
+Service lalu mencatat **metadata** file ke database. Metadata adalah keterangan tentang file (nama, jenis, ukuran),
+bukan isi file itu sendiri:
+
+```ts title="api/src/modules/tasks/tasks.service.ts"
+export async function addAttachment(userId: number, taskId: number, file: Express.Multer.File) {
+  try {
+    await assertTaskOwned(userId, taskId);
+    return await prisma.attachment.create({
+      data: {
+        taskId,
+        url: toPublicUrl(file.filename),
+        filename: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+      },
+    });
+  } catch (error) {
+    // File sudah terlanjur tersimpan oleh multer; hapus lagi kalau gagal disimpan ke database.
+    await removeUploadedFile(file.filename);
+    throw error;
+  }
+}
+```
+
+Perhatikan blok `catch`. Multer bekerja sebelum service memeriksa pemilik tugas. Misalnya Sari mencoba mengunggah
+ke tugas milik Andi. File Sari sudah terlanjur tersimpan di disk sebelum `assertTaskOwned` menolaknya. Service lalu
+menghapus file itu dan meneruskan error `404`. Tanpa langkah ini, folder `uploads/` lama-lama penuh file yatim
+(*orphan*), yaitu file yang tidak tercatat di database.
+
+### Model Attachment dan pemetaan req.file
+
+File fisik ada di disk, sedangkan **catatan** tentang file itu ada di tabel `Attachment`. Mirip gudang tadi: barangnya
+di rak, catatannya di buku register.
+
+```prisma title="api/prisma/schema.prisma"
+model Attachment {
+  id        Int      @id @default(autoincrement())
+  taskId    Int
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  url       String
+  filename  String
+  mimeType  String
+  size      Int
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+}
+```
+
+Setiap baris `Attachment` milik satu tugas lewat kolom `taskId`. `@@index([taskId])` membuat pencarian lampiran per
+tugas tetap cepat. Tabel berikut menunjukkan dari mana tiap kolom diisi:
+
+| Properti `req.file` dari multer | Contoh nilai | Kolom `Attachment` |
+| --- | --- | --- |
+| `filename` (nama di disk, buatan server) | `1793404812345-9f2c4a1b7e3d5c60.jpg` | `url` = `/uploads/` + filename |
+| `originalname` (nama dari klien) | `papan-tulis.jpg` | `filename` (hanya untuk ditampilkan) |
+| `mimetype` | `image/jpeg` | `mimeType` |
+| `size` (byte) | `248311` | `size` |
+
+`onDelete: Cascade` artinya baris lampiran ikut terhapus saat tugasnya dihapus. Tapi cascade hanya bekerja di
+database. File di disk tidak ikut terhapus. Karena itu `deleteTask` di service memanggil `removeUploadedFile` untuk
+setiap lampiran. Endpoint `DELETE /api/tasks/:id/attachments/:attachmentId` bekerja serupa: hapus baris, hapus file,
+lalu balas `204`.
+
+Terakhir, error handler menerjemahkan error dari multer menjadi format error standar:
+
+```ts title="api/src/middleware/error-handler.ts"
+if (error instanceof multer.MulterError) {
+  if (error.code === "LIMIT_FILE_SIZE") {
+    return new HttpError(413, "PAYLOAD_TOO_LARGE", "Ukuran file maksimal 5 MB");
+  }
+  if (error.code === "LIMIT_UNEXPECTED_FILE") {
+    return HttpError.badRequest('File harus dikirim lewat field "file" (satu file per request)');
+  }
+  return HttpError.badRequest(`Upload gagal: ${error.message}`);
+}
+```
+
+Hasilnya, foto 8 MB dibalas `413 PAYLOAD_TOO_LARGE` (kiriman terlalu besar). Foto yang dikirim lewat field bernama
+lain dibalas `400 BAD_REQUEST`. Pesan keduanya berbahasa Indonesia, jadi aplikasi bisa langsung menampilkannya.
+
+### Coba upload dari terminal
+
+Sebelum menulis kode aplikasi, pastikan dulu servernya bekerja. Langkahnya: siapkan satu foto JPG di laptop, login
+dengan akun demo, lalu unggah foto itu ke tugas nomor 1.
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+PowerShell 5 belum punya opsi `-Form` di `Invoke-RestMethod`. Jadi untuk upload kita pakai `curl.exe`, yang sudah
+terpasang di Windows 10 ke atas. Tulis `curl.exe`, bukan `curl`. Di PowerShell 5, `curl` adalah nama lain (alias)
+untuk perintah `Invoke-WebRequest`.
+
+```powershell
+$login = Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/auth/login -ContentType "application/json" -Body '{"email":"demo@kampus.ac.id","password":"password123"}'
+$token = $login.data.accessToken
+
+curl.exe -s -F "file=@$HOME\Pictures\papan-tulis.jpg" -H "Authorization: Bearer $token" http://localhost:3000/api/tasks/1/attachments
+```
+
+</Tab>
+<Tab>
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"demo@kampus.ac.id","password":"password123"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.accessToken')
+
+curl -s -F "file=@$HOME/Pictures/papan-tulis.jpg" -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/tasks/1/attachments
+```
+
+</Tab>
+</Tabs>
+
+Opsi `-F` menyuruh curl menyusun body multipart lengkap dengan boundary. `Content-Type` part ditebak curl dari
+ekstensi file. Hasilnya kira-kira seperti ini (nama file, ukuran, dan waktu akan berbeda):
+
+```json
+{"data":{"id":1,"taskId":1,"url":"/uploads/1793404812345-9f2c4a1b7e3d5c60.jpg","filename":"papan-tulis.jpg","mimeType":"image/jpeg","size":248311,"createdAt":"2026-10-31T01:20:12.345Z"}}
+```
+
+Salin nilai `url`, tambahkan `http://localhost:3000` di depannya, lalu buka di browser. Fotonya tampil. Sekarang coba
+dua kiriman yang salah:
+
+1. Kirim file teks: `-F "file=@catatan.txt"`.
+2. Kirim foto lewat nama field yang salah: `-F "foto=@papan-tulis.jpg"`.
+
+Jawaban server untuk keduanya:
+
+```json
+{"error":{"message":"Format file harus JPEG, PNG, atau WEBP","code":"UNSUPPORTED_MEDIA_TYPE"}}
+{"error":{"message":"File harus dikirim lewat field \"file\" (satu file per request)","code":"BAD_REQUEST"}}
+```
+
+## Sisi aplikasi: memilih foto dari galeri atau kamera
+
+Server sudah siap. Sekarang giliran `kuliah-app`. Di folder proyek, instal dua library:
+
+```bash
+npx expo install expo-image-picker expo-image
+```
+
+- **expo-image-picker** membuka layar bawaan HP untuk memilih foto dari galeri atau memotret dengan kamera.
+- **expo-image** adalah komponen gambar dari Expo yang lebih cepat dari `Image` bawaan React Native. Ia menyimpan
+  gambar di **cache disk** (salinan di penyimpanan HP, supaya tidak perlu diunduh ulang). Ia juga punya efek
+  transisi halus dan opsi `contentFit` yang mirip CSS `object-fit`.
+
+Keduanya sudah termasuk di Expo Go, jadi kamu tidak perlu membuat development build. Pakai `npx expo install`, bukan
+`npm install` biasa, karena perintah ini memilih versi yang cocok dengan SDK proyekmu.
+
+### Izin (permission)
+
+<Callout type="analogi" title="Seperti meminjam album foto teman kos">
+
+Kamu ingin melihat album foto teman kos. Sopannya, kamu bertanya dulu, "Boleh lihat?" Teman bisa menjawab "boleh",
+"jangan", atau "jangan tanya lagi". Kalau sudah "jangan tanya lagi", kamu tidak bisa terus memaksa. Hanya dia sendiri
+yang bisa berubah pikiran.
+
+Bertanya = memanggil fungsi permintaan izin. "Boleh" = `granted: true`. "Jangan tanya lagi" = `canAskAgain: false`.
+Berubah pikiran sendiri = pengguna membuka Pengaturan HP dan menyalakan izinnya secara manual.
+
+</Callout>
+
+Kamera dan galeri berisi data pribadi. Karena itu sistem operasi HP meminta persetujuan pengguna sebelum aplikasi
+boleh memakainya. expo-image-picker menyediakan dua fungsi: `requestCameraPermissionsAsync()` untuk kamera dan
+`requestMediaLibraryPermissionsAsync()` untuk galeri. Keduanya mengembalikan objek dengan properti berikut:
+
+| Properti | Arti |
+| --- | --- |
+| `granted` | `true` kalau izin diberikan |
+| `canAskAgain` | `false` kalau pengguna menolak permanen. Dialog izin tidak akan muncul lagi, jadi arahkan pengguna ke Pengaturan |
+| `status` | `"granted"` (diizinkan), `"denied"` (ditolak), atau `"undetermined"` (belum pernah ditanya) |
+
+Teks di dialog izin bisa diganti lewat **config plugin** di `app.json`, yaitu pengaturan tambahan yang dibaca saat
+aplikasi di-build. Pengaturan ini hanya berlaku di development build atau build rilis. Di Expo Go, yang tampil tetap
+pesan milik Expo Go.
+
+```json title="app.json"
+{
+  "expo": {
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "kuliah-app membutuhkan akses foto untuk melampirkan gambar ke tugas.",
+          "cameraPermission": "kuliah-app membutuhkan kamera untuk memotret catatan kuliah.",
+          "microphonePermission": false
+        }
+      ]
+    ]
+  }
+}
+```
+
+`microphonePermission: false` mencegah izin mikrofon ikut ditambahkan, karena kita tidak merekam video.
+
+### Fungsi pickImage
+
+Simpan logika memilih foto di satu file supaya kode layar tetap ringkas. Nama filenya sengaja dibuat sama dengan
+struktur TypeScript yang disarankan untuk `kuliah-app` (`src/features/tasks/attachments.ts`), jadi nanti mudah
+dipindahkan.
+
+```js title="src/features/tasks/attachments.js"
+import * as ImagePicker from "expo-image-picker";
+import { Platform } from "react-native";
+
+// Sama dengan batas server: maksimal 5 MB.
+export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+
+const PICKER_OPTIONS = {
+  mediaTypes: ["images"],
+  allowsEditing: true,
+  quality: 0.7,
+};
+
+// source: "camera" atau "library"
+export async function pickImage(source) {
+  const permission =
+    source === "camera"
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) {
+    return { status: "denied", canAskAgain: permission.canAskAgain };
+  }
+
+  const result =
+    source === "camera"
+      ? await ImagePicker.launchCameraAsync(PICKER_OPTIONS)
+      : await ImagePicker.launchImageLibraryAsync(PICKER_OPTIONS);
+  if (result.canceled) return { status: "canceled" };
+
+  const asset = result.assets[0];
+  if (asset.fileSize && asset.fileSize > MAX_ATTACHMENT_BYTES) {
+    return { status: "too-large" };
+  }
+
+  return {
+    status: "picked",
+    file: {
+      uri: asset.uri,
+      // Foto dari kamera sering tidak punya nama atau MIME type, jadi beri nilai bawaan.
+      name: asset.fileName ?? `foto-${Date.now()}.jpg`,
+      type: asset.mimeType ?? "image/jpeg",
+      // Hanya ada di web: objek File asli dari browser.
+      webFile: asset.file,
+    },
+  };
+}
+
+export function toFormData(file) {
+  const form = new FormData();
+  if (Platform.OS === "web" && file.webFile) {
+    form.append("file", file.webFile);
+  } else {
+    form.append("file", { uri: file.uri, name: file.name, type: file.type });
+  }
+  return form;
+}
+```
+
+Alur `pickImage` dalam bahasa sehari-hari:
+
+1. Minta izin kamera atau galeri. Kalau ditolak, kembalikan status `"denied"`.
+2. Buka kamera atau galeri. Kalau pengguna menekan Batal, kembalikan `"canceled"`.
+3. Ambil foto pertama (`result.assets[0]`). Kalau lebih dari 5 MB, kembalikan `"too-large"`.
+4. Kalau semua aman, kembalikan `"picked"` beserta data file: `uri`, `name`, `type`, dan `webFile`.
+
+`toFormData` lalu memasukkan data file itu ke **FormData**, yaitu "kardus" multipart yang siap dikirim.
+
+Opsi picker yang dipakai:
+
+- **`mediaTypes: ["images"]`** hanya menampilkan foto, tanpa video. Bentuk array ini adalah cara terbaru. Konstanta
+  lama `MediaTypeOptions` sudah usang (*deprecated*), jadi jangan dipakai lagi.
+- **`allowsEditing: true`** memunculkan layar potong (*crop*) setelah foto dipilih. Fitur ini berguna untuk membuang
+  bagian papan tulis yang tidak perlu. Di iOS area potongnya selalu persegi. Di Android bentuknya bebas, atau bisa
+  dikunci dengan opsi `aspect: [4, 3]`. Opsi ini tidak berlaku di web.
+- **`quality: 0.7`** mengompres foto. Nilai 0 berarti sekecil mungkin, 1 berarti kualitas maksimal. Foto kamera HP
+  modern bisa 4–8 MB. Dengan 0.7, ukurannya biasanya turun menjadi beberapa ratus KB tanpa beda yang terlihat di
+  layar HP.
+
+Hasil picker berbentuk `{ canceled, assets }`. Kalau pengguna menekan Batal, `canceled` bernilai `true` dan tidak ada
+foto yang bisa dipakai. Jadi selalu periksa `canceled` dulu. Pemeriksaan `fileSize` di aplikasi hanya untuk
+kenyamanan: pengguna langsung tahu fotonya terlalu besar tanpa menunggu upload. Penjaga sebenarnya tetap `limits` di
+server, karena kode di sisi aplikasi bisa saja diakali.
+
+### Bentuk file untuk FormData
+
+Bagian terpenting ada di `toFormData`. Di browser, file biasanya dikirim sebagai **Blob** (wadah data biner milik
+browser). Di React Native, `FormData` tidak menerima Blob seperti itu. Sebagai gantinya, kamu memberi objek dengan
+tiga properti:
+
+- `uri`: lokasi file di HP hasil picker, misalnya `file:///data/user/0/.../ImagePicker/3f2a.jpeg`. React Native
+  sendiri yang membaca isi file ini saat request dikirim.
+- `name`: nama file. Nama ini muncul sebagai `filename` di part multipart, lalu menjadi `originalname` di multer.
+- `type`: MIME type, yang menjadi `Content-Type` part. Nilai inilah yang diperiksa `fileFilter` di server.
+
+Di **web**, ceritanya berbeda. Browser tidak mengenal objek `{ uri, name, type }`. Kalau kamu tetap menambahkannya,
+browser mengubahnya menjadi teks `"[object Object]"`, dan server tidak menerima file apa pun. Untungnya, di web
+expo-image-picker menyertakan `asset.file`, yaitu objek `File` asli milik browser. Itulah yang kita masukkan ke
+FormData. Satu aturan web lagi: picker harus dipanggil dari aksi pengguna, misalnya menekan tombol, bukan otomatis
+saat layar dibuka.
+
+<Callout type="tip" title="Menguji kamera di emulator">
+
+Simulator iOS tidak punya kamera, jadi `launchCameraAsync` tidak bisa dicoba di sana. Uji tombol kamera di HP
+sungguhan lewat Expo Go. Emulator Android punya kamera virtual, berupa ruangan 3D atau webcam laptop. Galeri emulator
+bisa diisi dengan menyeret file gambar ke jendela emulator.
+
+</Callout>
+
+## Mengirim FormData lewat apiFetch
+
+<Callout type="analogi" title="Biarkan petugas pengemas yang menulis label kardus">
+
+Ingat kardus berisi barang bersekat tadi? Kode sekat dipilih acak oleh petugas pengemas, lalu ia tulis di label luar
+kardus. Kalau kamu menempel label buatan sendiri bertuliskan "KARDUS BERSEKAT" tanpa kode, petugas di gudang tujuan
+tidak tahu sekat mana yang harus dicari. Isinya tidak bisa dibongkar dengan benar.
+
+Petugas pengemas = `fetch`. Label luar yang lengkap = header `multipart/form-data; boundary=...`. Label buatan
+sendiri = header `Content-Type` yang kamu tulis manual tanpa boundary.
+
+</Callout>
+
+`apiFetch` dari [Menghubungkan Expo ke API](/belajar/fullstack/menghubungkan-expo-api) selalu melakukan dua hal pada
+body: menambahkan header `Content-Type: application/json` dan memanggil `JSON.stringify(body)`. Untuk FormData,
+keduanya salah:
+
+- `JSON.stringify` pada FormData menghasilkan `"{}"`, yaitu objek kosong. Fotonya hilang.
+- Header JSON membuat server mengira body-nya JSON, jadi multer tidak membacanya.
+
+Ingat soal boundary tadi? Nilainya dibuat oleh `fetch` saat menyusun body multipart. Kalau `Content-Type` tidak
+diisi, `fetch` otomatis menulis `multipart/form-data; boundary=...` dengan boundary yang benar. Jadi aturannya:
+**untuk FormData, jangan sentuh `Content-Type` sama sekali**.
+
+Buka `src/lib/api.js` dan cari bagian yang menyusun header dan body. Bentuk kodemu mungkin sedikit berbeda, tetapi
+perubahannya sama: kenali FormData, lalu lewati semua perlakuan JSON.
+
+```diff title="src/lib/api.js"
+   const headers = { Accept: "application/json" };
+-  if (body !== undefined) headers["Content-Type"] = "application/json";
++  const isFormData = body instanceof FormData;
++  // FormData: biarkan fetch menulis Content-Type beserta boundary-nya sendiri.
++  if (body !== undefined && !isFormData) headers["Content-Type"] = "application/json";
+ 
+   // ...
+ 
+   const response = await fetch(`${BASE_URL}${path}`, {
+     method,
+     headers,
+-    body: body === undefined ? undefined : JSON.stringify(body),
++    body: body === undefined || isFormData ? body : JSON.stringify(body),
+     signal: controller.signal,
+   });
+```
+
+`body instanceof FormData` bernilai `true` kalau body berupa FormData. Dalam kasus itu, header `Content-Type` tidak
+diisi dan body dikirim apa adanya, tanpa `JSON.stringify`. Body JSON biasa tetap diperlakukan seperti sebelumnya.
+
+Tambahkan juga satu fungsi kecil di file yang sama. Server mengirim `url` relatif (`/uploads/...`), yaitu alamat tanpa
+nama host. Komponen gambar di HP butuh alamat lengkap. Tanpa host, `/uploads/...` tidak menunjuk ke mana-mana, seperti
+amplop bertuliskan "Kamar 3" tanpa alamat kosnya.
+
+```js title="src/lib/api.js"
+// "/uploads/a.jpg" → "http://192.168.1.10:3000/uploads/a.jpg"
+export function fileUrl(path) {
+  return `${process.env.EXPO_PUBLIC_API_URL}${path}`;
+}
+```
+
+Bagian lain `apiFetch` tidak perlu diubah. Token tetap ditempel di header `Authorization`. Respons error tetap diubah
+menjadi `ApiError` yang punya `status` dan `code`. Dua properti itu nanti dipakai untuk mengenali error 413 dan 415.
+
+<Callout type="info" title="Batas waktu untuk upload">
+
+Mungkin `apiFetch`-mu membatalkan request setelah beberapa detik (*timeout* dengan `AbortController`). Upload foto
+lewat Wi-Fi kampus yang lambat bisa terpotong dan muncul sebagai error timeout. Buat batas waktunya bisa diatur per
+request, lalu beri upload batas yang lebih longgar, misalnya 60 detik.
+
+</Callout>
+
+## Mutation upload dan hapus di queries.js
+
+<Callout type="analogi" title="Seperti menunggu cap terima dari bagian akademik">
+
+Saat mencoret tugas dari daftar pribadimu, kamu bisa langsung mencoret tanpa menunggu siapa pun. Lain halnya saat
+menyerahkan berkas ke bagian akademik. Kamu menunggu sampai berkasnya dicap "diterima", karena berkas bisa saja
+ditolak: terlalu tebal atau formatnya salah.
+
+Mencoret langsung = optimistic update di [DELETE & Optimistic Update](/belajar/fullstack/delete-optimistic). Menunggu
+cap = upload yang menampilkan loading sampai server menjawab. Berkas ditolak = error 413 atau 415.
+
+</Callout>
+
+Upload dan hapus lampiran adalah **mutation**, yaitu aksi yang mengubah data di server. Sama seperti membuat atau
+menghapus tugas di [TanStack Query](/belajar/fullstack/tanstack-query). Tambahkan dua hook baru dan satu fungsi
+pesan error di `queries.js`:
+
+```js title="src/features/tasks/queries.js"
+// ...import dan hook yang sudah ada tetap di atas
+import { toFormData } from "./attachments";
+
+export function useUploadAttachment(taskId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (file) =>
+      apiFetch(`/api/tasks/${taskId}/attachments`, {
+        method: "POST",
+        body: toFormData(file),
+      }),
+    onSuccess: () => {
+      // Kartu di daftar ikut segar, tapi tidak perlu ditunggu.
+      queryClient.invalidateQueries({ queryKey: taskKeys.all });
+      // Di-return: mutation tetap "pending" sampai detail selesai dimuat ulang.
+      return queryClient.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+    },
+  });
+}
+
+export function useDeleteAttachment(taskId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (attachmentId) =>
+      apiFetch(`/api/tasks/${taskId}/attachments/${attachmentId}`, { method: "DELETE" }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: taskKeys.all }),
+  });
+}
+
+export function uploadErrorMessage(error) {
+  if (error?.status === 413) return "Ukuran foto melebihi 5 MB. Pilih foto lain atau kecilkan dulu.";
+  if (error?.status === 415) return "Format foto tidak didukung. Gunakan JPG, PNG, atau WEBP.";
+  return error?.message ?? "Upload gagal. Coba lagi.";
+}
+```
+
+Alasan di balik kode ini:
+
+- **Upload sengaja tidak optimistis.** Tugas yang dihapus bisa langsung hilang dari layar. Upload berbeda: prosesnya
+  bisa makan beberapa detik dan mudah gagal (sinyal hilang, file terlalu besar). Lebih jujur menampilkan indikator
+  loading daripada thumbnail palsu yang tiba-tiba lenyap.
+- **`onSuccess` mengembalikan (return) promise** dari `invalidateQueries`. **Invalidate** artinya menandai data di
+  cache sebagai basi supaya diambil ulang dari server. TanStack Query menunggu promise itu selesai. Jadi `isPending`
+  baru menjadi `false` setelah data detail terbaru, lengkap dengan lampiran baru, sudah tiba. Hasilnya, kotak loading
+  langsung berganti dengan thumbnail asli tanpa jeda kosong.
+- **`taskKeys.all`** menandai semua query tugas sebagai basi (*stale*), termasuk detail dan daftar. Kalau factory
+  `taskKeys`-mu punya kunci yang lebih sempit, misalnya `taskKeys.lists()`, pakai kunci itu.
+- **Hapus memakai `onSettled`**, bukan `onSuccess`. `onSettled` dijalankan baik saat sukses maupun gagal. Jadi data
+  tetap disegarkan meskipun penghapusan gagal, misalnya karena lampiran sudah dihapus dari HP lain dan server
+  membalas `404`.
+- **`uploadErrorMessage`** menerjemahkan status 413 dan 415 menjadi pesan yang memberi tahu pengguna apa yang harus
+  dilakukan. Pesan "gagal" saja tidak membantu pengguna.
+
+## Menampilkan thumbnail dengan expo-image
+
+Sekarang kita membuat bagian yang dilihat pengguna. Isinya tombol Galeri dan Kamera, deretan thumbnail, kotak
+loading saat upload, dan tekan lama untuk menghapus. Semuanya dibungkus dalam satu komponen. Jadi layar detail cukup
+menambah satu baris.
+
+```jsx title="src/components/attachment-section.js"
+import { Image } from "expo-image";
+import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { pickImage } from "../features/tasks/attachments";
+import {
+  uploadErrorMessage,
+  useDeleteAttachment,
+  useUploadAttachment,
+} from "../features/tasks/queries";
+import { fileUrl } from "../lib/api";
+
+export function AttachmentSection({ taskId, attachments }) {
+  const upload = useUploadAttachment(taskId);
+  const remove = useDeleteAttachment(taskId);
+
+  async function handlePick(source) {
+    const result = await pickImage(source);
+
+    if (result.status === "denied") {
+      Alert.alert(
+        "Izin dibutuhkan",
+        source === "camera"
+          ? "Izinkan akses kamera untuk memotret catatan."
+          : "Izinkan akses galeri untuk memilih foto.",
+        result.canAskAgain
+          ? [{ text: "OK" }]
+          : [
+              { text: "Batal", style: "cancel" },
+              { text: "Buka Pengaturan", onPress: () => Linking.openSettings() },
+            ],
+      );
+      return;
+    }
+    if (result.status === "too-large") {
+      Alert.alert("Foto terlalu besar", "Ukuran maksimal 5 MB.");
+      return;
+    }
+    if (result.status !== "picked") return;
+
+    upload.mutate(result.file, {
+      onError: (error) => Alert.alert("Gagal mengunggah", uploadErrorMessage(error)),
+    });
+  }
+
+  function confirmDelete(attachment) {
+    Alert.alert("Hapus foto?", attachment.filename, [
+      { text: "Batal", style: "cancel" },
+      {
+        text: "Hapus",
+        style: "destructive",
+        onPress: () =>
+          remove.mutate(attachment.id, {
+            onError: (error) => Alert.alert("Gagal menghapus", error.message),
+          }),
+      },
+    ]);
+  }
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.heading}>Lampiran ({attachments.length})</Text>
+
+      <View style={styles.actions}>
+        <Pressable
+          style={[styles.button, upload.isPending && styles.disabled]}
+          disabled={upload.isPending}
+          onPress={() => handlePick("library")}
+        >
+          <Text style={styles.buttonText}>Pilih dari Galeri</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.button, upload.isPending && styles.disabled]}
+          disabled={upload.isPending}
+          onPress={() => handlePick("camera")}
+        >
+          <Text style={styles.buttonText}>Ambil Foto</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.grid}>
+        {attachments.map((attachment) => {
+          const deleting = remove.isPending && remove.variables === attachment.id;
+          return (
+            <Pressable
+              key={attachment.id}
+              onLongPress={() => confirmDelete(attachment)}
+              disabled={deleting}
+              accessibilityLabel={`Foto ${attachment.filename}. Tekan lama untuk menghapus.`}
+            >
+              <Image
+                source={{ uri: fileUrl(attachment.url) }}
+                style={[styles.thumb, deleting && styles.disabled]}
+                contentFit="cover"
+                transition={200}
+              />
+            </Pressable>
+          );
+        })}
+
+        {upload.isPending && (
+          <View style={[styles.thumb, styles.placeholder]}>
+            <ActivityIndicator />
+            <Text style={styles.hint}>Mengunggah…</Text>
+          </View>
+        )}
+      </View>
+
+      {attachments.length > 0 && <Text style={styles.hint}>Tekan lama foto untuk menghapus.</Text>}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  section: { gap: 12, marginTop: 24 },
+  heading: { fontSize: 16, fontWeight: "600" },
+  actions: { flexDirection: "row", gap: 8 },
+  button: { flex: 1, padding: 12, borderRadius: 8, backgroundColor: "#4F46E5", alignItems: "center" },
+  buttonText: { color: "#fff", fontWeight: "600" },
+  disabled: { opacity: 0.5 },
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  thumb: { width: 104, height: 104, borderRadius: 8, backgroundColor: "#E5E7EB" },
+  placeholder: { alignItems: "center", justifyContent: "center", gap: 4 },
+  hint: { fontSize: 12, color: "#6B7280" },
+});
+```
+
+Kode ini panjang, tapi alurnya sederhana:
+
+1. `handlePick` dipanggil saat tombol ditekan. Fungsi ini memanggil `pickImage`, lalu memeriksa hasilnya. Kalau izin
+   ditolak, muncul Alert. Kalau pengguna menolak permanen, Alert menawarkan tombol "Buka Pengaturan".
+2. Kalau foto berhasil dipilih, `upload.mutate` mengirimnya ke server. Kalau gagal, Alert menampilkan pesan dari
+   `uploadErrorMessage`.
+3. `confirmDelete` dipanggil saat foto ditekan lama. Fungsi ini bertanya dulu "Hapus foto?". Baru setelah pengguna
+   menekan Hapus, `remove.mutate` dijalankan.
+4. Bagian JSX menggambar dua tombol, deretan thumbnail, dan kotak "Mengunggah…" selama upload berjalan.
+
+Beberapa detail yang perlu kamu tahu:
+
+- **`<Image>` dari expo-image** dipakai mirip `Image` bawaan React Native, yaitu dengan `source={{ uri }}`.
+  `contentFit="cover"` membuat foto mengisi kotak penuh dan memotong sisanya. `transition={200}` memberi efek pudar
+  200 milidetik saat gambar selesai dimuat. Gambar juga disimpan di cache disk, jadi membuka detail tugas untuk
+  kedua kalinya terasa instan. Cache ini aman karena setiap file punya nama unik dan tidak pernah ditimpa.
+- **Deretan foto memakai `View` dengan `flexWrap: "wrap"`**, bukan FlatList. `flexWrap` membuat foto pindah ke baris
+  berikutnya saat baris penuh. Jumlah lampiran per tugas sedikit, jadi FlatList tidak diperlukan. Lagi pula, layar
+  detail biasanya sudah ada di dalam `ScrollView`. FlatList di dalam ScrollView memicu peringatan
+  `VirtualizedLists should never be nested inside plain ScrollViews`.
+- **`remove.variables`** menyimpan argumen terakhir yang dikirim ke `mutate`, yaitu id lampiran. Dengan begitu kita
+  tahu foto mana yang sedang dihapus, dan hanya foto itu yang dibuat transparan.
+- **Tombol dimatikan (`disabled`) selama upload.** Tanpa ini, pengguna yang tidak sabar bisa menekan tombol lagi dan
+  mengirim foto yang sama dua kali.
+
+Terakhir, pasang komponen ini di layar detail. Response `GET /api/tasks/:id` sudah berisi array `attachments`,
+diurutkan dari yang paling lama. Jadi tidak perlu request tambahan.
+
+```diff title="src/app/tasks/[id]/index.js"
++import { AttachmentSection } from "../../../components/attachment-section";
+ 
+ // ...di dalam JSX, setelah informasi tugas ditampilkan:
++      <AttachmentSection taskId={task.id} attachments={task.attachments} />
+```
+
+<FileTree title="kuliah-app" tree={`
+src/
+  app/
+    tasks/
+      [id]/
+        * index.js # pasang AttachmentSection
+  components/
+    * attachment-section.js # baru: tombol, grid, loading
+  features/
+    tasks/
+      * attachments.js # baru: pickImage + toFormData
+      * queries.js # + useUploadAttachment, useDeleteAttachment
+  lib/
+    * api.js # dukung FormData + fileUrl
+`} />
+
+Sekarang coba jalankan aplikasinya:
+
+1. Buka satu tugas.
+2. Tekan **Pilih dari Galeri**, lalu potong fotonya.
+3. Perhatikan kotak "Mengunggah…" berganti menjadi thumbnail.
+
+Lalu lihat terminal API. Di sana **morgan**, middleware pencatat request yang sudah terpasang di API, menulis tiga
+baris. Baris pertama adalah upload. Baris kedua adalah aplikasi memuat ulang detail tugas. Baris ketiga adalah
+expo-image mengambil file fotonya.
+
+```txt
+POST /api/tasks/1/attachments 201 412.873 ms - 197
+GET /api/tasks/1 200 6.214 ms - 1032
+GET /uploads/1793404830112-c41d7b2e9a0f6358.jpg 200 3.127 ms - 231904
+```
+
+<Callout type="note" title="Alert di Expo Web">
+
+`Alert.alert` dari React Native tidak menampilkan apa-apa di web. Akibatnya, pertanyaan "Hapus foto?" tidak muncul
+saat kamu mencoba lewat browser. Uji fitur hapus di HP atau emulator. Upload dan thumbnail tetap berjalan di web.
+
+</Callout>
+
+## Opsional: kecilkan foto sebelum upload
+
+`quality: 0.7` mengompres foto, tapi **resolusi** foto tetap penuh. Resolusi adalah jumlah titik (piksel) penyusun
+gambar, misalnya 4000×3000 piksel.
+
+<Callout type="analogi" title="Seperti mencetak poster A0 untuk ditempel di buku catatan">
+
+Kamu tidak perlu mencetak foto seukuran poster A0 kalau hanya mau ditempel di buku catatan. Kertasnya mahal dan
+sebagian besar detailnya tidak akan terlihat. Ukuran kartu pos sudah cukup.
+
+Begitu juga foto catatan kuliah. Foto 4000 piksel memakan kuota dan memperlama upload, padahal layar HP tidak bisa
+menampilkan detail sebanyak itu.
+
+</Callout>
+
+Untuk catatan kuliah, lebar 1600 piksel sudah lebih dari cukup. Library **expo-image-manipulator** bisa memperkecil
+ukuran foto sekaligus menyimpannya ulang sebagai JPEG.
+
+```bash
+npx expo install expo-image-manipulator
+```
+
+```js title="src/features/tasks/attachments.js"
+import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+
+// Perkecil lebar menjadi maksimal 1600 px dan simpan ulang sebagai JPEG.
+export async function shrinkImage(file) {
+  const context = ImageManipulator.manipulate(file.uri);
+  if (file.width > 1600) context.resize({ width: 1600 });
+  const image = await context.renderAsync();
+  const result = await image.saveAsync({ compress: 0.7, format: SaveFormat.JPEG });
+
+  const baseName = file.name.replace(/\.[^.]+$/, "");
+  return { uri: result.uri, name: `${baseName}.jpg`, type: "image/jpeg" };
+}
+```
+
+Cara kerja `shrinkImage`:
+
+- `ImageManipulator.manipulate` membuka foto dari `file.uri` untuk diedit.
+- Kalau lebarnya lebih dari 1600 piksel, `resize` mengecilkannya. Kita cukup mengisi `width`. Tingginya dihitung
+  otomatis supaya perbandingan panjang dan lebar foto tidak berubah.
+- `saveAsync` menyimpan hasilnya sebagai JPEG dengan kompresi 0.7.
+- Nama file lama diganti akhirannya menjadi `.jpg`, karena isinya sekarang JPEG.
+
+Untuk memakainya, ada tiga langkah:
+
+1. Di `pickImage`, tambahkan `width: asset.width` ke objek `file` yang dikembalikan.
+2. Di `handlePick`, panggil `shrinkImage(result.file)` sebelum `upload.mutate`, lalu kirim hasilnya.
+3. Lewati langkah ini di web, karena di sana kita mengirim `webFile` asli.
+
+Ada bonusnya juga. Hasil `shrinkImage` selalu JPEG. Sebagian perangkat mengembalikan foto berformat lain,
+misalnya HEIC dari iPhone. Format itu pasti ditolak server dengan `415`. Setelah lewat manipulator, masalah itu
+hilang.
+
+## Kesalahan umum
+
+Tabel ini berisi gejala yang paling sering muncul saat pertama kali membuat fitur upload. Cocokkan gejala yang kamu
+lihat dengan kolom pertama.
+
+| Gejala | Penyebab | Perbaikan |
+| --- | --- | --- |
+| `500 INTERNAL_ERROR`, log API berisi `Multipart: Boundary not found` | `Content-Type: multipart/form-data` ditulis manual tanpa boundary | Hapus header itu. Biarkan `fetch` yang mengisinya |
+| `400 VALIDATION_ERROR` dengan detail `File gambar wajib diunggah` | Body dikirim sebagai JSON (`"{}"`), atau di web objek `{ uri, name, type }` berubah menjadi `"[object Object]"` | Pastikan `apiFetch` mengirim FormData apa adanya. Di web, append `asset.file` |
+| `400 BAD_REQUEST`: `File harus dikirim lewat field "file"` | Nama field di `form.append` bukan `file` | Samakan dengan `upload.single("file")` |
+| `415 UNSUPPORTED_MEDIA_TYPE` | `type` file bukan jpeg/png/webp, misalnya `image/heic` | Ubah ke JPEG dengan expo-image-manipulator |
+| `413 PAYLOAD_TOO_LARGE`: `Ukuran file maksimal 5 MB` | Foto lebih dari 5 MB | Turunkan `quality` atau perkecil resolusi |
+| Thumbnail kosong abu-abu | `attachment.url` dipakai langsung tanpa alamat server, atau `EXPO_PUBLIC_API_URL` masih `localhost` saat memakai HP | Bungkus dengan `fileUrl()`. Pakai IP LAN laptop, lalu restart Metro |
+
+<Callout type="warning" title="Jangan menulis Content-Type sendiri">
+
+Saat pertama kali membuat upload, banyak orang tergoda menulis
+`headers: { "Content-Type": "multipart/form-data" }`. Alasannya, "kan memang multipart". Masalahnya, header itu
+tidak punya bagian `boundary=...`. Kondisinya sama dengan label kardus tanpa kode sekat di analogi tadi.
+Server jadi tidak tahu di mana satu bagian berakhir dan bagian berikutnya dimulai.
+
+Di browser (Expo Web), upload pasti gagal. Di HP, React Native biasanya menambahkan boundary sendiri. Karena itu bug
+ini sering lolos saat diuji di HP, lalu baru muncul di web. Cara paling aman adalah tidak menulis header itu sama
+sekali.
+
+</Callout>
+
+Kamu bisa melihat request yang benar-benar dikirim lewat browser:
+
+1. Buka aplikasi di Expo Web, lalu tekan F12.
+2. Pilih tab **Network**, lalu upload satu foto.
+3. Klik request `attachments` dan lihat header `Content-Type`. Di dalamnya harus ada `boundary=`.
+
+Kalau ingin membandingkannya dengan request JSON biasa, coba juga [HTTP Explorer](/lab/http-explorer).
+
+## Latihan
+
+<Exercise title="Tampilkan ukuran file di bawah thumbnail" difficulty="mudah" hints={["Ukuran ada di `attachment.size` dalam byte.", "1 KB = 1024 byte, 1 MB = 1024 × 1024 byte.", "Pakai `toFixed(1)` lalu ganti titik dengan koma untuk format Indonesia."]}>
+
+Tulis fungsi `formatFileSize(bytes)` di `src/features/tasks/attachments.js`. Fungsi ini mengubah angka byte menjadi
+teks yang mudah dibaca manusia. Lalu tampilkan hasilnya di bawah setiap thumbnail di `AttachmentSection`.
+
+Langkahnya:
+
+1. Kalau ukurannya di bawah 1024 byte, tampilkan apa adanya dengan akhiran `B`.
+2. Kalau di bawah 1 MB, bagi dengan 1024 dan bulatkan, lalu beri akhiran `KB`.
+3. Selain itu, bagi dengan 1024 × 1024, ambil satu angka di belakang koma, lalu beri akhiran `MB`.
+
+Hasil yang diharapkan:
+
+```js
+formatFileSize(512); // → "512 B"
+formatFileSize(248311); // → "242 KB"
+formatFileSize(3355443); // → "3,2 MB"
+```
+
+<Solution>
+
+```js title="src/features/tasks/attachments.js"
+export function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
+}
+```
+
+Fungsi ini memeriksa ukuran dari yang terkecil. `Math.round` membulatkan angka KB. `toFixed(1)` menyisakan satu
+angka di belakang titik desimal, lalu `replace(".", ",")` mengganti titik dengan koma sesuai format Indonesia.
+
+Di `AttachmentSection`, bungkus `Pressable` dan teks ukuran dalam satu `View` selebar thumbnail. Dengan begitu
+teksnya rapi tepat di bawah gambar:
+
+```jsx title="src/components/attachment-section.js"
+<View key={attachment.id} style={{ width: 104, gap: 4 }}>
+  <Pressable onLongPress={() => confirmDelete(attachment)} disabled={deleting}>
+    <Image
+      source={{ uri: fileUrl(attachment.url) }}
+      style={[styles.thumb, deleting && styles.disabled]}
+      contentFit="cover"
+    />
+  </Pressable>
+  <Text style={styles.hint}>{formatFileSize(attachment.size)}</Text>
+</View>
+```
+
+Ada dua hal yang mudah terlupa:
+
+- Pindahkan `key` ke `View` terluar. Sekarang `View` itulah elemen yang dikembalikan `map`, dan React butuh `key`
+  di elemen terluar untuk membedakan tiap item.
+- Tambahkan `formatFileSize` ke import dari `../features/tasks/attachments`.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Pratinjau foto layar penuh" difficulty="sedang" hints={["Simpan lampiran yang dipilih di state, misalnya `const [preview, setPreview] = useState(null)`.", "Pakai `Modal` dari react-native dengan `visible={preview !== null}`.", "Untuk foto utuh tanpa terpotong, ganti `contentFit` menjadi `contain`."]}>
+
+Saat thumbnail diketuk sekali, tampilkan foto ukuran penuh di atas latar hitam. Ketuk sekali lagi di mana saja
+untuk menutupnya. Tekan lama tetap dipakai untuk menghapus.
+
+<Solution>
+
+```jsx title="src/components/attachment-section.js"
+import { useState } from "react";
+import { Modal } from "react-native"; // gabungkan dengan import react-native yang sudah ada
+
+export function AttachmentSection({ taskId, attachments }) {
+  const [preview, setPreview] = useState(null);
+  // ...hook dan fungsi lain tetap
+
+  return (
+    <View style={styles.section}>
+      {/* ...judul dan tombol tetap */}
+      <View style={styles.grid}>
+        {attachments.map((attachment) => (
+          <Pressable
+            key={attachment.id}
+            onPress={() => setPreview(attachment)}
+            onLongPress={() => confirmDelete(attachment)}
+          >
+            <Image source={{ uri: fileUrl(attachment.url) }} style={styles.thumb} contentFit="cover" />
+          </Pressable>
+        ))}
+        {/* ...kotak "Mengunggah…" tetap */}
+      </View>
+
+      <Modal
+        visible={preview !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPreview(null)}
+      >
+        <Pressable style={styles.backdrop} onPress={() => setPreview(null)}>
+          {preview && (
+            <Image source={{ uri: fileUrl(preview.url) }} style={styles.full} contentFit="contain" />
+          )}
+        </Pressable>
+      </Modal>
+    </View>
+  );
+}
+
+// Tambahkan ke StyleSheet:
+//   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.9)", justifyContent: "center" },
+//   full: { width: "100%", height: "80%" },
+```
+
+State `preview` menyimpan lampiran yang sedang dibuka. Kalau isinya `null`, artinya modal tertutup. Mengetuk
+thumbnail mengisi `preview`, sedangkan mengetuk latar hitam mengosongkannya lagi.
+
+`onRequestClose` menangani tombol Back di Android. Gambarnya juga sudah tersimpan di cache disk expo-image sejak
+tampil sebagai thumbnail. Jadi pratinjau muncul hampir seketika tanpa perlu download ulang.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Kenapa header `Content-Type` tidak boleh kamu tulis sendiri saat body berupa FormData?",
+    options: [
+      "Karena server hanya menerima JSON",
+      "Karena nilai `boundary` dibuat oleh `fetch`, dan header manual tidak memuat boundary yang cocok",
+      "Karena FormData tidak boleh punya header sama sekali",
+      "Karena header itu membuat token Authorization hilang",
+    ],
+    answer: 1,
+    explain: "Header multipart harus memuat `boundary=...` yang sama dengan pembatas di body. Nilai acak itu hanya diketahui `fetch`, jadi biarkan `fetch` yang menulis header. Server tetap menerima multipart, dan header lain seperti Authorization tidak terpengaruh.",
+  },
+  {
+    q: "Pengguna mengunggah foto 8 MB ke API pendamping. Respons apa yang diterima aplikasi?",
+    options: [
+      "`400 VALIDATION_ERROR`",
+      "`415 UNSUPPORTED_MEDIA_TYPE`",
+      "`413 PAYLOAD_TOO_LARGE`",
+      "`201` dengan foto yang otomatis diperkecil",
+    ],
+    answer: 2,
+    explain: "`limits.fileSize` di multer memicu error `LIMIT_FILE_SIZE`. Error handler mengubahnya menjadi 413 dengan pesan \"Ukuran file maksimal 5 MB\". Server tidak pernah mengecilkan foto. Kode 415 dipakai untuk format yang salah, dan 400 untuk file yang tidak dikirim.",
+  },
+  {
+    q: "Dari mana multer di API pendamping menentukan ekstensi file yang disimpan di disk?",
+    options: [
+      "Dari `file.mimetype` lewat tabel `EXTENSIONS`",
+      "Dari `file.originalname` yang dikirim klien",
+      "Dari isi byte pertama file",
+      "Selalu `.jpg` untuk semua gambar",
+    ],
+    answer: 0,
+    explain: "Fungsi `filename` memakai `EXTENSIONS[file.mimetype]`, jadi hasilnya hanya `.jpg`, `.png`, atau `.webp`. Nama asli dari klien tidak dipercaya karena bisa bentrok dengan file lain atau berisi trik path. Isi byte file tidak diperiksa, dan itulah alasan ada catatan keamanan. PNG dan WEBP tetap memakai ekstensinya sendiri.",
+  },
+  {
+    q: "`attachment.url` bernilai `/uploads/a.jpg`. Apa yang harus diberikan ke `<Image source>` di HP?",
+    options: [
+      "`{ uri: \"/uploads/a.jpg\" }` apa adanya",
+      "`{ uri: \"file:///uploads/a.jpg\" }`",
+      "`{ uri: \"http://localhost:3000/uploads/a.jpg\" }` di semua perangkat",
+      "URL lengkap dari `EXPO_PUBLIC_API_URL` ditambah `/uploads/a.jpg`, misalnya lewat `fileUrl()`",
+    ],
+    answer: 3,
+    explain: "Path relatif tidak punya alamat server, dan `file://` menunjuk ke penyimpanan HP. `localhost` di HP berarti HP itu sendiri, bukan laptop. Alamat yang benar adalah base URL API (IP LAN laptop, atau `10.0.2.2` di emulator Android) ditambah path dari server.",
+  },
+  {
+    q: "Di Expo Web, apa yang sebaiknya di-append ke FormData sebagai file?",
+    options: [
+      "Objek `{ uri, name, type }` seperti di HP",
+      "`asset.file`, yaitu objek `File` asli dari browser",
+      "String Base64 dari foto",
+      "`asset.uri` sebagai teks",
+    ],
+    answer: 1,
+    explain: "Browser tidak memahami objek `{ uri, name, type }` dan mengubahnya menjadi teks \"[object Object]\". Karena itu expo-image-picker menyediakan `asset.file` khusus di web. Base64 atau uri yang dikirim sebagai teks tidak akan dikenali multer sebagai file.",
+  },
+]} />
+
+## Ringkasan
+
+- File seperti foto dikirim dengan **multipart/form-data**. Body dipecah menjadi beberapa part yang dipisahkan
+  boundary. Jangan tulis `Content-Type` sendiri. Biarkan `fetch` yang mengisinya.
+- **multer** di API pendamping menyimpan file ke folder `uploads/` dengan nama acak buatan server. Batasnya 5 MB dan
+  satu file. Format selain jpeg/png/webp ditolak dengan 415. Setelah itu service mencatat metadata ke tabel
+  `Attachment`.
+- `express.static` melayani `/uploads/...` tanpa token. Nama acak membuat URL file sulit ditebak.
+- **expo-image-picker** perlu izin dulu. Pakai `launchImageLibraryAsync` atau `launchCameraAsync` dengan
+  `mediaTypes: ["images"]`, `quality`, dan `allowsEditing`. Selalu periksa `canceled`.
+- Di HP, append objek `{ uri, name, type }`. Di web, append `asset.file`. `apiFetch` cukup mengirim FormData apa
+  adanya tanpa `JSON.stringify`.
+- `useUploadAttachment` tidak optimistis dan menampilkan loading. Setelah sukses, data detail tugas ditandai basi
+  supaya thumbnail baru muncul. Status 413 dan 415 ditangani dengan pesan yang jelas.
+- **expo-image** menampilkan thumbnail dan menyimpannya di cache disk. URL relatif harus dilengkapi base URL API
+  lewat `fileUrl()`.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Lampiran gambar adalah fitur terakhir "Aplikasi Tugas & Catatan Kuliah". Pastikan alur ini berjalan di HP sungguhan.
+Login, buka tugas, potret catatan, tunggu thumbnail muncul, lalu hapus dengan tekan lama. Di
+[Capstone](/belajar/fullstack/capstone) kamu akan merangkai semuanya. Di sana kamu juga melihat bagaimana
+`attachments.js` dan hook `useUploadAttachment` milikmu ditempatkan dalam struktur `kuliah-app` yang lebih rapi.
+
+</Callout>

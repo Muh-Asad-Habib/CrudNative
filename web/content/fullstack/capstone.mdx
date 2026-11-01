@@ -1,0 +1,2092 @@
+## Pengantar
+
+Selamat, kamu sudah sampai di pelajaran terakhir track Fullstack. Selama delapan pelajaran, `kuliah-app` tumbuh sedikit demi sedikit. Ada daftar tugas, form tambah dan ubah, hapus optimistis, cache TanStack Query, login dengan token, sampai unggah foto. Semuanya sudah jalan. Masalahnya, bagian-bagian itu masih terasa terpisah, belum seperti satu aplikasi.
+
+<Callout type="analogi" title="Seperti membuka warung untuk pertama kali">
+
+Pelajaran sebelumnya mirip latihan memasak satu menu demi satu menu. Hari ini warungnya dibuka. Dapur (API di folder `api/`) menyiapkan pesanan. Etalase (layar HP di `kuliah-app`) memajang apa yang bisa dipesan. Buku stok (database) mencatat semua barang. Pembeli tidak peduli menu mana yang dulu kamu latih. Mereka hanya mau warungnya rapi, mudah dipesan, dan pesanannya benar.
+
+</Callout>
+
+Di pelajaran ini kamu menyatukan semua bagian itu menjadi **Aplikasi Tugas & Catatan Kuliah** yang enak dipakai sehari-hari. Bayangkan Andi, mahasiswa semester empat. Ia membuka aplikasi, melihat tugas yang tenggatnya besok, memilih tugas satu mata kuliah saja, lalu menandai tugas yang sudah selesai. Semua itu harus bisa ia lakukan tanpa bingung harus menekan apa.
+
+Pekerjaannya dibagi menjadi beberapa **milestone**, yaitu target kecil yang bisa dicek hasilnya. Setiap milestone ditutup dengan pengecekan. Jadi kamu selalu tahu aplikasi masih sehat sebelum lanjut ke target berikutnya.
+
+<Flow nodes={["Spesifikasi", "Navigasi tab", "CRUD mata kuliah", "Filter & badge", "Profil & logout", "Polish", "Uji end-to-end"]} labels={["user story", "struktur rute", "data baru", "tugas lebih rapi", "akun", "kualitas"]} caption="Alur kerja capstone dari rencana sampai pengujian" />
+
+Siapkan dua terminal seperti biasa:
+
+1. Terminal pertama untuk API pendamping di folder `api/`. Jalankan `npm run dev` (port 3000).
+2. Terminal kedua untuk `kuliah-app`. Jalankan `npx expo start`.
+
+Kalau isi database API sudah berantakan karena latihan sebelumnya, jalankan `npm run db:reset` di folder `api/`. Perintah ini mengembalikan data ke kondisi awal, lengkap dengan akun `demo@kampus.ac.id` / `password123`.
+
+## Spesifikasi fitur
+
+Programmer berpengalaman jarang langsung membuka editor. Mereka menulis dulu apa saja yang harus bisa dilakukan pengguna. Setelah itu, setiap keinginan dipecah menjadi syarat yang bisa dicentang. Cara ini mencegah dua masalah yang sering muncul di proyek akhir. Pertama, fitur terus bertambah sehingga proyek tidak pernah selesai. Kedua, fitur "katanya sudah jadi", padahal belum pernah dicoba.
+
+<Callout type="analogi" title="Seperti menyiapkan bawaan KKN">
+
+Sebelum berangkat KKN, kamu menulis kebutuhan: "Saya butuh senter supaya bisa jalan malam ke posko." Itu mirip **user story**. Lalu kamu membuat daftar centang: senter ada, baterai cadangan ada, sudah dicoba menyala. Itu mirip **kriteria penerimaan**. Kopernya terbatas, jadi barang yang tidak muat ditunda ke kiriman berikutnya. Itu **batas cakupan**. Bedanya, di proyek ini "koper" adalah waktu dan tenagamu, bukan ukuran tas.
+
+</Callout>
+
+### User story
+
+**User story** adalah kalimat pendek yang menjelaskan keinginan pengguna dari sudut pandang mereka. Polanya "Sebagai ..., saya ingin ..., supaya ...". Bagian "supaya" penting karena menjelaskan alasan fitur itu dibuat.
+
+1. Sebagai mahasiswa, saya ingin **mendaftar dan login** supaya tugas saya tidak tercampur dengan tugas orang lain.
+2. Sebagai mahasiswa, saya ingin **mengelola mata kuliah** (nama, kode, dosen, warna) supaya tugas bisa dikelompokkan.
+3. Sebagai mahasiswa, saya ingin **memilih mata kuliah saat membuat tugas** supaya tidak perlu mengetik ulang namanya.
+4. Sebagai mahasiswa, saya ingin **memfilter dan mencari tugas** supaya cepat menemukan tugas "Basis Data" yang belum selesai.
+5. Sebagai mahasiswa, saya ingin **melihat tanda tenggat** (terlambat, hari ini, besok) supaya tidak ada tugas yang terlewat.
+6. Sebagai mahasiswa, saya ingin **melampirkan foto** (misalnya papan tulis atau soal) ke sebuah tugas.
+7. Sebagai mahasiswa, saya ingin **melihat profil dan keluar** dari akun, terutama saat meminjam HP teman.
+
+### Kriteria penerimaan
+
+**Kriteria penerimaan** adalah syarat yang harus terpenuhi supaya sebuah story dianggap selesai. Syaratnya harus bisa dicoba langsung. Perasaan "sepertinya sudah jalan" tidak dihitung. Tabel di bawah nanti dipakai lagi sebagai daftar centang di bagian uji end-to-end.
+
+| No | Kriteria | Cara mengecek |
+| --- | --- | --- |
+| K1 | Pengguna yang belum login hanya bisa melihat layar Login dan Daftar | Buka aplikasi setelah logout, tekan tombol kembali Android |
+| K2 | Tab bawah berisi Tugas, Mata Kuliah, dan Profil | Lihat tab bar setelah login |
+| K3 | Mata kuliah bisa ditambah, diubah, dan dihapus; nama kosong ditolak dengan pesan "Nama mata kuliah wajib diisi" | Coba simpan form kosong |
+| K4 | Form tugas menampilkan pilihan mata kuliah milik pengguna, termasuk "Tanpa mata kuliah" | Buka form tugas baru |
+| K5 | Daftar tugas bisa difilter per status dan per mata kuliah, dicari dengan kata kunci, dan diurutkan berdasarkan tenggat | Kombinasikan filter dan pencarian |
+| K6 | Kartu tugas yang belum selesai menampilkan badge "Terlambat", "Hari ini", atau "Besok" sesuai tenggat | Buat tugas dengan tenggat kemarin, hari ini, dan besok |
+| K7 | Tab Profil menampilkan nama dan email dari server, dan tombol Keluar mengembalikan pengguna ke layar Login | Login dengan akun berbeda, cek datanya |
+| K8 | Setiap daftar punya tampilan memuat, kosong, dan error yang jelas | Matikan API lalu tarik untuk menyegarkan |
+
+### Batas cakupan
+
+**Batas cakupan** adalah garis yang memisahkan fitur yang dikerjakan sekarang dari fitur yang ditunda. Batas ini sama pentingnya dengan daftar fitur. Tanpa batas, kamu akan terus menambah fitur dan proyek tidak pernah selesai.
+
+<Compare>
+<CompareItem title="Masuk versi ini" tone="good">
+
+- Semua story K1 sampai K8
+- Mode gelap mengikuti pengaturan HP
+- Label aksesibilitas untuk tombol dan kartu
+- Uji manual di HP fisik
+
+</CompareItem>
+<CompareItem title="Ditunda ke versi berikutnya" tone="neutral">
+
+- Catatan kuliah per pertemuan (butuh endpoint baru)
+- Pengingat notifikasi sebelum tenggat
+- Mode offline penuh
+- Tes otomatis dan rilis ke Play Store
+
+</CompareItem>
+</Compare>
+
+Fitur yang ditunda tetap berguna. Daftarnya menjadi bahan untuk bagian [Ide pengembangan](#ide-pengembangan) di akhir pelajaran.
+
+## Rencana milestone
+
+Kerjakan milestone sesuai urutan. Setelah satu milestone selesai, jalankan aplikasi. Pastikan tidak ada layar merah (tampilan error React Native) sebelum lanjut.
+
+<Steps>
+<Step title="M1: Navigasi tab">
+
+Pindahkan layar ke grup `(app)` dan `(tabs)`. Tetap pakai `Stack.Protected` dari pelajaran Autentikasi. Cek: setelah login muncul tiga tab, dan detail tugas terbuka tanpa tab bar.
+
+</Step>
+<Step title="M2: CRUD mata kuliah">
+
+Buat `src/features/courses/queries.js`, form mata kuliah, dan tiga layar (daftar, tambah, ubah). Cek: kriteria K3.
+
+</Step>
+<Step title="M3: Tugas yang lebih pintar">
+
+Ganti pemilih mata kuliah di form tugas dengan `useCourses()`. Tambahkan filter, pencarian dengan debounce, urutan tenggat, dan badge tenggat. Cek: K4, K5, K6.
+
+</Step>
+<Step title="M4: Profil dan logout">
+
+Buat tab Profil yang membaca `GET /api/auth/me`. Tambahkan tombol Keluar yang juga mengosongkan cache. Cek: K7.
+
+</Step>
+<Step title="M5: Polish">
+
+Rapikan tampilan dengan empty state, skeleton, label aksesibilitas, mode gelap, dan `ErrorBoundary`. Semua istilah ini dijelaskan di bagian Polish. Cek: K8.
+
+</Step>
+<Step title="M6: Uji end-to-end">
+
+Jalankan skrip uji manual di emulator, lalu di HP fisik yang tersambung ke Wi-Fi yang sama dengan laptop. Isi rubrik penilaian diri.
+
+</Step>
+</Steps>
+
+## Navigasi tab
+
+Sampai pelajaran Upload Gambar, semua layar hidup di satu **Stack**. Stack adalah cara navigasi yang menumpuk layar: layar baru diletakkan di atas layar lama, dan tombol kembali mengangkatnya lagi. Daftar tugas ada di `src/app/index.js`, dan pengguna pindah layar hanya lewat tombol.
+
+Sekarang kita butuh tiga **tab**, yaitu tombol pindah halaman di bagian bawah layar. Namun layar detail dan form tetap harus tampil menutupi tab bar, lengkap dengan tombol kembali.
+
+<Callout type="analogi" title="Seperti map berpembatas">
+
+Bayangkan map plastik dengan tiga pembatas warna: Tugas, Mata Kuliah, dan Profil. Pembatas itu adalah **Tabs**. Kamu bisa loncat ke bagian mana pun dengan satu sentuhan. Kalau ingin membaca satu lembar tugas dengan teliti, kamu mengeluarkan lembar itu dan menaruhnya di atas map. Pembatasnya jadi tertutup. Itu **Stack**: layar detail ditumpuk di atas tab. Setelah selesai, lembar dikembalikan (tombol kembali) dan pembatas terlihat lagi. Label kecil di dalam map, misalnya "khusus anggota", tidak mengubah nama halaman. Label itu mirip **grup** yang dibahas sebentar lagi.
+
+</Callout>
+
+Pola yang biasa dipakai adalah Stack di luar, Tabs di dalam. Struktur foldernya seperti ini:
+
+<FileTree tree={`src/app/
+  _layout.js # Stack root + Stack.Protected
+  (auth)/
+    _layout.js # Stack untuk login dan daftar
+    login.js
+    register.js
+  (app)/
+    _layout.js # Stack untuk layar yang sudah login
+    (tabs)/
+      _layout.js # Tabs: Tugas, Mata Kuliah, Profil
+      index.js
+      courses.js
+      profile.js
+    tasks/
+      new.js
+      [id]/
+        index.js
+        edit.js
+    courses/
+      new.js
+      [id]/
+        edit.js`} />
+
+Folder yang namanya diapit tanda kurung, seperti `(app)` dan `(tabs)`, disebut **grup**. Grup hanya mengatur pengelompokan layar dan **layout** (file `_layout.js` yang menentukan bingkai bersama, misalnya Stack atau tab bar). Nama grup tidak ikut masuk ke URL. Contohnya:
+
+- `src/app/(app)/(tabs)/index.js` tetap dibuka lewat `/`.
+- `src/app/(app)/tasks/[id]/index.js` tetap dibuka lewat `/tasks/5`.
+
+Artinya, semua `Link href` yang sudah kamu tulis sebelumnya tidak perlu diubah.
+
+### Memindahkan file
+
+Jalankan perintah ini dari folder `kuliah-app`. Perintah pertama membuat folder baru. Dua perintah berikutnya memindahkan file daftar tugas dan folder `tasks` beserta isinya.
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+New-Item -ItemType Directory -Force "src\app\(app)\(tabs)" | Out-Null
+Move-Item -LiteralPath "src\app\index.js" -Destination "src\app\(app)\(tabs)\index.js"
+Move-Item -LiteralPath "src\app\tasks" -Destination "src\app\(app)\tasks"
+```
+
+</Tab>
+<Tab>
+
+```bash
+mkdir -p "src/app/(app)/(tabs)"
+mv src/app/index.js "src/app/(app)/(tabs)/index.js"
+mv src/app/tasks "src/app/(app)/tasks"
+```
+
+</Tab>
+</Tabs>
+
+Setelah dipindah, **import relatif** di file-file itu rusak. Import relatif adalah alamat file yang ditulis dari posisi file saat ini, misalnya `../../features`. Karena foldernya sekarang lebih dalam, alamat lama tidak sampai lagi. Aturannya sederhana: setiap tingkat folder baru menambah satu `../` (naik satu folder).
+
+```diff title="src/app/(app)/tasks/[id]/index.js"
+-import { useTask } from "../../../features/tasks/queries";
+-import { AttachmentSection } from "../../../components/attachment-section";
++import { useTask } from "../../../../features/tasks/queries";
++import { AttachmentSection } from "../../../../components/attachment-section";
+```
+
+| File baru | Dari file ini ke `src/` |
+| --- | --- |
+| `src/app/(app)/(tabs)/index.js` | `../../../` |
+| `src/app/(app)/tasks/new.js` | `../../../` |
+| `src/app/(app)/tasks/[id]/index.js` dan `edit.js` | `../../../../` |
+
+Metro (alat yang membundel kode aplikasimu) akan menampilkan `Unable to resolve module` untuk setiap import yang terlewat, lengkap dengan nama filenya. Perbaiki satu per satu sampai tidak ada error lagi.
+
+### Root layout tetap menjaga pintu
+
+Root layout adalah `src/app/_layout.js`, bingkai paling luar yang membungkus semua layar. Dari versi pelajaran Autentikasi, file ini hanya perlu dua perubahan:
+
+1. Layar yang dilindungi sekarang cukup satu grup, yaitu `(app)`.
+2. Kita memasang `ThemeProvider` untuk mode gelap. Bagian ini dibahas di Polish.
+
+```jsx title="src/app/_layout.js"
+import { useColorScheme } from "react-native";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from "expo-router";
+import { queryClient } from "../lib/query-client";
+import { AuthProvider, useAuth } from "../features/auth/auth-context";
+
+function RootNavigator() {
+  const { isLoggedIn, isLoading } = useAuth();
+
+  // Selama token di SecureStore belum selesai dibaca, jangan tampilkan apa pun
+  if (isLoading) return null;
+
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Protected guard={isLoggedIn}>
+        <Stack.Screen name="(app)" />
+      </Stack.Protected>
+      <Stack.Protected guard={!isLoggedIn}>
+        <Stack.Screen name="(auth)" />
+      </Stack.Protected>
+    </Stack>
+  );
+}
+
+export default function RootLayout() {
+  const scheme = useColorScheme();
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <ThemeProvider value={scheme === "dark" ? DarkTheme : DefaultTheme}>
+          <RootNavigator />
+        </ThemeProvider>
+      </AuthProvider>
+    </QueryClientProvider>
+  );
+}
+```
+
+Cara membaca kode di atas:
+
+- `RootNavigator` menunggu sampai token selesai dibaca dari SecureStore. Selama menunggu, layar dibiarkan kosong.
+- `Stack.Protected` bekerja seperti satpam di pintu grup. Properti `guard` adalah syarat masuknya. Nilai `true` membuka grup, `false` menutupnya.
+- Grup `(app)` hanya terbuka kalau sudah login. Grup `(auth)` (Login dan Daftar) hanya terbuka kalau belum login.
+- `RootLayout` membungkus semuanya dengan penyedia cache (`QueryClientProvider`), data login (`AuthProvider`), dan tema warna (`ThemeProvider`).
+
+Kalau di pelajaran Autentikasi kamu memakai nama lain untuk hook atau status (misalnya `isSignedIn`), pakai nama milikmu. Yang penting polanya sama. Saat `isLoggedIn` berubah menjadi `false`, Expo Router otomatis membuang layar `(app)` dari riwayat dan menampilkan `(auth)`.
+
+### Stack untuk pengguna yang sudah login
+
+File ini adalah layout grup `(app)`. Isinya daftar layar yang ditumpuk di atas tab, beserta judul header masing-masing.
+
+```jsx title="src/app/(app)/_layout.js"
+import { Stack } from "expo-router";
+
+export default function AppLayout() {
+  return (
+    <Stack screenOptions={{ headerTintColor: "#4F46E5" }}>
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="tasks/new" options={{ title: "Tugas Baru", presentation: "modal" }} />
+      <Stack.Screen name="tasks/[id]/index" options={{ title: "Detail Tugas" }} />
+      <Stack.Screen name="tasks/[id]/edit" options={{ title: "Ubah Tugas" }} />
+      <Stack.Screen name="courses/new" options={{ title: "Mata Kuliah Baru", presentation: "modal" }} />
+      <Stack.Screen name="courses/[id]/edit" options={{ title: "Ubah Mata Kuliah" }} />
+    </Stack>
+  );
+}
+```
+
+Baris pertama di dalam `Stack` adalah seluruh grup `(tabs)`. Headernya disembunyikan karena setiap tab sudah punya header sendiri dari navigator Tabs. Tanpa `headerShown: false`, kamu akan melihat dua header bertumpuk. Opsi `presentation: "modal"` membuat form tambah muncul dari bawah, seperti lembar yang ditarik ke atas.
+
+### Layout tab
+
+Ikon tab memakai `@expo/vector-icons`. Pasang dengan `npx expo install` supaya versinya cocok dengan SDK Expo yang kamu pakai:
+
+```bash
+npx expo install @expo/vector-icons
+```
+
+```jsx title="src/app/(app)/(tabs)/_layout.js"
+import { Tabs } from "expo-router/js-tabs";
+import Ionicons from "@expo/vector-icons/Ionicons";
+
+function tabIcon(name) {
+  return ({ color, size }) => <Ionicons name={name} color={color} size={size} />;
+}
+
+export default function TabsLayout() {
+  return (
+    <Tabs screenOptions={{ tabBarActiveTintColor: "#4F46E5", headerTintColor: "#4F46E5" }}>
+      <Tabs.Screen
+        name="index"
+        options={{ title: "Tugas", tabBarIcon: tabIcon("checkbox-outline") }}
+      />
+      <Tabs.Screen
+        name="courses"
+        options={{ title: "Mata Kuliah", tabBarIcon: tabIcon("book-outline") }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{ title: "Profil", tabBarIcon: tabIcon("person-circle-outline") }}
+      />
+    </Tabs>
+  );
+}
+```
+
+Cara membaca kode tab di atas:
+
+- Fungsi `tabIcon` membuat ikon untuk satu tab. Warna dan ukurannya diberikan otomatis oleh tab bar, jadi tab aktif berwarna ungu.
+- Nilai `name` sama dengan nama file di folder `(tabs)` tanpa ekstensi. `name="courses"` berarti file `courses.js`.
+- Urutan `Tabs.Screen` menentukan urutan tab dari kiri ke kanan.
+
+Buat dulu `courses.js` dan `profile.js` berisi komponen sederhana yang hanya menampilkan teks. Dengan begitu tab bar bisa dicoba sebelum isinya jadi.
+
+`Tabs` diimpor dari `expo-router/js-tabs`. Di Expo SDK 58, `import { Tabs } from "expo-router"` masih berjalan, tetapi sudah ditandai *deprecated* (masih boleh dipakai, tetapi akan dihapus di versi mendatang). Kalau proyekmu masih memakai SDK lama dan path itu tidak ditemukan, kembali ke import dari `expo-router`.
+
+<Callout type="warning" title="Jangan taruh layar detail di dalam (tabs)">
+
+Kalau `tasks/[id]/index.js` diletakkan di dalam `(tabs)`, Expo Router menganggapnya tab tambahan. Hasilnya muncul tab keempat yang aneh, dan layar detail tampil dengan tab bar di bawahnya. Layar yang dibuka di atas tab selalu tinggal di Stack induk, yaitu `(app)`.
+
+</Callout>
+
+### Tombol Tambah di header tab
+
+Layar daftar tugas dari pelajaran Create & Update memasang tombol **Tambah** lewat `Stack.Screen` dengan `headerRight`. Setelah dipindah ke dalam `(tabs)`, kode itu tetap bekerja. Alasannya, `Stack.Screen` dan `Tabs.Screen` yang ditulis di dalam sebuah layar sama-sama hanya mengubah opsi layar itu sendiri. Jadi tombolnya tetap muncul di header tab Tugas. Supaya orang yang membaca kodenya tidak bingung, ganti namanya menjadi `Tabs.Screen`:
+
+```diff title="src/app/(app)/(tabs)/index.js"
+-import { Link, Stack } from "expo-router";
++import { Link } from "expo-router";
++import { Tabs } from "expo-router/js-tabs";
+ 
+-      <Stack.Screen
++      <Tabs.Screen
+         options={{
+           headerRight: () => (
+```
+
+Cek milestone M1 sekarang:
+
+1. Login dan pastikan tiga tab muncul.
+2. Buka satu tugas.
+3. Pastikan layar detail menutupi tab bar dan ada tombol kembali di kiri atas.
+
+## CRUD mata kuliah
+
+API pendamping sudah menyediakan **endpoint** mata kuliah sejak awal. Endpoint adalah alamat tujuan request, mirip nomor loket di kantor pelayanan. Selama ini kita hanya membaca daftar mata kuliah untuk pemilih di form tugas. Sekarang kita pakai semua fitur CRUD-nya: tambah, lihat, ubah, dan hapus.
+
+| Method | Path | Catatan |
+| --- | --- | --- |
+| `GET` | `/api/courses?limit=50` | Diurutkan berdasarkan nama, maksimal 50, setiap item punya `taskCount` |
+| `GET` | `/api/courses/:id` | 404 "Mata kuliah tidak ditemukan" kalau bukan milikmu |
+| `POST` | `/api/courses` | `name` wajib; `code`, `lecturer`, `color` opsional |
+| `PATCH` | `/api/courses/:id` | Sebagian: kirim kolom yang berubah saja |
+| `DELETE` | `/api/courses/:id` | 204; tugas di dalamnya **tidak** ikut terhapus, `courseId`-nya menjadi `null` |
+
+Ada dua aturan validasi server yang perlu kamu ingat:
+
+1. `code` dan `lecturer` boleh berupa string kosong. Server menyimpannya sebagai `null` (kosong). Jadi, mengirim `""` adalah cara resmi untuk mengosongkan kolom itu saat mengubah data.
+2. `color` harus berformat `#RRGGBB`, misalnya `#4F46E5`. Kalau formatnya salah, server membalas status 400 dengan pesan "Warna harus berformat #RRGGBB, contoh #4F46E5" di `details`.
+
+Supaya mudah dibayangkan, anggap setiap mata kuliah adalah stiker warna bertuliskan namanya, misalnya stiker biru "Basis Data". Stiker itu ditempel di lembar-lembar tugas. Kalau stiker biru dihapus dari daftar mata kuliah, lembar tugasnya tidak ikut dibuang. Lembar itu hanya tidak berstiker lagi (`courseId` menjadi `null`).
+
+### Query key dan hook
+
+**Query key** adalah label laci tempat TanStack Query menyimpan hasil request di **cache** (salinan data di memori HP supaya tidak perlu minta ulang ke server). Ikuti pola `taskKeys` dari pelajaran TanStack Query: satu objek pembuat key, lalu satu hook untuk setiap operasi.
+
+```js title="src/features/courses/queries.js"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiFetch } from "../../lib/api";
+import { taskKeys } from "../tasks/queries";
+
+export const courseKeys = {
+  all: ["courses"],
+  lists: () => [...courseKeys.all, "list"],
+  details: () => [...courseKeys.all, "detail"],
+  detail: (id) => [...courseKeys.details(), id],
+};
+
+export function useCourses() {
+  return useQuery({
+    queryKey: courseKeys.lists(),
+    queryFn: ({ signal }) => apiFetch("/api/courses?limit=50", { signal }),
+    select: (json) => json.data,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCourse(id) {
+  const queryClient = useQueryClient();
+  return useQuery({
+    queryKey: courseKeys.detail(id),
+    queryFn: async ({ signal }) => {
+      const json = await apiFetch(`/api/courses/${id}`, { signal });
+      return json.data;
+    },
+    enabled: Number.isInteger(id),
+    // Cache daftar menyimpan amplop { data, meta }, karena select hanya mengubah keluaran hook
+    placeholderData: () =>
+      queryClient.getQueryData(courseKeys.lists())?.data?.find((course) => course.id === id),
+  });
+}
+
+export function useCreateCourse() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input) => {
+      const json = await apiFetch("/api/courses", { method: "POST", body: input });
+      return json.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: courseKeys.lists() }),
+  });
+}
+
+export function useUpdateCourse() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, input }) => {
+      const json = await apiFetch(`/api/courses/${id}`, { method: "PATCH", body: input });
+      return json.data;
+    },
+    onSuccess: (course) => {
+      queryClient.setQueryData(courseKeys.detail(course.id), course);
+      queryClient.invalidateQueries({ queryKey: taskKeys.all });
+      return queryClient.invalidateQueries({ queryKey: courseKeys.lists() });
+    },
+  });
+}
+
+export function useDeleteCourse() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => apiFetch(`/api/courses/${id}`, { method: "DELETE" }),
+    onSuccess: (_result, id) => {
+      queryClient.removeQueries({ queryKey: courseKeys.detail(id) });
+      queryClient.invalidateQueries({ queryKey: taskKeys.all });
+      return queryClient.invalidateQueries({ queryKey: courseKeys.lists() });
+    },
+  });
+}
+```
+
+Isi file ini dalam bahasa sehari-hari:
+
+- `useCourses` mengambil daftar mata kuliah. `select: (json) => json.data` membuat komponen langsung menerima array. Cache tetap menyimpan "amplop" lengkap `{ data, meta }`. Itu sebabnya `useCourse` membaca `?.data?.find(...)`.
+- `useCourse` mengambil satu mata kuliah. **`placeholderData`** adalah data sementara yang ditampilkan selama data asli dimuat. Di sini datanya diambil dari daftar yang sudah ada di cache, jadi form ubah langsung terisi.
+- `staleTime` lima menit artinya data dianggap masih segar selama lima menit. Mata kuliah jarang berubah, paling di awal semester. Tidak perlu minta ulang setiap kali form tugas dibuka.
+- `enabled: Number.isInteger(id)` mencegah request yang pasti gagal. Parameter dari URL selalu berupa teks. Layar ubah mengubahnya dengan `Number(id)`. Kalau hasilnya `NaN` (bukan angka), query tidak dijalankan.
+- Setelah ubah dan hapus, cache tugas ikut di-**invalidasi**, yaitu ditandai basi supaya diambil ulang. Alasannya, setiap tugas dari API membawa objek `course` berisi nama dan warna. Kalau warna "Basis Data" diganti, kartu tugas di cache masih membawa warna lama. Setelah hapus, tugas-tugas itu malah berubah menjadi tanpa mata kuliah.
+- Hanya invalidasi daftar mata kuliah yang di-`return`. TanStack Query menunggu janji (promise) yang dikembalikan `onSuccess` sebelum `mutateAsync` selesai. Jadi daftar mata kuliah sudah segar saat layar kembali. Daftar tugas boleh menyusul di belakang.
+
+Kenapa tidak **optimistis** seperti hapus tugas? Optimistis artinya layar langsung berubah sebelum server menjawab, lalu dibatalkan kalau gagal. Form mata kuliah cukup sering ditolak validasi, dan perubahannya jarang. Menunggu jawaban server sekitar 100 ms lebih masuk akal daripada menampilkan data yang lalu harus dibatalkan. Pola optimistis cocok untuk aksi yang sering dan hampir pasti berhasil, seperti mencentang tugas selesai.
+
+### Form mata kuliah
+
+Form ini lebih kecil dari form tugas, tetapi polanya sama:
+
+1. State menyimpan nilai setiap kolom.
+2. Validasi ringan dijalankan di HP sebelum mengirim.
+3. Pesan error dari server (`details`) dipetakan ke kolom yang tepat.
+
+```jsx title="src/components/course-form.js"
+import { useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ApiError } from "../lib/api";
+
+export const COURSE_COLORS = ["#4F46E5", "#0891B2", "#059669", "#D97706", "#DC2626", "#DB2777", "#7C3AED", "#475569"];
+
+export const EMPTY_COURSE_VALUES = { name: "", code: "", lecturer: "", color: COURSE_COLORS[0] };
+
+export function courseToValues(course) {
+  return {
+    name: course.name,
+    code: course.code ?? "",
+    lecturer: course.lecturer ?? "",
+    color: course.color ?? COURSE_COLORS[0],
+  };
+}
+
+export function toCoursePayload(values) {
+  return {
+    name: values.name.trim(),
+    code: values.code.trim(),
+    lecturer: values.lecturer.trim(),
+    color: values.color,
+  };
+}
+
+function toCourseErrors(error) {
+  if (error instanceof ApiError && error.code === "VALIDATION_ERROR") {
+    const fieldErrors = {};
+    for (const { field, message } of error.details ?? []) fieldErrors[field] ??= message;
+    return { fieldErrors, formError: Object.keys(fieldErrors).length ? null : error.message };
+  }
+  return { fieldErrors: {}, formError: error.message };
+}
+
+function TextField({ label, error, ...inputProps }) {
+  return (
+    <View style={styles.field}>
+      <Text style={styles.label}>{label}</Text>
+      <TextInput
+        style={[styles.input, error && styles.inputError]}
+        accessibilityLabel={label}
+        placeholderTextColor="#94A3B8"
+        {...inputProps}
+      />
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+    </View>
+  );
+}
+
+export function CourseForm({ initialValues = EMPTY_COURSE_VALUES, submitLabel = "Simpan", onSubmit }) {
+  const [values, setValues] = useState(initialValues);
+  const [errors, setErrors] = useState({});
+  const [formError, setFormError] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  function setField(name, value) {
+    setValues((prev) => ({ ...prev, [name]: value }));
+    setErrors((prev) => ({ ...prev, [name]: undefined }));
+  }
+
+  async function handleSubmit() {
+    if (saving) return;
+    if (!values.name.trim()) {
+      setErrors({ name: "Nama mata kuliah wajib diisi" });
+      return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      await onSubmit(toCoursePayload(values));
+    } catch (error) {
+      const mapped = toCourseErrors(error);
+      setErrors(mapped.fieldErrors);
+      setFormError(mapped.formError);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      {formError ? <Text style={styles.banner}>{formError}</Text> : null}
+
+      <TextField
+        label="Nama"
+        value={values.name}
+        onChangeText={(text) => setField("name", text)}
+        error={errors.name}
+        placeholder="Basis Data"
+      />
+      <TextField
+        label="Kode (opsional)"
+        value={values.code}
+        onChangeText={(text) => setField("code", text)}
+        error={errors.code}
+        placeholder="IF2201"
+        autoCapitalize="characters"
+      />
+      <TextField
+        label="Dosen (opsional)"
+        value={values.lecturer}
+        onChangeText={(text) => setField("lecturer", text)}
+        error={errors.lecturer}
+        placeholder="Dr. Sari Wulandari"
+      />
+
+      <Text style={styles.label}>Warna</Text>
+      <View style={styles.swatches} accessibilityRole="radiogroup">
+        {COURSE_COLORS.map((color) => {
+          const selected = values.color === color;
+          return (
+            <Pressable
+              key={color}
+              onPress={() => setField("color", color)}
+              accessibilityRole="radio"
+              accessibilityLabel={`Warna ${color}`}
+              accessibilityState={{ checked: selected }}
+              hitSlop={4}
+              style={[styles.swatch, { backgroundColor: color }, selected && styles.swatchSelected]}
+            />
+          );
+        })}
+      </View>
+      {errors.color ? <Text style={styles.error}>{errors.color}</Text> : null}
+
+      <Pressable
+        onPress={handleSubmit}
+        disabled={saving}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: saving, busy: saving }}
+        style={[styles.button, saving && styles.buttonDisabled]}
+      >
+        {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>{submitLabel}</Text>}
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { padding: 16, gap: 16 },
+  field: { gap: 6 },
+  label: { fontSize: 14, fontWeight: "600", color: "#334155" },
+  input: { borderWidth: 1, borderColor: "#CBD5E1", borderRadius: 10, padding: 12, fontSize: 16, color: "#0F172A" },
+  inputError: { borderColor: "#DC2626" },
+  error: { color: "#DC2626", fontSize: 13 },
+  banner: { backgroundColor: "#FEE2E2", color: "#991B1B", padding: 12, borderRadius: 10 },
+  swatches: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  swatch: { width: 40, height: 40, borderRadius: 20 },
+  swatchSelected: { borderWidth: 3, borderColor: "#0F172A" },
+  button: { backgroundColor: "#4F46E5", borderRadius: 10, minHeight: 48, alignItems: "center", justifyContent: "center" },
+  buttonDisabled: { opacity: 0.6 },
+  buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
+});
+```
+
+Bagian penting dari form ini:
+
+- `courseToValues` dan `toCoursePayload` adalah penerjemah. Yang pertama mengubah data server menjadi isi form. Yang kedua mengubah isi form menjadi **payload**, yaitu isi request yang dikirim ke server.
+- `toCourseErrors` membaca error validasi dari server, lalu menaruh pesannya di kolom yang sesuai, misalnya di bawah kolom Nama.
+- `handleSubmit` menolak nama kosong sebelum mengirim. Kalau server menolak, pesan error ditampilkan dan tombol bisa ditekan lagi.
+
+`toCoursePayload` selalu mengirim `code` dan `lecturer` sebagai string, termasuk string kosong. Untuk `POST`, server mengubahnya menjadi `null`. Untuk `PATCH`, string kosong berarti "hapus kode ini". Karena itu kolom kosong tidak dibuang dari payload. Kalau dibuang, pengguna tidak akan pernah bisa menghapus nama dosen yang salah ketik.
+
+Pilihan warna dibatasi ke delapan **swatch** (lingkaran contoh warna) supaya format warnanya pasti benar. Swatch berukuran 40 px dengan `hitSlop={4}`, jadi area sentuhnya 48 px, cukup untuk jempol. Validasi warna di server tetap berguna. Kamu akan memakainya di Latihan 3.
+
+### Tiga layar mata kuliah
+
+Tab daftar menampilkan setiap mata kuliah beserta jumlah tugasnya. Ketuk baris untuk mengubah. Tekan **Hapus** untuk menghapus setelah konfirmasi.
+
+```jsx title="src/app/(app)/(tabs)/courses.js"
+import { useState } from "react";
+import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { Link } from "expo-router";
+import { Tabs } from "expo-router/js-tabs";
+import { useCourses, useDeleteCourse } from "../../../features/courses/queries";
+import { confirmAsync } from "../../../lib/confirm";
+
+function CourseRow({ course, onDelete }) {
+  const meta = [course.code, course.lecturer].filter(Boolean).join(" · ");
+  return (
+    <View style={styles.row}>
+      <Link href={`/courses/${course.id}/edit`} asChild>
+        <Pressable
+          style={styles.rowMain}
+          accessibilityRole="button"
+          accessibilityLabel={`Ubah mata kuliah ${course.name}, ${course.taskCount} tugas`}
+        >
+          <View style={[styles.dot, { backgroundColor: course.color ?? "#94A3B8" }]} />
+          <View style={styles.flex}>
+            <Text style={styles.name}>{course.name}</Text>
+            <Text style={styles.meta}>{meta || "Tanpa kode dan dosen"}</Text>
+          </View>
+          <Text style={styles.count}>{course.taskCount} tugas</Text>
+        </Pressable>
+      </Link>
+      <Pressable
+        onPress={() => onDelete(course)}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={`Hapus mata kuliah ${course.name}`}
+        style={styles.deleteButton}
+      >
+        <Text style={styles.deleteText}>Hapus</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+export default function CoursesScreen() {
+  const { data: courses, isPending, error, refetch } = useCourses();
+  const deleteCourse = useDeleteCourse();
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await refetch();
+    setRefreshing(false);
+  }
+
+  async function handleDelete(course) {
+    const ok = await confirmAsync({
+      title: "Hapus mata kuliah?",
+      message:
+        course.taskCount > 0
+          ? `${course.taskCount} tugas di "${course.name}" tidak ikut terhapus, tetapi menjadi tanpa mata kuliah.`
+          : `"${course.name}" akan dihapus permanen.`,
+    });
+    if (!ok) return;
+    deleteCourse.mutate(course.id, {
+      onError: (err) => Alert.alert("Gagal menghapus mata kuliah", err.message),
+    });
+  }
+
+  if (isPending) return <ActivityIndicator style={styles.center} />;
+  if (error && !courses) return <Text style={styles.error}>{error.message}</Text>;
+
+  return (
+    <>
+      <Tabs.Screen
+        options={{
+          headerRight: () => (
+            <Link href="/courses/new" asChild>
+              <Pressable hitSlop={8} style={styles.headerButton} accessibilityLabel="Tambah mata kuliah">
+                <Text style={styles.headerButtonText}>Tambah</Text>
+              </Pressable>
+            </Link>
+          ),
+        }}
+      />
+      <FlatList
+        data={courses}
+        keyExtractor={(item) => String(item.id)}
+        renderItem={({ item }) => <CourseRow course={item} onDelete={handleDelete} />}
+        contentContainerStyle={styles.list}
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
+        ListEmptyComponent={<Text style={styles.empty}>Belum ada mata kuliah. Tekan Tambah untuk membuat yang pertama.</Text>}
+      />
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  center: { flex: 1 },
+  flex: { flex: 1 },
+  list: { padding: 16, gap: 12 },
+  row: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFFFFF", borderRadius: 12, borderWidth: 1, borderColor: "#E2E8F0" },
+  rowMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 12, padding: 16 },
+  dot: { width: 14, height: 14, borderRadius: 7 },
+  name: { fontSize: 16, fontWeight: "600", color: "#0F172A" },
+  meta: { fontSize: 13, color: "#64748B" },
+  count: { fontSize: 13, color: "#475569" },
+  deleteButton: { paddingHorizontal: 16, minHeight: 44, justifyContent: "center" },
+  deleteText: { color: "#DC2626", fontWeight: "600" },
+  headerButton: { paddingHorizontal: 16, minHeight: 44, justifyContent: "center" },
+  headerButtonText: { color: "#4F46E5", fontSize: 16, fontWeight: "600" },
+  empty: { textAlign: "center", color: "#64748B", marginTop: 48 },
+  error: { margin: 16, color: "#B91C1C" },
+});
+```
+
+Pesan konfirmasi sengaja menyebut jumlah tugas. Pengguna yang membaca "3 tugas tidak ikut terhapus" jadi tahu tugasnya aman. Tanpa kalimat itu, ia bisa ragu menekan Hapus, atau kaget saat tugasnya kehilangan mata kuliah.
+
+Layar tambah dan ubah hanya merangkai hook dan form. Keduanya tidak memakai `try/catch`. Error dari `mutateAsync` sengaja dibiarkan naik ke `CourseForm`, karena form itulah yang tahu cara menampilkannya. Kalau berhasil, layar kembali ke daftar.
+
+```jsx title="src/app/(app)/courses/new.js"
+import { useRouter } from "expo-router";
+import { CourseForm } from "../../../components/course-form";
+import { useCreateCourse } from "../../../features/courses/queries";
+
+export default function NewCourseScreen() {
+  const router = useRouter();
+  const createCourse = useCreateCourse();
+
+  async function handleSubmit(payload) {
+    await createCourse.mutateAsync(payload);
+    if (router.canGoBack()) router.back();
+    else router.replace("/courses");
+  }
+
+  return <CourseForm submitLabel="Simpan mata kuliah" onSubmit={handleSubmit} />;
+}
+```
+
+```jsx title="src/app/(app)/courses/[id]/edit.js"
+import { ActivityIndicator, StyleSheet, Text } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { CourseForm, courseToValues } from "../../../../components/course-form";
+import { useCourse, useUpdateCourse } from "../../../../features/courses/queries";
+
+export default function EditCourseScreen() {
+  const { id } = useLocalSearchParams();
+  const courseId = Number(id);
+  const router = useRouter();
+  const { data: course, isPending, error } = useCourse(courseId);
+  const updateCourse = useUpdateCourse();
+
+  async function handleSubmit(payload) {
+    await updateCourse.mutateAsync({ id: courseId, input: payload });
+    if (router.canGoBack()) router.back();
+    else router.replace("/courses");
+  }
+
+  if (!Number.isInteger(courseId)) return <Text style={styles.message}>Alamat mata kuliah tidak valid.</Text>;
+  if (error) return <Text style={styles.message}>{error.message}</Text>;
+  if (isPending) return <ActivityIndicator style={styles.center} />;
+
+  return (
+    <CourseForm
+      key={course.id}
+      initialValues={courseToValues(course)}
+      submitLabel="Simpan perubahan"
+      onSubmit={handleSubmit}
+    />
+  );
+}
+
+const styles = StyleSheet.create({
+  center: { flex: 1 },
+  message: { margin: 16, color: "#B91C1C" },
+});
+```
+
+Karena `placeholderData` mengambil data dari cache daftar, form ubah biasanya langsung terisi tanpa spinner. Request detail tetap berjalan di belakang untuk memastikan datanya terbaru.
+
+`key={course.id}` membuat form dibuat ulang kalau kamu pindah ke mata kuliah lain. Ini perlu karena `useState(initialValues)` hanya membaca nilai awal satu kali.
+
+Supaya sederhana, layar ubah mengirim semua kolom lewat `PATCH`. Ini aman karena API menerima kolom yang nilainya tidak berubah. Kalau ingin lebih hemat, pakai pola `buildPatch` dari form tugas.
+
+### Pemilih mata kuliah memakai cache
+
+`CoursePicker` di form tugas masih mengambil data sendiri dengan `useEffect`. Akibatnya ada dua masalah. Mata kuliah yang baru kamu buat tidak muncul sampai form dibuka ulang. Setiap form juga membuat request baru. Ganti isinya dengan `useCourses()`:
+
+```diff title="src/components/task-form.js"
+-import { useEffect, useRef, useState } from "react";
++import { useRef, useState } from "react";
+ ...
+-import { ApiError, apiFetch } from "../lib/api";
++import { ApiError } from "../lib/api";
++import { useCourses } from "../features/courses/queries";
+ ...
+ function CoursePicker({ value, onChange, error }) {
+-  const [courses, setCourses] = useState([]);
+-  const [loading, setLoading] = useState(true);
+-  const [loadError, setLoadError] = useState(null);
+-
+-  useEffect(() => {
+-    const controller = new AbortController();
+-    apiFetch("/api/courses?limit=50", { signal: controller.signal })
+-      .then(({ data }) => setCourses(data))
+-      .catch(() => {
+-        if (!controller.signal.aborted) setLoadError("Gagal memuat mata kuliah.");
+-      })
+-      .finally(() => setLoading(false));
+-    return () => controller.abort();
+-  }, []);
++  const { data: courses = [], isPending: loading, error: queryError } = useCourses();
++  const loadError = queryError ? "Gagal memuat mata kuliah." : null;
+ 
+   const options = [
+```
+
+Sisa komponen tidak berubah, karena nama variabel `courses`, `loading`, dan `loadError` sengaja dipertahankan. Sekarang tab Mata Kuliah dan pemilih di form tugas berbagi satu cache. Coba tambah "Pemrograman Mobile" di tab, lalu buka form tugas. Mata kuliah itu langsung tersedia tanpa request baru.
+
+## Filter, pencarian, dan urutan tugas
+
+Dengan 10 tugas contoh, daftar masih bisa diperiksa dengan mata. Di akhir semester bisa ada 60 tugas, dan Andi butuh cara mempersempitnya. API sudah mendukung semua yang kita perlukan lewat [query string](/glosarium#query-string) `GET /api/tasks`. Query string adalah tambahan setelah tanda `?` di URL, misalnya `?status=DONE`.
+
+| Parameter | Contoh | Arti |
+| --- | --- | --- |
+| `status` | `TODO`, `IN_PROGRESS`, `DONE` | Hanya tugas dengan status itu |
+| `courseId` | `3` | Hanya tugas mata kuliah tertentu |
+| `q` | `erd` | Cari di judul dan deskripsi (maksimal 100 karakter) |
+| `sort` | `deadline`, `-createdAt` | Urutan; `deadline` menaruh tugas tanpa tenggat di paling bawah |
+
+Ingat `toQueryString` dari pelajaran TanStack Query. Fungsi itu membuang nilai `undefined`, `null`, dan string kosong. Jadi pilihan "Semua" cukup diwakili `undefined`, dan parameter itu tidak ikut terkirim.
+
+### Debounce pencarian
+
+Kalau setiap huruf yang diketik langsung mengubah filter, mengetik "basis" mengirim lima request. Selain boros, jawabannya bisa tiba tidak berurutan. **Debounce** menunda pembaruan sampai pengguna berhenti mengetik sebentar.
+
+<Callout type="analogi" title="Seperti pintu lift">
+
+Pintu lift tidak langsung menutup saat satu orang masuk. Lift menunggu beberapa detik. Kalau ada orang lain masuk, hitungan waktunya diulang dari awal. Pintu baru menutup setelah tidak ada yang masuk lagi. Debounce bekerja sama: setiap huruf baru mengulang hitungan 400 ms, dan request baru dikirim setelah jarimu diam.
+
+</Callout>
+
+```js title="src/lib/use-debounced-value.js"
+import { useEffect, useState } from "react";
+
+export function useDebouncedValue(value, delayMs = 400) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+
+  return debounced;
+}
+```
+
+Cara kerjanya:
+
+- Setiap kali `value` berubah, `useEffect` memasang timer baru selama 400 ms.
+- Sebelum timer baru dipasang, fungsi cleanup (`clearTimeout`) membatalkan timer lama.
+- Nilai baru hanya diteruskan kalau tidak ada perubahan selama 400 ms.
+
+Simulasinya saat Sari mengetik "erd" dengan jeda 150 ms per huruf:
+
+```txt
+t=0     ketik "e"    -> timer A dipasang (400 ms)
+t=150   ketik "er"   -> timer A dibatalkan, timer B dipasang
+t=300   ketik "erd"  -> timer B dibatalkan, timer C dipasang
+t=700   timer C jalan -> debounced = "erd" -> satu request: GET /api/tasks?q=erd&sort=deadline...
+```
+
+Sari mengetik tiga huruf, tetapi hanya satu request yang terkirim. Jeda 400 ms cukup pendek sehingga aplikasi tetap terasa cepat. Jeda itu juga cukup panjang untuk kecepatan mengetik jempol rata-rata.
+
+### Chip filter
+
+**Chip** adalah tombol kecil berbentuk kapsul yang bisa dipilih, seperti label "Selesai" atau "Basis Data". Chip dipakai berulang kali untuk status, mata kuliah, dan urutan. Jadi kita buat satu komponen kecil:
+
+```jsx title="src/components/filter-chip.js"
+import { Pressable, StyleSheet, Text, View } from "react-native";
+
+export function FilterChip({ label, selected, onPress, color }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={6}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      style={[styles.chip, selected && styles.chipSelected]}
+    >
+      {color ? <View style={[styles.dot, { backgroundColor: color }]} /> : null}
+      <Text style={[styles.text, selected && styles.textSelected]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+  },
+  chipSelected: { backgroundColor: "#4F46E5", borderColor: "#4F46E5" },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  text: { fontSize: 13, color: "#334155" },
+  textSelected: { color: "#FFFFFF", fontWeight: "600" },
+});
+```
+
+`accessibilityState={{ selected }}` membuat **pembaca layar** mengucapkan "terpilih" untuk chip yang aktif. Pembaca layar adalah fitur HP (TalkBack di Android, VoiceOver di iPhone) yang membacakan isi layar untuk pengguna tunanetra. Tanpa properti itu, mereka hanya mendengar daftar kata tanpa tahu filter mana yang aktif. Tinggi 36 px ditambah `hitSlop={6}` di atas dan bawah memberi area sentuh 48 px.
+
+Panel filter menggabungkan kotak cari dan tiga baris chip. Panel ini hanya menerima dua prop: objek `value` berisi semua pilihan, dan fungsi `onChange(patch)` untuk mengubah sebagian pilihan. Jadi layar tidak perlu meneruskan delapan prop terpisah.
+
+```jsx title="src/components/task-filters.js"
+import { ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { FilterChip } from "./filter-chip";
+import { useCourses } from "../features/courses/queries";
+
+const STATUS_FILTERS = [
+  { value: undefined, label: "Semua" },
+  { value: "TODO", label: "Belum mulai" },
+  { value: "IN_PROGRESS", label: "Dikerjakan" },
+  { value: "DONE", label: "Selesai" },
+];
+
+const SORT_OPTIONS = [
+  { value: "deadline", label: "Tenggat terdekat" },
+  { value: "-createdAt", label: "Terbaru dibuat" },
+];
+
+export function TaskFilters({ value, onChange }) {
+  const { data: courses = [] } = useCourses();
+
+  return (
+    <View style={styles.container}>
+      <TextInput
+        value={value.search}
+        onChangeText={(search) => onChange({ search })}
+        placeholder="Cari judul atau deskripsi"
+        placeholderTextColor="#94A3B8"
+        accessibilityLabel="Cari tugas"
+        returnKeyType="search"
+        clearButtonMode="while-editing"
+        style={styles.search}
+      />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
+        {STATUS_FILTERS.map((option) => (
+          <FilterChip
+            key={option.label}
+            label={option.label}
+            selected={value.status === option.value}
+            onPress={() => onChange({ status: option.value })}
+          />
+        ))}
+      </ScrollView>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
+        <FilterChip
+          label="Semua mata kuliah"
+          selected={value.courseId === undefined}
+          onPress={() => onChange({ courseId: undefined })}
+        />
+        {courses.map((course) => (
+          <FilterChip
+            key={course.id}
+            label={course.name}
+            color={course.color}
+            selected={value.courseId === course.id}
+            onPress={() => onChange({ courseId: course.id })}
+          />
+        ))}
+      </ScrollView>
+      <View style={styles.row}>
+        {SORT_OPTIONS.map((option) => (
+          <FilterChip
+            key={option.value}
+            label={option.label}
+            selected={value.sort === option.value}
+            onPress={() => onChange({ sort: option.value })}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { paddingTop: 12, gap: 10 },
+  search: {
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    fontSize: 16,
+  },
+  row: { flexDirection: "row", gap: 8, paddingHorizontal: 16 },
+});
+```
+
+Daftar mata kuliah di sini datang dari cache yang sama dengan tab Mata Kuliah. Tidak ada request tambahan.
+
+### Layar daftar tugas yang baru
+
+Sekarang rangkai semuanya di tab Tugas. Infinite scroll (memuat halaman berikutnya saat daftar digulir ke bawah), tarik untuk menyegarkan, dan hapus dari pelajaran TanStack Query tetap sama. Yang baru adalah state filter dan susunan layarnya.
+
+```jsx title="src/app/(app)/(tabs)/index.js"
+import { useState } from "react";
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { Link } from "expo-router";
+import { Tabs } from "expo-router/js-tabs";
+import TaskCard from "../../../components/task-card";
+import { TaskFilters } from "../../../components/task-filters";
+import { useDeleteTask, useTasks } from "../../../features/tasks/queries";
+import { useDebouncedValue } from "../../../lib/use-debounced-value";
+
+const INITIAL_FILTERS = { search: "", status: undefined, courseId: undefined, sort: "deadline" };
+
+export default function TaskListScreen() {
+  const [form, setForm] = useState(INITIAL_FILTERS);
+  const q = useDebouncedValue(form.search.trim());
+  const filters = { status: form.status, courseId: form.courseId, sort: form.sort, q: q || undefined };
+
+  const { data, isPending, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isPlaceholderData } =
+    useTasks(filters);
+  const deleteTask = useDeleteTask();
+  const [refreshing, setRefreshing] = useState(false);
+  const tasks = data?.pages.flatMap((page) => page.data) ?? [];
+
+  function updateForm(patch) {
+    setForm((prev) => ({ ...prev, ...patch }));
+  }
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await refetch();
+    setRefreshing(false);
+  }
+
+  function handleEndReached() {
+    if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+  }
+
+  let content;
+  if (isPending) {
+    content = <ActivityIndicator style={styles.center} />;
+  } else if (error && !data) {
+    content = <Text style={styles.error}>{error.message}</Text>;
+  } else {
+    content = (
+      <FlatList
+        data={tasks}
+        keyExtractor={(item) => String(item.id)}
+        renderItem={({ item }) => <TaskCard task={item} onDelete={(id) => deleteTask.mutate(id)} />}
+        contentContainerStyle={styles.list}
+        style={isPlaceholderData ? styles.dimmed : undefined}
+        keyboardShouldPersistTaps="handled"
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
+        onEndReached={handleEndReached}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={isFetchingNextPage ? <ActivityIndicator style={styles.footer} /> : null}
+        ListEmptyComponent={<Text style={styles.empty}>Tidak ada tugas.</Text>}
+      />
+    );
+  }
+
+  return (
+    <View style={styles.screen}>
+      <Tabs.Screen
+        options={{
+          headerRight: () => (
+            <Link href="/tasks/new" asChild>
+              <Pressable hitSlop={8} style={styles.headerButton} accessibilityLabel="Tambah tugas">
+                <Text style={styles.headerButtonText}>Tambah</Text>
+              </Pressable>
+            </Link>
+          ),
+        }}
+      />
+      <TaskFilters value={form} onChange={updateForm} />
+      {content}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1 },
+  center: { flex: 1 },
+  list: { padding: 16, gap: 12 },
+  dimmed: { opacity: 0.6 },
+  footer: { paddingVertical: 16 },
+  empty: { textAlign: "center", color: "#64748B", marginTop: 48 },
+  error: { margin: 16, color: "#B91C1C" },
+  headerButton: { paddingHorizontal: 16, minHeight: 44, justifyContent: "center" },
+  headerButtonText: { color: "#4F46E5", fontSize: 16, fontWeight: "600" },
+});
+```
+
+Alur di awal komponen ini:
+
+- `form` menyimpan apa yang sedang dipilih dan diketik pengguna.
+- `q` adalah teks pencarian yang sudah melewati debounce.
+- `filters` menggabungkan pilihan chip dengan `q`, lalu diberikan ke `useTasks`. Setiap kali `filters` berubah, TanStack Query mengambil daftar yang sesuai.
+
+Ada tiga detail yang mudah terlewat:
+
+1. Panel filter berada di luar percabangan loading. Kalau `TaskFilters` ikut diganti spinner, `TextInput` akan dilepas dari layar (unmount) setiap kali filter berubah. Akibatnya keyboard tertutup dan huruf yang sedang diketik hilang.
+2. Objek `filters` dibuat ulang setiap render, dan itu tidak masalah. TanStack Query membandingkan isi objek, bukan alamatnya di memori. Kunci bernilai `undefined` juga diabaikan. Jadi `{ status: undefined, sort: "deadline" }` dan `{ sort: "deadline" }` dianggap key yang sama.
+3. `isPlaceholderData` meredupkan daftar saat data untuk filter baru belum tiba. Untuk itu `useTasks` butuh satu baris tambahan.
+
+```diff title="src/features/tasks/queries.js"
+-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
++import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+ ...
+     getNextPageParam: (lastPage) =>
+       lastPage.meta.page < lastPage.meta.totalPages ? lastPage.meta.page + 1 : undefined,
++    placeholderData: keepPreviousData,
+   });
+```
+
+Kalau kamu sudah mengerjakan latihan `keepPreviousData` di pelajaran TanStack Query, baris ini sudah ada. Opsi ini membuat daftar lama tetap tampil sampai daftar baru tiba. Tanpa opsi ini, setiap ganti chip membuat `isPending` kembali `true`, dan daftar berkedip menjadi spinner.
+
+Urutan bawaan sengaja `deadline`, bukan `-createdAt` seperti di API. Mahasiswa membuka aplikasi tugas untuk bertanya "apa yang harus dikumpulkan duluan?". Pertanyaan "apa yang terakhir saya catat?" jarang muncul. API menaruh tugas tanpa tenggat di bagian bawah, jadi tugas "Daftar ulang semester" tidak menyela tugas yang mendesak.
+
+## Badge tenggat
+
+Kriteria K6 meminta **badge**, yaitu label kecil berwarna di kartu tugas: "Terlambat", "Hari ini", atau "Besok". Fungsinya mirip stiker merah "SEGERA" yang ditempel di map surat penting. Sekali lirik, kamu tahu mana yang harus dikerjakan dulu.
+
+Logikanya kita pisahkan ke **fungsi murni**, yaitu fungsi yang hasilnya hanya bergantung pada masukannya. Fungsi seperti ini mudah diuji tanpa membuka aplikasi.
+
+```js title="src/lib/deadline.js"
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function startOfDay(date) {
+  const copy = new Date(date);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+}
+
+export function getDeadlineBadge(deadlineIso, status, now = new Date()) {
+  if (!deadlineIso || status === "DONE") return null;
+
+  const deadline = new Date(deadlineIso);
+  if (deadline < now) {
+    return { tone: "overdue", label: "Terlambat", color: "#B91C1C", bg: "#FEE2E2" };
+  }
+
+  const days = Math.round((startOfDay(deadline) - startOfDay(now)) / DAY_MS);
+  if (days === 0) return { tone: "today", label: "Hari ini", color: "#B45309", bg: "#FEF3C7" };
+  if (days === 1) return { tone: "tomorrow", label: "Besok", color: "#0369A1", bg: "#E0F2FE" };
+  return null;
+}
+```
+
+Cara membaca fungsi ini:
+
+- Tugas tanpa tenggat atau yang sudah selesai tidak diberi badge. Tugas yang sudah dikumpulkan tidak "terlambat", walaupun tanggalnya lewat.
+- Kalau tenggat sudah lewat dari waktu sekarang, hasilnya "Terlambat".
+- "Hari ini" dan "Besok" dihitung per hari kalender, bukan per 24 jam. Tugas bertenggat besok pukul 23.59 tetap "Besok" walaupun sekarang pukul 08.00 (selisihnya hampir 40 jam). Form tugas dari pelajaran Create & Update menyimpan tenggat pukul 23.59 waktu HP. Jadi tugas bertenggat hari ini baru menjadi "Terlambat" setelah tengah malam.
+- `Math.round` menutup selisih kecil kalau suatu zona waktu memakai jam musim panas. Indonesia tidak memakainya, tetapi aplikasimu mungkin dipakai teman yang kuliah di luar negeri.
+- Parameter `now` bisa diisi saat menguji, sehingga hasilnya tidak bergantung pada jam komputer.
+
+Bentuk objek yang dikembalikan sengaja sama dengan `getStatusInfo` dari `src/lib/labels.js` (`label`, `color`, `bg`), jadi bisa langsung masuk ke `Pill` yang sudah ada:
+
+```diff title="src/components/task-card.js"
+ import { formatDeadline, getPriorityInfo, getStatusInfo } from "../lib/labels";
++import { getDeadlineBadge } from "../lib/deadline";
+ ...
+   const isDone = task.status === "DONE";
++  const badge = getDeadlineBadge(task.deadline, task.status);
+ 
+   return (
+     <Link href={`/tasks/${task.id}`} asChild>
+       <Pressable
+         style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+         accessibilityRole="button"
+-        accessibilityLabel={`Buka detail tugas ${task.title}`}
++        accessibilityLabel={`Buka detail tugas ${task.title}${badge ? `, ${badge.label}` : ""}`}
+       >
+ ...
+         <View style={styles.pills}>
++          {badge ? <Pill info={badge} /> : null}
+           <Pill info={status} />
+           <Pill info={priority} />
+         </View>
+```
+
+Badge juga ditambahkan ke `accessibilityLabel`. Pengguna pembaca layar mendengar "Buka detail tugas Laporan Praktikum ERD, Besok", bukan hanya judul. Badge selalu berisi teks karena warna saja tidak cukup sebagai penanda. Sebagian orang sulit membedakan warna, dan pembaca layar tidak bisa "melihat" warna.
+
+Uji fungsinya dengan `node` sebelum melihatnya di HP. Simpan potongan ini sebagai file sementara di folder proyek, lalu hapus setelah selesai. Variabel `now` dikunci ke Sabtu pukul 09.00, dan `at(hari)` membuat tenggat pada tanggal tertentu di bulan yang sama.
+
+```js title="cek-deadline.mjs"
+import { getDeadlineBadge } from "./src/lib/deadline.js";
+
+const now = new Date(2026, 10, 14, 9, 0); // Sabtu, 14 November 2026 pukul 09.00 waktu lokal
+const at = (day, hour = 23, minute = 59) => new Date(2026, 10, day, hour, minute).toISOString();
+
+console.log(getDeadlineBadge(at(13), "TODO", now)?.label);
+console.log(getDeadlineBadge(at(14, 8, 0), "IN_PROGRESS", now)?.label);
+console.log(getDeadlineBadge(at(14), "TODO", now)?.label);
+console.log(getDeadlineBadge(at(15), "TODO", now)?.label);
+console.log(getDeadlineBadge(at(16), "TODO", now)?.label);
+console.log(getDeadlineBadge(at(13), "DONE", now)?.label);
+console.log(getDeadlineBadge(null, "TODO", now)?.label);
+```
+
+```txt
+Terlambat
+Terlambat
+Hari ini
+Besok
+undefined
+undefined
+undefined
+```
+
+Perhatikan baris kedua. Tenggat hari ini pukul 08.00 sudah "Terlambat" pada pukul 09.00, walaupun tanggalnya sama. Data contoh di API memang punya jam yang beragam, jadi kasus ini akan muncul.
+
+Ada satu keterbatasan. `TaskCard` dibungkus `memo`, yaitu pembungkus yang membuat komponen hanya digambar ulang kalau props-nya berubah. Akibatnya badge baru dihitung ulang ketika kartunya digambar ulang. Kalau aplikasi dibiarkan terbuka melewati tengah malam, badge baru berganti setelah daftar disegarkan. Untuk aplikasi tugas kuliah, ini bisa diterima.
+
+## Profil dan logout
+
+Tab Profil menjawab pertanyaan sederhana: "Saya sedang login sebagai siapa?" Pertanyaan ini penting kalau HP dipakai bergantian. Datanya diambil dari endpoint yang dilindungi [JWT](/glosarium#jwt), yaitu token login yang dikirim di setiap request:
+
+```http
+GET /api/auth/me HTTP/1.1
+Authorization: Bearer <access token>
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "data": {
+    "id": 1,
+    "name": "Mahasiswa Demo",
+    "email": "demo@kampus.ac.id",
+    "createdAt": "2026-08-01T02:00:00.000Z"
+  }
+}
+```
+
+Kenapa tidak memakai data pengguna yang dikirim saat login saja? Data itu hanya ada di memori sejak login terakhir. Setelah aplikasi ditutup dan dibuka lagi, yang tersisa hanya token di SecureStore. Membaca `/api/auth/me` juga sekaligus membuktikan token masih diterima server.
+
+Layar Profil di bawah berisi tiga bagian. `useMe` mengambil data akun. Bagian tampilan menunjukkan nama, email, tanggal bergabung, dan jumlah mata kuliah. `handleLogout` meminta konfirmasi, lalu menjalankan proses keluar.
+
+```jsx title="src/app/(app)/(tabs)/profile.js"
+import { useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiFetch } from "../../../lib/api";
+import { confirmAsync } from "../../../lib/confirm";
+import { useAuth } from "../../../features/auth/auth-context";
+import { useCourses } from "../../../features/courses/queries";
+
+const joinedFormat = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric" });
+
+function useMe() {
+  return useQuery({
+    queryKey: ["me"],
+    queryFn: async ({ signal }) => {
+      const json = await apiFetch("/api/auth/me", { signal });
+      return json.data;
+    },
+  });
+}
+
+export default function ProfileScreen() {
+  const { data: me, isPending, error, refetch } = useMe();
+  const { data: courses } = useCourses();
+  const { signOut } = useAuth();
+  const queryClient = useQueryClient();
+  const [leaving, setLeaving] = useState(false);
+
+  async function handleLogout() {
+    const ok = await confirmAsync({
+      title: "Keluar dari akun?",
+      message: "Kamu perlu login lagi untuk melihat tugasmu.",
+      confirmText: "Keluar",
+    });
+    if (!ok) return;
+    setLeaving(true);
+    try {
+      await signOut();
+    } finally {
+      queryClient.clear();
+    }
+  }
+
+  if (isPending) return <ActivityIndicator style={styles.center} />;
+  if (error) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.error}>{error.message}</Text>
+        <Pressable onPress={() => refetch()} style={styles.secondaryButton} accessibilityRole="button">
+          <Text style={styles.secondaryText}>Coba lagi</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.avatar} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <Text style={styles.avatarText}>{me.name.charAt(0).toUpperCase()}</Text>
+      </View>
+      <Text style={styles.name} accessibilityRole="header">{me.name}</Text>
+      <Text style={styles.email}>{me.email}</Text>
+      <Text style={styles.meta}>Bergabung sejak {joinedFormat.format(new Date(me.createdAt))}</Text>
+      <Text style={styles.meta}>{courses ? `${courses.length} mata kuliah` : " "}</Text>
+
+      <Pressable
+        onPress={handleLogout}
+        disabled={leaving}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: leaving, busy: leaving }}
+        style={[styles.logout, leaving && styles.disabled]}
+      >
+        {leaving ? <ActivityIndicator color="#B91C1C" /> : <Text style={styles.logoutText}>Keluar</Text>}
+      </Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  center: { flex: 1 },
+  container: { flex: 1, alignItems: "center", padding: 24, gap: 8 },
+  avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: "#E0E7FF", alignItems: "center", justifyContent: "center" },
+  avatarText: { fontSize: 32, fontWeight: "700", color: "#4F46E5" },
+  name: { fontSize: 22, fontWeight: "700", color: "#0F172A", marginTop: 8 },
+  email: { fontSize: 15, color: "#475569" },
+  meta: { fontSize: 13, color: "#64748B" },
+  error: { color: "#B91C1C", textAlign: "center" },
+  secondaryButton: { minHeight: 44, justifyContent: "center", paddingHorizontal: 16 },
+  secondaryText: { color: "#4F46E5", fontWeight: "600" },
+  logout: { marginTop: 24, minHeight: 48, alignSelf: "stretch", borderRadius: 10, borderWidth: 1, borderColor: "#FCA5A5", alignItems: "center", justifyContent: "center" },
+  logoutText: { color: "#B91C1C", fontSize: 16, fontWeight: "600" },
+  disabled: { opacity: 0.6 },
+});
+```
+
+Huruf pertama nama di lingkaran avatar disembunyikan dari pembaca layar. Huruf itu hanya hiasan, dan nama lengkapnya sudah dibacakan di baris berikutnya.
+
+### Apa yang terjadi saat Keluar
+
+<Callout type="analogi" title="Seperti pindah dari kamar kos">
+
+Saat Andi pindah kos, ia mengembalikan kunci ke ibu kos (token dimatikan di server), lalu membuang kunci cadangan dari dompetnya (token dihapus dari SecureStore). Setelah itu kamar dibersihkan sebelum Sari masuk (`queryClient.clear()`). Kamar dibersihkan setelah Andi benar-benar keluar, bukan saat ia masih menaruh barang. Kalau dibersihkan terlalu cepat, barang Andi bisa masuk lagi ke kamar yang sudah bersih.
+
+</Callout>
+
+<Flow nodes={["Ketuk Keluar", "Konfirmasi", "POST /api/auth/logout", "Hapus token", "Guard berganti", "Cache dibersihkan"]} labels={["confirmAsync", "signOut()", "SecureStore", "isLoggedIn false", "queryClient.clear()"]} caption="Urutan langkah logout dari tab Profil" />
+
+`signOut` dari pelajaran Autentikasi menjalankan tiga langkah:
+
+1. Mengirim refresh token ke `POST /api/auth/logout`. Server membalas 204 dan mematikan token itu.
+2. Menghapus kedua token dari SecureStore.
+3. Mengubah `isLoggedIn` menjadi `false`.
+
+Begitu nilainya berubah, `Stack.Protected` di root layout menutup grup `(app)` dan membuka `(auth)`. Kamu tidak perlu memanggil `router.replace("/login")` sendiri.
+
+Pastikan `signOut` milikmu tetap menghapus token lokal walaupun request logout gagal, misalnya karena HP sedang offline. Kalau request itu melempar error dan fungsinya berhenti di tengah jalan, pengguna akan terjebak dalam keadaan login. Bungkus request-nya dengan `try/catch` kalau belum.
+
+Lalu kenapa perlu `queryClient.clear()`? Cache TanStack Query hidup di memori selama aplikasi berjalan, dan cache tidak tahu soal akun. Tanpa `clear()`, kalau Andi keluar lalu Sari login di HP yang sama, tab Tugas milik Sari sempat menampilkan tugas Andi sebelum data baru tiba. Itu kebocoran data, walaupun hanya sesaat.
+
+Urutannya juga penting: `clear()` dipanggil setelah `signOut`. Kalau cache dibersihkan duluan saat layar `(app)` masih terpasang, query yang masih aktif bisa langsung mengambil data lagi dengan token lama dan mengisi cache kembali.
+
+## Polish
+
+**Polish** artinya merapikan detail kecil supaya aplikasi enak dipakai. Semua fitur sudah ada. Bagian ini mengubah aplikasi dari "bisa jalan" menjadi "nyaman dipakai". Pengguna jarang menyadari polish yang bagus. Mereka langsung merasakan kalau polish itu tidak ada: layar putih tanpa penjelasan, spinner yang berputar terus, atau tombol yang terlalu kecil untuk jempol.
+
+### Empty state yang membantu
+
+**Empty state** adalah tampilan saat daftar kosong. Daftar kosong bisa punya dua arti yang sangat berbeda. "Kamu belum punya tugas" adalah kabar biasa untuk pengguna baru. "Tidak ada tugas yang cocok dengan filter" berarti pengguna perlu mengubah sesuatu. Mirip tulisan di warung: "Warung baru buka, menu menyusul" berbeda dengan "Nasi goreng habis, coba menu lain". Tulisan kedua memberi tahu pembeli harus berbuat apa. Kalau dua keadaan itu memakai pesan yang sama, pengguna bisa mengira datanya hilang.
+
+```jsx title="src/components/empty-state.js"
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import Ionicons from "@expo/vector-icons/Ionicons";
+
+export function EmptyState({ icon = "file-tray-outline", title, message, actionLabel, onAction }) {
+  return (
+    <View style={styles.container}>
+      <Ionicons name={icon} size={48} color="#94A3B8" accessibilityElementsHidden importantForAccessibility="no" />
+      <Text style={styles.title} accessibilityRole="header">{title}</Text>
+      {message ? <Text style={styles.message}>{message}</Text> : null}
+      {actionLabel ? (
+        <Pressable onPress={onAction} accessibilityRole="button" style={styles.button}>
+          <Text style={styles.buttonText}>{actionLabel}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { alignItems: "center", paddingVertical: 48, paddingHorizontal: 24, gap: 8 },
+  title: { fontSize: 17, fontWeight: "600", color: "#0F172A", textAlign: "center" },
+  message: { fontSize: 14, color: "#64748B", textAlign: "center" },
+  button: { marginTop: 8, minHeight: 44, paddingHorizontal: 20, borderRadius: 10, backgroundColor: "#EEF2FF", justifyContent: "center" },
+  buttonText: { color: "#4F46E5", fontWeight: "600" },
+});
+```
+
+Komponen `EmptyState` menerima ikon, judul, pesan, dan satu tombol aksi. Ikonnya disembunyikan dari pembaca layar karena hanya hiasan.
+
+Pasang di tab Tugas. Variabel `hasFilters` menentukan pesan mana yang muncul. Filter dianggap aktif kalau ada kata kunci, status, atau mata kuliah yang dipilih. Urutan tidak dihitung, karena mengubah urutan tidak pernah membuat daftar kosong.
+
+```diff title="src/app/(app)/(tabs)/index.js"
+-import { Link } from "expo-router";
++import { Link, router } from "expo-router";
+ import { Tabs } from "expo-router/js-tabs";
++import { EmptyState } from "../../../components/empty-state";
+ ...
+   const tasks = data?.pages.flatMap((page) => page.data) ?? [];
++  const hasFilters = Boolean(form.search.trim() || form.status || form.courseId);
+ ...
+-        ListEmptyComponent={<Text style={styles.empty}>Tidak ada tugas.</Text>}
++        ListEmptyComponent={
++          hasFilters ? (
++            <EmptyState
++              icon="search-outline"
++              title="Tidak ada tugas yang cocok"
++              message="Coba kata kunci lain atau hapus filter."
++              actionLabel="Reset filter"
++              onAction={() => setForm(INITIAL_FILTERS)}
++            />
++          ) : (
++            <EmptyState
++              title="Belum ada tugas"
++              message="Catat tugas pertamamu supaya tidak ada tenggat yang terlewat."
++              actionLabel="Tambah tugas"
++              onAction={() => router.push("/tasks/new")}
++            />
++          )
++        }
+```
+
+Tombol Reset filter mengembalikan seluruh form filter ke `INITIAL_FILTERS`, termasuk mengosongkan kotak pencarian. Lakukan hal yang sama di tab Mata Kuliah: ganti teks kosongnya dengan `EmptyState` berjudul "Belum ada mata kuliah" dan tombol yang membuka `/courses/new`.
+
+### Skeleton saat memuat
+
+Spinner (ikon bulat yang berputar) hanya bilang "tunggu". **Skeleton** adalah kotak abu-abu berbentuk kartu yang berdenyut pelan. Ia juga memberi gambaran seperti apa isi yang akan datang. Mirip pelayan warung yang menata piring dan sendok sebelum makanan datang: kamu sudah tahu pesananmu akan muncul di situ. Saat data asli tiba, tata letaknya tidak melompat.
+
+```jsx title="src/components/skeleton.js"
+import { useEffect, useRef } from "react";
+import { Animated, StyleSheet, View } from "react-native";
+
+function CardShape() {
+  return (
+    <View style={styles.card}>
+      <View style={[styles.line, { width: "70%", height: 16 }]} />
+      <View style={[styles.line, { width: "40%" }]} />
+      <View style={styles.pills}>
+        <View style={styles.pill} />
+        <View style={styles.pill} />
+      </View>
+    </View>
+  );
+}
+
+export function SkeletonList({ count = 4 }) {
+  const opacity = useRef(new Animated.Value(0.5)).current;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.5, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [opacity]);
+
+  return (
+    <Animated.View
+      style={[styles.list, { opacity }]}
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel="Memuat daftar"
+    >
+      {Array.from({ length: count }, (_, i) => (
+        <CardShape key={i} />
+      ))}
+    </Animated.View>
+  );
+}
+
+const styles = StyleSheet.create({
+  list: { padding: 16, gap: 12 },
+  card: { borderRadius: 12, padding: 16, gap: 10, backgroundColor: "#F1F5F9" },
+  line: { height: 12, borderRadius: 6, backgroundColor: "#E2E8F0" },
+  pills: { flexDirection: "row", gap: 6 },
+  pill: { width: 64, height: 18, borderRadius: 999, backgroundColor: "#E2E8F0" },
+});
+```
+
+Cara kerja kode di atas:
+
+- `CardShape` menggambar satu kartu palsu: dua garis abu-abu dan dua kapsul kecil.
+- `opacity` adalah tingkat ketebalan tampilan. Nilainya naik turun antara 0.5 dan 1 setiap 700 milidetik, jadi kartu terlihat berdenyut.
+- Satu nilai animasi dipakai bersama oleh semua kartu. Semuanya berdenyut serempak, dan hanya satu animasi yang berjalan.
+- `useNativeDriver: true` menyerahkan animasi ke bagian native HP, bukan ke JavaScript. Denyutnya tetap halus walaupun JavaScript sedang sibuk mengolah respons.
+- Fungsi `return` di `useEffect` menghentikan animasi saat skeleton hilang dari layar.
+
+```diff title="src/app/(app)/(tabs)/index.js"
++import { SkeletonList } from "../../../components/skeleton";
+ ...
+   if (isPending) {
+-    content = <ActivityIndicator style={styles.center} />;
++    content = <SkeletonList />;
+```
+
+Skeleton hanya muncul saat daftar dimuat pertama kali. `ActivityIndicator` (spinner bawaan React Native) tetap dipakai di `ListFooterComponent`, yaitu bagian paling bawah daftar, saat halaman berikutnya dimuat. Di situ spinner kecil sudah cukup.
+
+### Aksesibilitas
+
+**Aksesibilitas** artinya aplikasi tetap bisa dipakai oleh semua orang, termasuk pengguna tunanetra atau yang butuh huruf besar. Uji aplikasimu dengan pembaca layar sungguhan: TalkBack di Android (Setelan → Aksesibilitas) atau VoiceOver di iPhone. Geser ke kanan untuk pindah ke elemen berikutnya, lalu dengarkan apa yang dibacakan. Tabel ini merangkum yang sudah kita pasang dan yang perlu kamu periksa:
+
+| Elemen | Yang dicek | Di kode kita |
+| --- | --- | --- |
+| Tombol | Dibacakan sebagai tombol beserta tujuannya | `accessibilityRole="button"` dan `accessibilityLabel="Tambah tugas"` |
+| Kartu tugas | Satu kalimat lengkap, bukan potongan teks | Label berisi judul dan badge tenggat |
+| Chip filter | Status terpilih ikut dibacakan | `accessibilityState` dengan `selected` di `FilterChip` |
+| Tombol sibuk | Pengguna tahu proses sedang berjalan | `accessibilityState` dengan `busy` di tombol Keluar |
+| Hiasan | Tidak dibacakan | Avatar huruf dan ikon empty state disembunyikan |
+| Area sentuh | Minimal 44 sampai 48 titik | `minHeight: 44` atau `48` dan `hitSlop` pada tombol kecil |
+| Warna | Informasi tidak hanya dari warna | Badge tenggat dan warna mata kuliah selalu disertai teks |
+
+"Titik" di baris area sentuh adalah satuan ukuran layar. Area 44 titik kira-kira selebar ujung jari. Coba juga perbesar ukuran huruf di setelan HP sampai maksimal. Kalau ada teks terpotong, biasanya wadahnya memakai `height` (tinggi tetap). Ganti dengan `minHeight` (tinggi minimal) supaya wadahnya ikut membesar.
+
+### Mode gelap
+
+Membalik warna putih jadi hitam saja belum cukup. Kita butuh dua palet (kumpulan warna) yang sama-sama nyaman dibaca, lalu memilih salah satunya sesuai setelan HP. Pertama, pastikan aplikasi mengizinkan tema sistem. Template Expo terbaru biasanya sudah memakai nilai ini:
+
+```json title="app.json"
+{
+  "expo": {
+    "userInterfaceStyle": "automatic"
+  }
+}
+```
+
+Kalau nilainya `"light"`, `useColorScheme()` selalu mengembalikan `"light"` walaupun HP memakai mode gelap. Setelah mengubah `app.json`, jalankan ulang Expo dengan `npx expo start -c`. Opsi `-c` membersihkan cache Metro.
+
+File berikut menyimpan dua palet. Hook `useAppColors` membaca tema HP lewat `useColorScheme()`, lalu mengembalikan palet `dark` atau `light`.
+
+```js title="src/lib/theme.js"
+import { useColorScheme } from "react-native";
+
+const light = {
+  background: "#F8FAFC",
+  card: "#FFFFFF",
+  text: "#0F172A",
+  muted: "#64748B",
+  border: "#E2E8F0",
+  primary: "#4F46E5",
+};
+
+const dark = {
+  background: "#0B1120",
+  card: "#1E293B",
+  text: "#F1F5F9",
+  muted: "#94A3B8",
+  border: "#334155",
+  primary: "#818CF8",
+};
+
+export function useAppColors() {
+  return useColorScheme() === "dark" ? dark : light;
+}
+```
+
+`ThemeProvider` di root layout sudah mengurus warna header dan tab bar. Yang tersisa adalah warna yang kita tulis langsung di `StyleSheet`, misalnya latar putih kartu tugas. Warna seperti ini disebut *hard-coded*: nilainya tertulis mati di kode dan tidak ikut berubah. `StyleSheet.create` hanya dijalankan sekali saat file dimuat. Jadi warna yang berubah sesuai tema harus dipasang di dalam komponen:
+
+```diff title="src/components/task-card.js"
++import { useAppColors } from "../lib/theme";
+ ...
+ function TaskCard({ task }) {
++  const colors = useAppColors();
+   const status = getStatusInfo(task.status);
+ ...
+-        style={({ pressed }) => [styles.card, pressed && styles.pressed]}
++        style={({ pressed }) => [
++          styles.card,
++          { backgroundColor: colors.card, borderColor: colors.border },
++          pressed && styles.pressed,
++        ]}
+ ...
+-        <Text style={[styles.title, isDone && styles.titleDone]} numberOfLines={2}>
++        <Text style={[styles.title, { color: colors.text }, isDone && styles.titleDone]} numberOfLines={2}>
+```
+
+Di `TaskCard`, warna latar, garis tepi, dan judul kini diambil dari `colors`. Gaya lama di `styles` tetap dipakai, lalu warna dari tema menimpanya.
+
+`TaskCard` dibungkus `memo`, tetapi tema tetap bisa berganti. `useColorScheme` adalah hook, jadi kartu tetap digambar ulang saat tema HP berubah. Lakukan hal yang sama di layar lain yang memakai `#FFFFFF` atau `#0F172A` secara langsung. Cari dengan fitur pencarian editor, karena biasanya jumlahnya lebih banyak dari dugaanmu. Badge berlatar terang seperti "Hari ini" masih terbaca di mode gelap, jadi boleh dibiarkan. [Mode gelap](/glosarium#dark-mode) yang rapi biasanya butuh beberapa kali dicek dengan mata.
+
+### ErrorBoundary untuk kesalahan tak terduga
+
+Kadang layar gagal digambar karena error. Contohnya, kode membaca `task.course.name` padahal `course` bernilai `null`. React lalu menghentikan seluruh pohon komponen, dan di build produksi pengguna hanya melihat layar kosong. **ErrorBoundary** adalah jaring pengamannya: layar cadangan yang muncul saat ada error seperti itu. Di Expo Router, caranya cukup mengekspor fungsi bernama `ErrorBoundary` dari file rute atau layout.
+
+```jsx title="src/app/(app)/_layout.js"
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Stack } from "expo-router";
+
+export function ErrorBoundary({ error, retry }) {
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title} accessibilityRole="header">Ada yang tidak beres</Text>
+      <Text style={styles.message}>{error.message}</Text>
+      <Pressable onPress={retry} accessibilityRole="button" style={styles.button}>
+        <Text style={styles.buttonText}>Coba lagi</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+export default function AppLayout() {
+  // ...isi Stack yang sama seperti sebelumnya
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
+  title: { fontSize: 20, fontWeight: "700" },
+  message: { color: "#64748B", textAlign: "center" },
+  button: { minHeight: 48, paddingHorizontal: 24, borderRadius: 10, backgroundColor: "#4F46E5", justifyContent: "center" },
+  buttonText: { color: "#FFFFFF", fontWeight: "600" },
+});
+```
+
+Fungsi `ErrorBoundary` menerima dua hal: `error` (berisi pesan kesalahan) dan `retry` (fungsi untuk mencoba lagi). Karena diekspor dari layout `(app)`, ia menangkap error dari semua layar di dalamnya, termasuk ketiga tab. Tombol Coba lagi memanggil `retry`, yang menggambar ulang rute tersebut.
+
+ErrorBoundary juga punya batas. Ia hanya menangkap error yang terjadi saat layar digambar (render). Ada dua jenis error yang tidak ia tangkap:
+
+1. Request yang gagal. Error dari `useQuery` disimpan di properti `error`, dan kamu sudah menampilkannya sebagai pesan di layar.
+2. Error di dalam event handler, yaitu fungsi yang jalan saat ada aksi, seperti `onPress`.
+
+Untuk mengujinya, sisipkan sementara `throw new Error("uji boundary")` di awal `ProfileScreen`. Buka tab Profil dan lihat layar cadangannya. Setelah itu hapus baris tadi.
+
+## Uji end-to-end
+
+**Uji end-to-end** artinya mencoba aplikasi dari ujung ke ujung, persis seperti pengguna: daftar, login, menambah data, sampai keluar. Tujuannya membuktikan setiap kriteria penerimaan benar-benar lolos. Rasa "sepertinya sudah beres" belum cukup. Inilah versi manual dari [tes end-to-end](/glosarium#e2e-test).
+
+<Callout type="analogi" title="Seperti gladi bersih wisuda">
+
+Sebelum wisuda, panitia menjalankan acara dari awal: wisudawan masuk, dipanggil, naik panggung, pindah tali toga, lalu turun. Kalau di tengah jalan mikrofon mati, mereka membetulkannya lalu mengulang dari awal, bukan dari bagian mikrofon saja. Siapa tahu kabel yang dipindah tadi membuat lampu panggung ikut padam. Skrip uji di bawah bekerja dengan cara yang sama.
+
+</Callout>
+
+Jalankan skrip di bawah dari awal sampai akhir tanpa melompat. Kalau satu langkah gagal, perbaiki, lalu ulangi dari langkah pertama. Perbaikan di satu tempat bisa merusak tempat lain.
+
+Mulai dari database bersih dengan `npm run db:reset` di folder `api/`, lalu logout dari aplikasi kalau masih login. Kolom Kriteria merujuk ke kode K1 sampai K8 di bagian [Kriteria penerimaan](#kriteria-penerimaan).
+
+| No | Langkah | Hasil yang diharapkan | Kriteria |
+| --- | --- | --- | --- |
+| 1 | Daftar akun baru: Andi, `andi.uji@kampus.ac.id`, password `rahasia123` | Langsung masuk dan melihat tiga tab; daftar tugas kosong dengan tombol "Tambah tugas" | K1, K2, K8 |
+| 2 | Buka tab Profil | Nama "Andi" dan email yang benar, "0 mata kuliah" | K7 |
+| 3 | Tekan Keluar, lalu tombol kembali Android | Layar Login muncul; tombol kembali tidak membuka tab lagi | K1, K7 |
+| 4 | Login dengan password salah | Pesan "Email atau password salah", tetap di layar Login | K1 |
+| 5 | Login dengan benar, buat mata kuliah "Basis Data", kode IF2201, warna biru | Muncul di tab Mata Kuliah; simpan dengan nama kosong menampilkan "Nama mata kuliah wajib diisi" | K3 |
+| 6 | Buat tugas "Laporan Praktikum ERD", pilih Basis Data, tenggat besok | Kartu menampilkan titik warna, nama mata kuliah, dan badge "Besok" | K4, K6 |
+| 7 | Buka detail tugas, unggah foto JPEG dari galeri | Thumbnail muncul; file di atas 5 MB ditolak dengan pesan "Ukuran file maksimal 5 MB" | Upload |
+| 8 | Ubah status menjadi Selesai | Judul dicoret, badge "Besok" hilang | K6 |
+| 9 | Ketik "erd" di pencarian, lalu ganti menjadi "xyz" | "erd" menemukan tugas tadi; "xyz" menampilkan empty state dengan tombol Reset filter | K5, K8 |
+| 10 | Pilih chip Basis Data dan status Selesai | Hanya tugas yang cocok tampil; daftar meredup sebentar, bukan berkedip | K5 |
+| 11 | Hapus tugas, lalu hapus mata kuliah Basis Data | Keduanya hilang dari daftar tanpa perlu menarik untuk menyegarkan | K3 |
+| 12 | Matikan API, tarik untuk menyegarkan, lalu nyalakan lagi | Pesan error jelas, tidak crash; setelah API hidup, tarik lagi dan data kembali | K8 |
+| 13 | Keluar, lalu login sebagai `demo@kampus.ac.id` / `password123` | Hanya data akun demo yang tampil, tidak ada sisa data Andi | K7 |
+
+Langkah 13 adalah tes keamanan paling penting di daftar ini. Kalau tugas Andi sempat terlihat walau sekejap, periksa lagi `queryClient.clear()` di tombol Keluar.
+
+<Callout type="info" title="Kena 429 saat mengulang tes?">
+
+Endpoint register, login, refresh, dan logout berbagi satu [rate limit](/glosarium#rate-limiting): 20 request per 15 menit per alamat IP. Kalau skrip diulang beberapa kali berturut-turut, API akan membalas status 429. Itu tanda pengamannya bekerja, bukan bug. Untuk latihan, hentikan lalu jalankan ulang API supaya hitungannya kembali nol.
+
+</Callout>
+
+### Uji di HP sungguhan lewat Wi-Fi
+
+**Emulator** adalah HP tiruan yang berjalan di laptop. Emulator tidak bisa meniru semuanya: jempol sungguhan, kamera, sinyal yang naik turun, dan rasa scroll di HP murah. Jadi ulangi skrip di atas di HP fisik dengan Expo Go. Caranya sama seperti di pelajaran [Menghubungkan Expo ke API](/belajar/fullstack/menghubungkan-expo-api). Berikut versi singkatnya.
+
+HP perlu tahu **IP** laptop, yaitu alamat laptop di jaringan Wi-Fi. Bayangkan nomor rumah di satu kompleks perumahan. HP hanya bisa mengetuk pintu laptop kalau keduanya ada di kompleks yang sama (Wi-Fi yang sama) dan HP tahu nomor rumahnya.
+
+Pertama, cari IP laptop:
+
+<Tabs items={["Windows (PowerShell)", "macOS"]}>
+<Tab>
+
+```powershell
+ipconfig
+# Cari "IPv4 Address" di bagian adaptor Wi-Fi, misalnya 192.168.1.10
+
+# Sekali saja: izinkan port API di firewall (jalankan PowerShell sebagai Administrator)
+New-NetFirewallRule -DisplayName "API Kuliah (port 3000)" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -Profile Private
+```
+
+</Tab>
+<Tab>
+
+```bash
+ipconfig getifaddr en0
+# Contoh hasil: 192.168.1.10
+```
+
+</Tab>
+</Tabs>
+
+Di Windows, `ipconfig` menampilkan alamat jaringan laptop. Perintah `New-NetFirewallRule` membuat aturan di **firewall** (penjaga di laptop yang memutuskan koneksi mana yang boleh masuk) supaya port 3000 boleh diakses. Aturan ini cukup dibuat sekali. Di macOS, `ipconfig getifaddr en0` langsung mencetak IP Wi-Fi.
+
+Tulis IP itu di file `.env` milik `kuliah-app`, lalu jalankan ulang Metro dengan cache bersih. Variabel berawalan [`EXPO_PUBLIC_`](/glosarium#expo-public-env) dibaca saat **bundling**, yaitu saat Metro menyatukan semua kodemu menjadi satu paket untuk HP. Nilainya ikut tertulis di paket itu. Jadi perubahan `.env` baru terbaca setelah Metro dijalankan ulang.
+
+```dotenv title=".env"
+EXPO_PUBLIC_API_URL=http://192.168.1.10:3000
+```
+
+```bash
+npx expo start -c
+```
+
+Sebelum mencurigai kode, buka `http://192.168.1.10:3000/api/health` di **browser HP**. Kalau muncul `{"status":"ok"}`, jaringannya sudah beres. Kalau halaman gagal dibuka, masalahnya ada di jaringan. Cek tiga hal ini:
+
+1. HP dan laptop tersambung ke Wi-Fi yang sama.
+2. Firewall laptop mengizinkan port 3000.
+3. Wi-Fi kampus tidak memblokir koneksi antarperangkat. Pemblokiran ini disebut *client isolation*. Kalau ternyata diblokir, pakai hotspot HP sebagai gantinya.
+
+Dari sisi server tidak ada yang perlu diubah. API pendamping sudah mendengarkan di `0.0.0.0`, artinya ia menerima koneksi dari perangkat lain di jaringan, bukan hanya dari laptop itu sendiri.
+
+Pesan "Tidak bisa terhubung ke ... Cek IP, port, Wi-Fi, dan firewall." di aplikasi berarti `apiFetch` milikmu sudah bekerja dengan benar. Pesan itu memang dibuat untuk masalah jaringan seperti ini. Terakhir, IP laptop bisa berubah setiap kali pindah jaringan, misalnya dari Wi-Fi kos ke Wi-Fi kampus. Cek lagi `.env` setiap kali pindah tempat.
+
+## Langkah berikutnya: merapikan kuliah-app
+
+Versi JavaScript-mu sudah utuh. Saat proyek membesar dan dikerjakan bersama tim, susunan foldernya biasanya ikut dirapikan. Di Track **Expert**, `kuliah-app` dipindah ke **TypeScript**, yaitu JavaScript yang ditambah keterangan tipe data (misalnya "ini angka" atau "ini teks"). Setelah itu kodenya disusun ulang seperti di bawah. Anggap struktur ini peta tujuan. Kamu tidak harus menyelesaikannya sekarang.
+
+<Callout type="analogi" title="Seperti dapur warung yang mulai ramai">
+
+Waktu warung masih sepi, satu orang bisa memotong, memasak, dan menyajikan di meja yang sama. Begitu pesanan ramai, dapur dibagi menjadi stasiun. Meja potong menyiapkan bahan (`api.ts`, mengambil data dari server). Kompor mengolahnya (`hooks.ts`, menyiapkan data untuk layar). Meja saji menata piring (folder `components/`). Toples bumbu juga diberi label supaya garam dan gula tidak tertukar. Label itu peran TypeScript. Bedanya, dapur kecil boleh tetap satu meja. Untuk ukuran `kuliah-app` sekarang, struktur lamamu masih wajar.
+
+</Callout>
+
+<FileTree title="kuliah-app (struktur TypeScript yang disarankan)" tree={`src/
+  app/
+    _layout.tsx # Stack.Protected, ThemeProvider, splash screen
+    +not-found.tsx
+    (auth)/
+      _layout.tsx
+      login.tsx
+      register.tsx
+    (app)/
+      _layout.tsx # Stack: tabs + layar detail dan form
+      (tabs)/
+        _layout.tsx # Tabs dari expo-router/js-tabs
+        index.tsx # daftar tugas + filter + pencarian
+        courses.tsx
+        profile.tsx
+      tasks/
+        new.tsx
+        [id]/
+          index.tsx
+          edit.tsx
+      courses/
+        new.tsx
+        [id]/
+          edit.tsx
+  components/
+    ui/ # Button, Chip, EmptyState, ErrorState, LoadingState, TextField, dll.
+  features/
+    auth/ # api.ts, auth-context.tsx, validation.ts
+    courses/ # api.ts, hooks.ts, query-keys.ts, components/
+    tasks/ # api.ts, hooks.ts, deadline.ts, attachments.ts, components/
+  lib/ # api.ts, query-client.ts, token-storage.ts, use-debounced-value.ts
+  theme/ # colors.ts, tokens.ts, useTheme.ts`} />
+
+Folder `src/app/` (rute) sama persis dengan milikmu, karena pola Stack di luar dan Tabs di dalam memang pola standar. Yang berubah adalah susunan kode di luar `src/app/`. Tabel ini membandingkan keduanya:
+
+| Sekarang (Track 3) | Struktur disarankan | Kenapa |
+| --- | --- | --- |
+| `src/features/courses/queries.js` | `src/features/courses/api.ts`, `hooks.ts`, `query-keys.ts` | Fungsi fetch, hook, dan key dipisah supaya setiap file tetap pendek saat fitur bertambah |
+| `src/lib/deadline.js` (Terlambat, Hari ini, Besok) | `src/features/tasks/deadline.ts` | Label tenggat yang makin banyak, misalnya dari Latihan 2, diuji otomatis di `__tests__/deadline.test.ts` |
+| `isLoggedIn` dan `isLoading` | `status` bernilai `'loading'`, `'signedIn'`, atau `'signedOut'` | Dua nilai boolean bisa tak sengaja membuat keadaan mustahil, misalnya "sedang memuat" sekaligus "sudah login". Satu `status` hanya bisa berisi satu keadaan |
+| `queryClient.clear()` di layar Profil | `queryClient.clear()` di dalam `AuthProvider` | Cache juga bersih saat sesi berakhir sendiri (refresh token kedaluwarsa), bukan hanya saat tombol Keluar ditekan |
+| Query key `["me"]` | `['auth', 'me']` | Semua key auth bisa di-invalidate bersama lewat awalan `['auth']` |
+| `src/lib/theme.js` | `src/theme/` berisi token warna, jarak, dan ukuran huruf | Semua ukuran desain diatur di satu tempat |
+| Import relatif `../../../` | **Alias** `@/` dari `tsconfig.json` (nama pendek untuk folder `src/`) | Import tidak rusak saat file dipindah |
+
+Merapikan susunan kode tanpa mengubah perilakunya disebut **refactor**. Kerjakan satu baris tabel setiap kali. Misalnya, ganti `isLoggedIn` dan `isLoading` dengan satu `status`, lalu jalankan ulang skrip uji manual tadi. Kalau semua kriteria masih lolos, lanjut ke baris berikutnya. Pindah ke TypeScript, perintah `npm run typecheck` (pemeriksa tipe), dan tes otomatis dibahas lengkap di track Expert.
+
+## Kesalahan umum
+
+Tabel ini berisi masalah yang paling sering muncul saat mengerjakan capstone. Cari gejala yang kamu lihat di kolom pertama, lalu cocokkan penyebab dan solusinya.
+
+| Gejala | Penyebab | Solusi |
+| --- | --- | --- |
+| Layar detail tugas muncul dengan tab bar di bawahnya | File detail diletakkan di dalam `(tabs)` | Pindahkan ke `src/app/(app)/tasks/` |
+| `Unable to resolve module` setelah memindah file | Import relatif kurang satu `../` | Hitung ulang kedalaman folder, ikuti nama file di pesan error |
+| Dua layar berebut rute `/` | `src/app/index.js` lama masih ada di samping `(tabs)/index.js` | Hapus file lama, karena satu URL hanya boleh punya satu file |
+| Tab Tugas punya dua header | `headerShown: false` lupa dipasang untuk `(tabs)` di Stack `(app)` | Tambahkan opsi itu di `src/app/(app)/_layout.js` |
+| Simpan mata kuliah ditolak dengan "Warna harus berformat #RRGGBB" | Warna dikirim tanpa `#` atau kurang dari 6 digit | Pakai nilai dari palet `COURSE_COLORS` |
+| Satu request terkirim untuk setiap huruf yang diketik | Query memakai `form.search`, bukan hasil `useDebouncedValue` | Masukkan nilai `q` yang sudah di-debounce ke filter |
+| Data akun sebelumnya sempat terlihat setelah ganti akun | Cache tidak dibersihkan saat logout | Panggil `queryClient.clear()` setelah `signOut` |
+| "Terlambat" muncul pada tugas yang sudah selesai | `status` tidak diteruskan ke `getDeadlineBadge` | Kirim `task.status` sebagai argumen kedua |
+| Tugas dari mata kuliah yang dihapus masih menampilkan namanya | Hanya `courseKeys` yang di-invalidate | Invalidate juga `taskKeys.all` setelah ubah atau hapus mata kuliah |
+| `NETWORK_ERROR` hanya di HP fisik | Memakai `localhost` (di HP artinya HP itu sendiri), IP laptop berubah, atau firewall menolak | Cek `/api/health` dari browser HP, perbaiki `.env`, jalankan `npx expo start -c` |
+| Status 429 saat login berulang kali | Rate limit 20 request per 15 menit | Tunggu, atau jalankan ulang API saat latihan |
+
+## Rubrik penilaian diri
+
+**Rubrik** adalah tabel penilaian yang menjelaskan syarat setiap nilai, mirip lembar penilaian presentasi dari dosen. Bedanya, kali ini kamu menilai aplikasimu sendiri, jadi isi dengan jujur. Setiap aspek diberi nilai 1 sampai 3. Kamu lulus capstone kalau totalnya **minimal 14 dari 18** dan tidak ada aspek yang bernilai 1.
+
+| Aspek | 1: Belum | 2: Cukup | 3: Matang |
+| --- | --- | --- | --- |
+| Fungsionalitas | Beberapa kriteria K1–K8 gagal | Semua kriteria lolos di emulator | Semua kriteria lolos di emulator dan HP fisik |
+| Penanganan error | Error membuat layar kosong atau crash | Pesan error tampil di layar | Pesan jelas, ada tombol coba lagi, dan `ErrorBoundary` terpasang |
+| UX (pengalaman pengguna) dan polish | Hanya spinner dan teks polos | Empty state dan tarik untuk menyegarkan | Skeleton, empty state yang membedakan filter, daftar yang tidak berkedip |
+| Aksesibilitas | Tidak ada label | Tombol utama punya label | Lolos uji TalkBack atau VoiceOver, area sentuh 44 titik ke atas |
+| Struktur kode | Logika fetch tersebar di layar | Hook per fitur di `src/features/` | Hook, key, komponen, dan fungsi murni terpisah rapi dan mudah diuji |
+| Keamanan | Token di AsyncStorage atau data akun lain bocor | Token di SecureStore | Token di SecureStore, cache dibersihkan saat logout, dan langkah 13 lolos |
+
+Catat skor pertamamu. Setelah mengerjakan latihan dan satu ide pengembangan, nilai ulang dengan tabel yang sama, lalu bandingkan kedua skornya.
+
+## Ide pengembangan
+
+Kalau ingin terus mengasah aplikasimu, pilih satu atau dua ide berikut. Urutannya kira-kira dari yang paling ringan.
+
+- **Pengingat tenggat.** Jadwalkan [notifikasi lokal](/glosarium#local-notification) (pengingat yang dijadwalkan oleh HP sendiri, tanpa server) pukul 19.00 sehari sebelum tenggat dengan `expo-notifications`. Batalkan jadwalnya saat tugas ditandai Selesai atau dihapus.
+- **Catatan kuliah per pertemuan.** Ini bagian "Catatan" dari nama aplikasinya. Kamu perlu model `Note` baru di API (judul, isi, tanggal pertemuan, `courseId`), endpoint CRUD-nya, lalu satu layar di bawah detail mata kuliah. Latihan ini menyentuh semua lapisan, dari skema database sampai layar.
+- **Tampilan kalender.** Kelompokkan tugas per tanggal tenggat dengan `SectionList` (daftar yang dibagi per bagian, masing-masing dengan judul), misalnya judul "Senin, 16 November" diikuti tugas-tugasnya.
+- **Mode offline.** Simpan cache TanStack Query ke penyimpanan HP supaya daftar tetap terbaca tanpa internet. Konsepnya dibahas di [offline-first](/glosarium#offline-first).
+- **Rilis ke HP teman.** Buat APK (file instalasi aplikasi Android) dengan [EAS](/glosarium#eas) Build, layanan Expo untuk membangun aplikasi. Bagikan tautannya ke teman sekelas. Mereka akan menekan tombol yang tidak pernah kamu coba dan menemukan masalah yang tidak terpikir olehmu.
+
+Saat aplikasi makin besar, kamu akan butuh tipe data dan tes otomatis. Track **Expert** dimulai dari situ. [TypeScript end-to-end](/belajar/expert/typescript-end-to-end) menyatukan tipe data antara API dan aplikasi. [Testing mobile](/belajar/expert/testing-mobile) mengotomatiskan skrip uji yang tadi kamu jalankan dengan tangan. [Offline-first](/belajar/expert/offline-first) membahas ide mode offline di atas.
+
+## Latihan
+
+Tiga latihan ini menambah fitur kecil di atas aplikasi yang sudah jadi. Kerjakan satu per satu, lalu jalankan lagi langkah uji yang berkaitan supaya fitur lama tetap aman.
+
+<Exercise title="Chip filter prioritas" difficulty="mudah" hints={["Query `GET /api/tasks` juga menerima `priority` dengan nilai `LOW`, `MEDIUM`, atau `HIGH`.", "`toQueryString` membuang nilai `undefined`, jadi pilihan Semua prioritas cukup bernilai `undefined`.", "Daftar `PRIORITY_OPTIONS` sudah ada di `src/components/task-form.js`. Pakai ulang, tidak perlu ditulis lagi."]}>
+
+Andi ingin melihat tugas berprioritas Tinggi saja. Tambahkan baris chip keempat di panel filter: Semua prioritas, Rendah, Sedang, dan Tinggi. Pilihan prioritas harus ikut terkirim ke API, dan tombol Reset filter harus ikut mengosongkannya.
+
+<Solution>
+
+Pertama, tambahkan `priority` ke state filter di tab Tugas, lalu teruskan ke `useTasks`:
+
+```diff title="src/app/(app)/(tabs)/index.js"
+-const INITIAL_FILTERS = { search: "", status: undefined, courseId: undefined, sort: "deadline" };
++const INITIAL_FILTERS = { search: "", status: undefined, courseId: undefined, priority: undefined, sort: "deadline" };
+ ...
+-  const filters = { status: form.status, courseId: form.courseId, sort: form.sort, q: q || undefined };
++  const filters = {
++    status: form.status,
++    courseId: form.courseId,
++    priority: form.priority,
++    sort: form.sort,
++    q: q || undefined,
++  };
+ ...
+-  const hasFilters = Boolean(form.search.trim() || form.status || form.courseId);
++  const hasFilters = Boolean(form.search.trim() || form.status || form.courseId || form.priority);
+```
+
+Kedua, tambahkan satu baris chip di panel filter, di antara baris mata kuliah dan baris urutan:
+
+```jsx title="src/components/task-filters.js"
+import { PRIORITY_OPTIONS } from "./task-form";
+
+// ...di dalam JSX, setelah ScrollView mata kuliah:
+<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
+  <FilterChip
+    label="Semua prioritas"
+    selected={value.priority === undefined}
+    onPress={() => onChange({ priority: undefined })}
+  />
+  {PRIORITY_OPTIONS.map((option) => (
+    <FilterChip
+      key={option.value}
+      label={option.label}
+      selected={value.priority === option.value}
+      onPress={() => onChange({ priority: option.value })}
+    />
+  ))}
+</ScrollView>
+```
+
+Setiap chip diketuk, isi `filters` berubah, dan TanStack Query mengambil daftar yang baru. Saat Semua prioritas dipilih, nilainya `undefined`, jadi `priority` tidak ditulis di URL dan server mengirim semua tugas. Cek terminal API: memilih Tinggi menghasilkan request dengan `priority=HIGH`. Karena `hasFilters` ikut memeriksa prioritas, daftar yang kosong akibat chip ini menampilkan tombol Reset filter.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Badge N hari lagi" difficulty="sedang" hints={["Variabel `days` sudah berisi selisih hari kalender. Hasil 0 dan 1 sudah ditangani di atasnya.", "Cukup tambahkan satu `if` sebelum `return null` di baris terakhir.", "Pakai warna abu-abu yang tenang, misalnya teks `#475569` di atas latar `#F1F5F9`, karena tenggat 2 sampai 3 hari belum mendesak."]}>
+
+Tugas yang tenggatnya 2 atau 3 hari lagi belum punya badge. Padahal itu waktu yang pas untuk mulai mengerjakan. Tambahkan badge "2 hari lagi" dan "3 hari lagi" dengan warna yang lebih tenang daripada "Besok". Tugas yang tenggatnya 4 hari lagi atau lebih tetap tanpa badge. Uji hasilnya dengan `cek-deadline.mjs` dari bagian Badge tenggat.
+
+<Solution>
+
+```diff title="src/lib/deadline.js"
+   if (days === 1) return { tone: "tomorrow", label: "Besok", color: "#0369A1", bg: "#E0F2FE" };
++  if (days <= 3) return { tone: "soon", label: `${days} hari lagi`, color: "#475569", bg: "#F1F5F9" };
+   return null;
+```
+
+Saat sampai di baris baru ini, nilai `days` pasti 2 atau lebih. Tugas terlambat, hari ini, dan besok sudah keluar lebih dulu lewat `return` di atasnya. Jadi syarat `days <= 3` hanya menangkap angka 2 dan 3. Labelnya ditulis dengan template string, sehingga angkanya mengikuti isi `days`.
+
+Kamu tidak perlu mengubah `TaskCard`. Bentuk objeknya sama (`label`, `color`, `bg`), jadi `Pill` dan `accessibilityLabel` langsung memakainya.
+
+Tambahkan dua baris ini di akhir `cek-deadline.mjs`, lalu jalankan lagi dengan `node`:
+
+```js title="cek-deadline.mjs"
+console.log(getDeadlineBadge(at(17), "TODO", now)?.label);
+console.log(getDeadlineBadge(at(18), "TODO", now)?.label);
+```
+
+```txt
+Terlambat
+Terlambat
+Hari ini
+Besok
+2 hari lagi
+undefined
+undefined
+3 hari lagi
+undefined
+```
+
+Perhatikan baris kelima. Dulu hasilnya `undefined`, sekarang "2 hari lagi". Tanggal 18 berjarak 4 hari dari Sabtu tanggal 14, jadi tetap tanpa badge.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Kode warna bebas" difficulty="sedang" hints={["Komponen `TextField` di `course-form.js` sudah bisa menampilkan pesan error di bawah kolomnya.", "Kolom teks dan swatch bisa membaca nilai yang sama, yaitu `values.color`.", "Tidak perlu menulis regex di aplikasi. Biarkan server yang menolak, lalu `toCourseErrors` menaruh pesannya di bawah kolom."]}>
+
+Delapan swatch kadang kurang. Tambahkan kolom teks "Kode warna" di bawah swatch, supaya pengguna bisa mengetik warna sendiri seperti `#0EA5E9`. Kalau formatnya salah, pesan dari server harus muncul tepat di bawah kolom itu. Uji dengan `#12AB` (digitnya kurang) dan `12AB34` (tanpa `#`).
+
+<Solution>
+
+Ganti baris pesan error warna dengan `TextField`:
+
+```diff title="src/components/course-form.js"
+       </View>
+-      {errors.color ? <Text style={styles.error}>{errors.color}</Text> : null}
++      <TextField
++        label="Kode warna"
++        value={values.color}
++        onChangeText={(text) => setField("color", text)}
++        error={errors.color}
++        placeholder="#4F46E5"
++        autoCapitalize="characters"
++        autoCorrect={false}
++        maxLength={7}
++      />
+```
+
+Cara kerjanya:
+
+- Kolom ini dan swatch membaca nilai yang sama, `values.color`. Ketuk swatch, kolomnya ikut terisi. Ketik kode yang sama persis dengan salah satu palet, swatch itu ikut terpilih.
+- `maxLength={7}` cukup untuk `#` ditambah enam digit. `autoCapitalize="characters"` membuat huruf otomatis besar, jadi cocok dengan penulisan palet.
+- Simpan dengan `#12AB`. Server membalas 400 dengan `details` berisi `field: "color"` dan pesan "Warna harus berformat #RRGGBB, contoh #4F46E5". Fungsi `toCourseErrors` yang sudah ada menaruh pesan itu di `errors.color`, jadi pesannya muncul di bawah kolom tanpa kode tambahan.
+- Kolom kosong juga ditolak server dengan pesan yang sama. Itu wajar, karena setiap mata kuliah memang perlu warna.
+
+Kamu boleh menambah pemeriksaan format di aplikasi supaya pesan muncul tanpa menunggu server. Tapi server tetap pemeriksa terakhir. Request bisa datang dari mana saja, misalnya dari Postman atau aplikasi versi lama yang belum diperbarui. Pemeriksaan di aplikasi hanya mempercepat pesan, tidak menggantikan pemeriksaan di server.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Di folder mana layar detail tugas `tasks/[id]/index.js` sebaiknya diletakkan?",
+    options: [
+      "`src/app/`, di luar semua grup supaya bisa dibuka dari mana saja",
+      "`src/app/(app)/tasks/`, di dalam Stack untuk pengguna yang sudah login",
+      "`src/app/(app)/(tabs)/tasks/`, di samping tab Tugas",
+      "`src/app/(auth)/tasks/`, bersama layar Login dan Daftar",
+    ],
+    answer: 1,
+    explain: "Grup `(app)` hanya terbuka setelah login, dan layar di sana tampil di atas tab tanpa tab bar. Di luar grup, layar itu tidak dijaga `Stack.Protected`. Di dalam `(tabs)`, Expo Router menganggapnya tab keempat. Grup `(auth)` justru tertutup setelah login.",
+  },
+  {
+    q: "Andi mengetik \"basis\" dengan jeda 100 ms antarhuruf. Pencarian memakai debounce 400 ms. Berapa request pencarian yang terkirim?",
+    options: [
+      "Lima, satu untuk setiap huruf",
+      "Dua, untuk huruf pertama dan huruf terakhir",
+      "Satu, setelah jarinya diam selama 400 ms",
+      "Tidak ada, karena debounce membatalkan semua request",
+    ],
+    answer: 2,
+    explain: "Setiap huruf datang 100 ms setelah huruf sebelumnya, lebih cepat dari 400 ms, jadi timer selalu diulang dari awal. Setelah huruf terakhir, tidak ada ketikan baru selama 400 ms. Barulah `q` berisi \"basis\" dan satu request dikirim.",
+  },
+  {
+    q: "Kenapa `queryClient.clear()` dipanggil setelah `signOut`, bukan sebelumnya?",
+    options: [
+      "Kalau cache dibersihkan duluan, query yang masih aktif bisa mengambil data lagi dengan token lama dan mengisi cache kembali",
+      "Karena `signOut` membutuhkan data di cache untuk mengirim request logout",
+      "Karena `clear()` juga menghapus token dari SecureStore",
+      "Urutannya bebas, hasilnya selalu sama",
+    ],
+    answer: 0,
+    explain: "Selama token masih ada, layar `(app)` masih terpasang dan query-nya aktif. Cache yang dibersihkan terlalu cepat bisa langsung terisi lagi dengan data akun lama. `clear()` tidak menyentuh SecureStore, dan `signOut` tidak membaca cache.",
+  },
+  {
+    q: "Tugas berstatus DONE dengan tenggat kemarin. Apa hasil `getDeadlineBadge` untuk tugas itu?",
+    options: [
+      "Badge \"Terlambat\" berwarna merah",
+      "Badge \"Hari ini\"",
+      "Badge \"Besok\"",
+      "`null`, jadi kartu tidak menampilkan badge tenggat",
+    ],
+    answer: 3,
+    explain: "Baris pertama fungsi itu langsung mengembalikan `null` kalau status DONE. Tugas yang sudah dikumpulkan tidak lagi terlambat, walaupun tanggal tenggatnya sudah lewat.",
+  },
+  {
+    q: "Andi mencari \"xyz\" dan tidak ada tugas yang cocok. Tampilan apa yang muncul?",
+    options: [
+      "\"Belum ada tugas\" dengan tombol Tambah tugas",
+      "\"Tidak ada tugas yang cocok\" dengan tombol Reset filter",
+      "Spinner yang terus berputar",
+      "Teks polos \"Tidak ada tugas.\"",
+    ],
+    answer: 1,
+    explain: "Kotak pencarian berisi teks, jadi `hasFilters` bernilai true. Seperti tulisan \"Nasi goreng habis, coba menu lain\" di warung, pesan ini memberi tahu Andi bahwa datanya masih ada dan ia cukup mengubah filter. Pesan \"Belum ada tugas\" hanya untuk akun yang memang belum punya tugas.",
+  },
+]} />
+
+## Ringkasan
+
+- Proyek besar dimulai dari spesifikasi: user story, kriteria penerimaan K1 sampai K8, dan milestone yang masing-masing ditutup dengan pengecekan.
+- Navigasi memakai Stack di luar dan Tabs di dalam. Layar detail dan form tinggal di grup `(app)`, bukan di `(tabs)`, supaya terbuka tanpa tab bar.
+- Mata kuliah punya hook sendiri, seperti `useCourses` dan `useDeleteCourse`. Setelah mata kuliah diubah atau dihapus, invalidate juga `taskKeys.all`, karena kartu tugas ikut menampilkan nama mata kuliah.
+- Filter dikirim lewat query string. Pencarian di-debounce 400 ms, dan `keepPreviousData` menjaga daftar lama tetap tampil sampai daftar baru tiba.
+- `getDeadlineBadge` adalah fungsi murni yang bisa diuji dengan `node`. Badge selalu berisi teks, karena warna saja tidak cukup.
+- Logout menjalankan `signOut` dulu, baru `queryClient.clear()`, supaya data akun lama tidak terlihat oleh akun berikutnya.
+- Empty state, skeleton, dan aksesibilitas membuat aplikasi enak dipakai. Uji 13 langkah di HP fisik membuktikan semuanya benar-benar jalan.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Sebelum menutup track Fullstack, selesaikan tiga hal ini:
+
+1. Jalankan 13 langkah uji end-to-end di HP fisik, dari awal sampai akhir tanpa melompat.
+2. Isi rubrik penilaian diri. Targetnya minimal 14 dari 18, tanpa aspek bernilai 1.
+3. Simpan kodenya dengan `git commit`, supaya versi yang sudah lolos uji tidak hilang saat kamu mulai bereksperimen.
+
+Setelah itu, lanjutkan ke [TypeScript end-to-end](/belajar/expert/typescript-end-to-end) di track Expert.
+
+</Callout>

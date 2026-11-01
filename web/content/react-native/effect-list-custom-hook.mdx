@@ -1,0 +1,774 @@
+## Pengantar
+
+Di [State & Event](/belajar/react-native/state-event), semua tugas ditulis langsung di kode. Aplikasi sungguhan mengambil data dari server. Jadi saat layar tampil, aplikasi harus mengirim request (permintaan data), menunggu, lalu menampilkan hasilnya. Selama menunggu, layar menampilkan tanda *loading*. Kalau gagal, layar menampilkan pesan error.
+
+Request seperti itu tidak dipicu oleh klik. Pemicunya adalah **komponen yang tampil**. Untuk kasus inilah React punya `useEffect`.
+
+Pelajaran ini membahas tiga hal:
+
+1. Kapan `useEffect` perlu, dan kapan tidak.
+2. Cara menampilkan list dengan `key` yang benar.
+3. Cara membungkus logika yang sering diulang ke dalam **custom hook**, misalnya `useFetch`.
+
+Prasyarat: `fetch` dan `async`/`await` dari [JavaScript Async](/belajar/fondasi/async-javascript).
+
+## useEffect: sinkronisasi dengan dunia luar
+
+Fungsi komponen harus **murni**. Artinya, ia hanya mengolah props dan state menjadi JSX, tanpa mengubah apa pun di luar dirinya.
+
+Pekerjaan yang menyentuh dunia luar disebut *side effect* (efek samping). Contohnya mengambil data dari [API](/glosarium#api), memasang timer, atau menyimpan ke `localStorage` (penyimpanan kecil milik browser). Side effect punya dua tempat:
+
+- **Event handler**, jika pemicunya aksi pengguna, seperti klik atau submit.
+- **`useEffect`**, jika pemicunya komponen **tampil** di layar, dan komponen harus tetap sinkron dengan sistem di luar React.
+
+<Callout type="analogi" title="Seperti pengingat di HP">
+
+Kamu memasang pengingat: "Setiap kali tiba di kampus, cek jadwal kelas." Kamu tidak perlu menekan tombol apa pun. Pengingat itu jalan sendiri saat kondisinya terpenuhi.
+
+- Tiba di kampus = komponen tampil di layar.
+- Cek jadwal kelas = isi effect, misalnya mengambil data.
+- Syarat "tiba di kampus" = array dependensi, yang menentukan kapan effect diulang.
+
+Bedanya, pengingat HP bisa berbunyi kapan saja. Effect selalu menunggu sampai layar selesai diperbarui.
+
+</Callout>
+
+Bentuk dasarnya seperti ini:
+
+```jsx
+useEffect(() => {
+  // setup: jalan SETELAH render tampil di layar
+  return () => {
+    // cleanup: jalan sebelum effect diulang dan saat komponen dilepas
+  };
+}, [dependensi]);
+```
+
+- Fungsi pertama disebut **setup**. Isinya pekerjaan yang ingin kamu jalankan, misalnya fetch atau memasang timer.
+- Fungsi yang di-`return` disebut **cleanup**. Isinya cara membereskan pekerjaan tadi.
+- `[dependensi]` adalah daftar nilai yang dipantau. Jika salah satunya berubah, effect diulang.
+
+<Flow nodes={["Render", "Commit ke DOM", "Cleanup effect lama", "Setup effect baru"]} labels={["React memperbarui layar", "jika dependensi berubah", "dengan nilai terbaru"]} caption="Effect berjalan setelah layar diperbarui, bukan di tengah render" />
+
+*Commit ke DOM* artinya React menulis hasil render ke halaman. DOM adalah susunan elemen yang benar-benar tampil di browser. Di React Native, perannya digantikan oleh tampilan asli HP, tetapi urutannya sama.
+
+Array dependensi menentukan **kapan** effect diulang:
+
+| Penulisan | Kapan setup berjalan |
+| --- | --- |
+| `useEffect(fn)` | Setelah **setiap** render |
+| `useEffect(fn, [])` | Sekali setelah komponen pertama kali tampil (*mount*) |
+| `useEffect(fn, [userId])` | Saat *mount*, lalu setiap kali `userId` berubah |
+
+*Mount* artinya komponen pertama kali muncul di layar. Kebalikannya, *unmount*, artinya komponen dilepas dari layar.
+
+Aturannya: setiap nilai reaktif yang **dipakai** di dalam effect wajib masuk ke array dependensi. Nilai reaktif adalah nilai yang bisa berubah antar-render, yaitu props, state, dan variabel yang dibuat di dalam komponen.
+
+Jangan mengosongkan array hanya supaya effect tidak diulang. Effect akan memakai nilai lama yang sudah basi (*stale*). Linter (alat pemeriksa kode otomatis) `eslint-plugin-react-hooks` akan memperingatkanmu jika ada dependensi yang terlewat. Linter ini ikut dipakai oleh `npx expo lint` di proyek Expo.
+
+### Cleanup
+
+Cleanup membatalkan apa yang dipasang oleh setup. Contohnya `clearInterval` untuk `setInterval`, `abort()` untuk `fetch`, atau melepas *listener* (fungsi yang menunggu sebuah kejadian).
+
+<Callout type="analogi" title="Seperti mematikan kompor sebelum pergi">
+
+Kamu menyalakan kompor untuk memasak. Sebelum keluar rumah, kamu wajib mematikannya. Kalau lupa, kompor tetap menyala walau tidak ada yang memakai.
+
+- Menyalakan kompor = setup, misalnya `setInterval`.
+- Mematikan kompor = cleanup, misalnya `clearInterval`.
+- Keluar rumah = komponen dilepas dari layar.
+
+Bedanya, React yang mengingatkanmu: ia otomatis memanggil cleanup, asalkan kamu menuliskannya.
+
+</Callout>
+
+Coba timer Pomodoro ini, lalu hilangkan centang untuk melepas komponennya:
+
+<ReactPlayground title="Timer dengan cleanup" height={300} code={`
+import { useEffect, useState } from "react";
+
+function PomodoroTimer() {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    console.log("effect: mulai interval");
+    const id = setInterval(() => {
+      setSeconds((s) => s + 1);
+    }, 1000);
+
+    return () => {
+      console.log("cleanup: hentikan interval");
+      clearInterval(id);
+    };
+  }, []);
+
+  return <p style={{ fontSize: 32 }}>⏱ {seconds} detik</p>;
+}
+
+export default function App() {
+  const [show, setShow] = useState(true);
+
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16 }}>
+      <label>
+        <input
+          type="checkbox"
+          checked={show}
+          onChange={(e) => setShow(e.target.checked)}
+        />{" "}
+        Tampilkan timer
+      </label>
+      {show && <PomodoroTimer />}
+    </main>
+  );
+}
+`} />
+
+Dependensinya `[]` karena effect tidak membaca nilai reaktif apa pun. Updater `(s) => s + 1` selalu menerima nilai terbaru, jadi `seconds` tidak perlu masuk ke dependensi.
+
+<Callout type="warning" title="StrictMode menjalankan effect dua kali saat development">
+
+Buka console di DevTools browser (<Kbd>F12</Kbd>). Saat timer pertama tampil, kamu akan melihat `mulai`, `hentikan`, lalu `mulai` lagi. Ini bukan bug.
+
+Playground ini berjalan di dalam `<StrictMode>`, sama seperti proyek Expo. StrictMode adalah mode pemeriksa khusus development. Ia sengaja melakukan *mount → unmount → mount* untuk menguji cleanup-mu. Di build produksi, effect hanya berjalan sekali.
+
+Coba hapus baris `clearInterval(id)`. Timer kini naik dua angka per detik karena ada dua interval yang hidup. StrictMode baru saja menemukan kebocoran yang tadinya tersembunyi. Jangan menahan effect agar hanya jalan sekali. Perbaiki cleanup-nya.
+
+</Callout>
+
+## Kapan TIDAK perlu effect
+
+Effect dibuat untuk satu tugas: berhubungan dengan sistem di luar React, seperti server, timer, atau penyimpanan browser. Banyak pemula memakainya untuk hal lain yang bisa dikerjakan lebih sederhana. Hasilnya, kode jadi lebih panjang, layar di-render dua kali, dan bug lebih sulit dicari.
+
+<Callout type="analogi" title="Tidak semua hal perlu pengingat">
+
+Kamu ingin tahu total SKS semester ini. Kamu tidak perlu memasang pengingat "setiap kali menambah mata kuliah, salin total SKS ke kertas lain". Cukup jumlahkan dari daftar di KRS saat kamu melihatnya. Saat membayar di kasir minimarket, kamu juga langsung menyerahkan uang. Kamu tidak memasang pengingat "kalau ada barang di keranjang, bayar".
+
+- Pengingat = `useEffect`.
+- Menjumlahkan SKS saat melihat KRS = menghitung nilai saat render.
+- Membayar langsung di kasir = mengerjakan aksi di event handler.
+
+Pengingat baru berguna untuk hal di luar KRS-mu, seperti "tiba di kampus, cek jadwal kelas". Effect juga begitu: pakai hanya untuk hal di luar React.
+
+</Callout>
+
+Sebelum tabel, ingat lagi istilah **derived state** (nilai turunan) dari [State & Event](/belajar/react-native/state-event#derived-state-hitung-jangan-simpan). Derived state adalah nilai yang bisa dihitung dari state atau props yang sudah ada. Contohnya jumlah tugas selesai, yang bisa dihitung dari array `tasks`. Nilai seperti ini tidak perlu disimpan di state terpisah.
+
+Panduan resmi React, [You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect), merangkum kasus yang paling sering muncul:
+
+| Situasi | Hindari | Lakukan |
+| --- | --- | --- |
+| Menghitung data dari state/props (jumlah selesai, hasil filter) | Effect yang memanggil `setX` | Hitung saat render (derived state) |
+| Merespons aksi pengguna (submit form, klik Hapus) | Effect yang memantau *flag* (variabel penanda) | Kerjakan langsung di event handler |
+| Mereset state saat prop berubah | Effect yang mereset state | Beri `key` berbeda pada komponen |
+| Sinkron dengan sistem luar (fetch saat tampil, timer, *subscription*) | Tidak ada | ✅ `useEffect` |
+
+Cara membaca tabel ini:
+
+- Baris pertama: kalau nilainya bisa dihitung, hitung saja langsung di badan komponen.
+- Baris kedua: kalau pemicunya klik atau submit, tulis kodenya di fungsi `onClick` atau `onSubmit`. Jangan menyalakan penanda lalu menunggu effect bereaksi.
+- Baris ketiga: saat `key` sebuah komponen berganti, React membuang komponen lama beserta state-nya, lalu membuat yang baru. Jadi state otomatis kembali ke nilai awal. Bagian [List dan key](#list-dan-key-lebih-dalam) di bawah membahas `key` lebih jauh.
+- Baris keempat: *subscription* artinya berlangganan kabar dari sistem luar, misalnya status koneksi internet. Kasus seperti inilah yang memang butuh effect.
+
+Bandingkan dua cara menghitung jumlah tugas selesai:
+
+<Compare>
+<CompareItem title="Effect yang tidak perlu" tone="bad">
+
+```jsx
+const [doneCount, setDoneCount] = useState(0);
+useEffect(() => {
+  setDoneCount(tasks.filter((t) => t.done).length);
+}, [tasks]);
+// Render dua kali: sekali dengan angka lama, sekali lagi setelah effect.
+```
+
+</CompareItem>
+<CompareItem title="Hitung saat render" tone="good">
+
+```jsx
+const doneCount = tasks.filter((t) => t.done).length;
+// Satu render, selalu sinkron.
+```
+
+</CompareItem>
+</Compare>
+
+Pada cara pertama, layar tampil dulu dengan angka lama. Setelah itu effect jalan, memanggil `setDoneCount`, dan React me-render ulang. Jadi ada dua render untuk satu perubahan. Cara kedua cukup satu render, dan angkanya selalu cocok dengan `tasks`.
+
+Saat ragu, tanyakan ke dirimu: kode ini berjalan karena komponen tampil, atau karena pengguna melakukan sesuatu? Kalau karena tampil dan harus menyentuh sistem luar, pakai effect. Kalau karena aksi pengguna, taruh di event handler.
+
+## Fetch data di dalam effect
+
+Mengambil daftar tugas saat layar tampil adalah contoh umum pemakaian effect.
+
+<Callout type="analogi" title="Seperti pesan makanan lewat aplikasi ojek online">
+
+Kamu memesan nasi goreng, lalu menunggu. Pesanan bisa tiba, bisa juga gagal karena warungnya tutup. Kalau kamu berubah pikiran, kamu membatalkan pesanan lama sebelum memesan yang baru.
+
+- Memesan = mengirim request dengan `fetch`.
+- Status "Pesanan sedang diproses" = state `loading`.
+- Makanan tiba = state data terisi.
+- Warung tutup = state `error`.
+- Membatalkan pesanan lama = `AbortController` di cleanup.
+
+Bedanya, membatalkan request tidak perlu persetujuan siapa pun. Aplikasi langsung berhenti menunggu dan membuang hasilnya, walau server mungkin sudah sempat memprosesnya.
+
+</Callout>
+
+Playground berikut mengambil data dari `https://jsonplaceholder.typicode.com/todos?_limit=5`. Ini API contoh gratis yang mendukung CORS, yaitu aturan browser yang mengizinkan halaman mengambil data dari domain lain. Judul tugasnya berbahasa Latin karena memang data tiruan. Ganti pengguna atau centang "Pakai URL salah" untuk melihat state *loading* dan error.
+
+<ReactPlayground title="Fetch dengan loading, error & AbortController" height={420} code={`
+import { useEffect, useState } from "react";
+
+const BASE = "https://jsonplaceholder.typicode.com";
+
+export default function App() {
+  const [userId, setUserId] = useState(1);
+  const [brokenUrl, setBrokenUrl] = useState(false);
+  const [todos, setTodos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const path = brokenUrl ? "/todoz" : "/todos";
+    const url = BASE + path + "?_limit=5&userId=" + userId;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        setTodos(data);
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        setError(err.message);
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+
+    load();
+    return () => controller.abort();
+  }, [userId, brokenUrl]);
+
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16 }}>
+      <h1>Tugas dari API</h1>
+      <label>
+        Pengguna{" "}
+        <select value={userId} onChange={(e) => setUserId(Number(e.target.value))}>
+          <option value={1}>User 1</option>
+          <option value={2}>User 2</option>
+          <option value={3}>User 3</option>
+        </select>
+      </label>{" "}
+      <label>
+        <input
+          type="checkbox"
+          checked={brokenUrl}
+          onChange={(e) => setBrokenUrl(e.target.checked)}
+        />{" "}
+        Pakai URL salah
+      </label>
+      {loading ? (
+        <p>Memuat...</p>
+      ) : error ? (
+        <p style={{ color: "crimson" }}>Gagal memuat: {error}</p>
+      ) : (
+        <ul>
+          {todos.map((todo) => (
+            <li key={todo.id}>
+              {todo.completed ? "☑" : "☐"} {todo.title}
+            </li>
+          ))}
+        </ul>
+      )}
+    </main>
+  );
+}
+`} />
+
+<Steps>
+<Step title="Tiga state: data, loading, error">
+
+Setiap request punya tiga kemungkinan tampilan: sedang memuat, berhasil, atau gagal. `loading` dimulai dari `true` karena request langsung dikirim saat komponen tampil.
+
+</Step>
+<Step title="Fungsi async di dalam effect">
+
+Fungsi di dalam `useEffect` tidak boleh ditulis `async`. Alasannya, fungsi async selalu mengembalikan Promise (janji hasil yang datang nanti). Padahal React hanya menerima fungsi cleanup sebagai nilai `return`.
+
+Kalau dilanggar, React memperingatkan `useEffect must not return anything besides a function, which is used for clean-up.` Karena itu, kita membuat fungsi `load` di dalam effect, lalu langsung memanggilnya.
+
+</Step>
+<Step title="Cek res.ok">
+
+`fetch` hanya gagal (*reject*) jika jaringan putus. Respons dengan [status code](/glosarium#status-code) 404 atau 500 tetap dianggap "berhasil". Jadi kita melempar error sendiri saat `res.ok` bernilai `false`. Itulah yang kamu lihat saat mencentang "Pakai URL salah": layar menampilkan "HTTP 404".
+
+</Step>
+<Step title="AbortController di cleanup">
+
+Saat `userId` berubah, cleanup membatalkan request lama sebelum request baru dikirim. Tanpa ini, bisa terjadi *race condition*, yaitu dua request "berlomba" dan yang tiba terakhir yang menang. Contohnya, respons User 1 yang lambat tiba setelah respons User 2, lalu menimpanya.
+
+Request yang dibatalkan melempar `AbortError`, dan kita sengaja mengabaikannya. Di tab Network DevTools, kamu akan melihat satu request berstatus *canceled* saat halaman dimuat. Itu karena StrictMode menjalankan effect dua kali, dan cleanup kita bekerja dengan benar.
+
+</Step>
+</Steps>
+
+Pola ini perlu kamu pahami. Namun, menulisnya berulang-ulang itu melelahkan, apalagi jika ditambah *cache* (simpanan hasil request) dan *retry* (mencoba ulang saat gagal). Di Track 3, pekerjaan ini akan diambil alih oleh library TanStack Query.
+
+## List dan key lebih dalam
+
+Di [Dasar React](/belajar/react-native/dasar-react), kamu belajar bahwa setiap item list butuh `key`. Sekarang kita lihat **kenapa**.
+
+<Callout type="analogi" title="Seperti NIM dan nomor kursi di kelas">
+
+Dosen mencatat nilai kuis mahasiswa. Ia bisa mencatat berdasarkan NIM, atau berdasarkan nomor kursi.
+
+- NIM = `key={task.id}`. NIM ikut ke mana pun mahasiswanya duduk.
+- Nomor kursi = `key={index}`. Nomor itu menempel pada posisi, bukan pada orangnya.
+- Nilai kuis = state milik komponen, misalnya isi input.
+
+Jika mahasiswa pindah kursi, catatan berdasarkan nomor kursi jadi salah orang. Bedanya, dosen bisa sadar ada yang aneh. React tidak sadar dan tetap memakai state lama tanpa peringatan.
+
+</Callout>
+
+Saat render ulang, React mencocokkan item lama dan baru berdasarkan `key`. State milik sebuah komponen, termasuk isi input, **mengikuti key-nya**, bukan isi datanya.
+
+Jika `key` berupa index (nomor urut di array), key itu melekat pada **posisi**. Begitu ada item yang disisipkan di depan, dihapus, atau diurutkan ulang, posisinya bergeser. Akibatnya, state menempel ke item yang salah. Buktikan sendiri:
+
+<ReactPlayground title="Key index vs key id" height={420} code={`
+import { useState } from "react";
+
+function TaskRow({ title }) {
+  const [note, setNote] = useState("");
+  return (
+    <li style={{ marginBottom: 6 }}>
+      <strong>{title}</strong>{" "}
+      <input
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="catatan..."
+      />
+    </li>
+  );
+}
+
+const initialTasks = [
+  { id: "a", title: "Kuis SQL" },
+  { id: "b", title: "Setup Expo" },
+  { id: "c", title: "Laporan Praktikum" },
+];
+
+export default function App() {
+  const [tasks, setTasks] = useState(initialTasks);
+
+  function handlePrepend() {
+    const newTask = { id: crypto.randomUUID(), title: "Tugas baru #" + (tasks.length + 1) };
+    setTasks((prev) => [newTask, ...prev]);
+  }
+
+  function handleReverse() {
+    setTasks((prev) => [...prev].reverse());
+  }
+
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16 }}>
+      <p>Ketik catatan di baris "Kuis SQL" pada kedua list, lalu klik tombol.</p>
+      <button onClick={handlePrepend}>Tambah di atas</button>{" "}
+      <button onClick={handleReverse}>Balik urutan</button>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 24 }}>
+        <section>
+          <h3>key = index ❌</h3>
+          <ul>
+            {tasks.map((task, index) => (
+              <TaskRow key={index} title={task.title} />
+            ))}
+          </ul>
+        </section>
+        <section>
+          <h3>key = id ✅</h3>
+          <ul>
+            {tasks.map((task) => (
+              <TaskRow key={task.id} title={task.title} />
+            ))}
+          </ul>
+        </section>
+      </div>
+    </main>
+  );
+}
+`} />
+
+Di list kiri, catatanmu tetap di baris pertama, padahal baris itu kini berisi "Tugas baru". React melihat key `0` masih ada, jadi ia memakai ulang komponen dan state di posisi itu. Di list kanan, catatan ikut pindah bersama "Kuis SQL".
+
+Pegangan memilih `key`:
+
+- Pakai **id stabil dari data**, misalnya id dari database. Stabil artinya tidak berubah selama item itu ada. Untuk data buatan sendiri, buat id **sekali** saat item dibuat, misalnya dengan `crypto.randomUUID()`.
+- Index hanya aman untuk list yang tidak pernah berubah urutan atau isinya, dan itemnya tidak punya state.
+- Jangan pakai `Math.random()` di dalam `map`. Key akan berganti setiap render, sehingga semua item dibuat ulang dan state-nya hilang.
+- Key cukup unik di dalam list yang sama. Key juga tidak ikut dikirim sebagai prop. Jika komponen anak butuh `id`, kirim sebagai prop terpisah.
+
+Prinsip yang sama berlaku di React Native lewat `keyExtractor` di [FlatList](/belajar/react-native/flatlist).
+
+## Custom hook
+
+Bayangkan layar daftar tugas, detail tugas, dan profil sama-sama butuh logika fetch, loading, dan error. Kamu tidak perlu menyalin effect yang sama tiga kali. Bungkus logikanya dalam **custom hook**, yaitu fungsi biasa yang namanya diawali `use` dan memanggil hook lain di dalamnya.
+
+<Callout type="analogi" title="Seperti resep yang dipakai ulang">
+
+Kamu punya resep sambal andalan. Resep itu kamu bagikan ke tiga teman kos. Masing-masing memasak di dapurnya sendiri.
+
+- Resep = custom hook, misalnya `useFetch`.
+- Langkah di resep = hook yang dipanggil di dalamnya, seperti `useState` dan `useEffect`.
+- Sambal di dapur masing-masing = state milik tiap komponen.
+
+Yang dibagi hanya resepnya. Kalau sambal temanmu kepedasan, sambalmu tidak ikut berubah. Bedanya, resep bisa diubah sesuka hati saat memasak. Custom hook harus mengikuti aturan hooks yang dibahas di bawah.
+
+</Callout>
+
+Jadi, custom hook **berbagi logika, bukan state**. Setiap komponen yang memanggil `useFetch` mendapat state `data`, `loading`, dan `error` miliknya sendiri.
+
+Playground berikut memakai tiga custom hook dari file `hooks.js`:
+
+- **`useFetch(url)`** adalah effect fetch tadi yang dibungkus rapi. Hook ini mengembalikan `{ data, loading, error }` dan mengirim request ulang setiap kali `url` berubah.
+- **`useDebounce(value, delay)`** menunda perubahan nilai. Nilai baru baru dikembalikan setelah pengguna berhenti mengetik selama `delay` milidetik. Setiap ketukan membatalkan timer sebelumnya lewat cleanup. Hasilnya, API tidak menerima satu request untuk setiap huruf.
+- **`useLocalStorage(key, awal)`** bekerja seperti `useState`, tetapi nilainya disimpan ke `localStorage`. Nilainya tetap ada setelah halaman dimuat ulang. Nilai awalnya dibaca lewat *lazy initializer* `useState(() => ...)`, yaitu fungsi yang hanya dijalankan pada render pertama.
+
+<ReactPlayground title="useFetch, useDebounce & useLocalStorage" height={520} files={{
+"/App.js": `import { useState } from "react";
+import { useDebounce, useFetch, useLocalStorage } from "./hooks";
+
+const API = "https://jsonplaceholder.typicode.com/todos?_limit=5&q=";
+
+export default function App() {
+  const [query, setQuery] = useState("");
+  const [hideDone, setHideDone] = useLocalStorage("sembunyikan-selesai", false);
+  const debouncedQuery = useDebounce(query, 500);
+  const { data, loading, error } = useFetch(API + encodeURIComponent(debouncedQuery));
+
+  const todos = data ?? [];
+  const visibleTodos = hideDone ? todos.filter((t) => !t.completed) : todos;
+
+  return (
+    <main style={{ fontFamily: "system-ui", padding: 16 }}>
+      <h1>Cari tugas</h1>
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="mis. quis"
+      />
+      <p style={{ color: "#666" }}>
+        Diketik: "{query}" · Dikirim ke API: "{debouncedQuery}"
+      </p>
+      <label>
+        <input
+          type="checkbox"
+          checked={hideDone}
+          onChange={(e) => setHideDone(e.target.checked)}
+        />{" "}
+        Sembunyikan yang selesai (tersimpan di localStorage)
+      </label>
+      {loading && <p>Memuat...</p>}
+      {error && <p style={{ color: "crimson" }}>Gagal: {error}</p>}
+      {!loading && !error && visibleTodos.length === 0 && <p>Tidak ada hasil.</p>}
+      {!loading && !error && (
+        <ul>
+          {visibleTodos.map((todo) => (
+            <li key={todo.id}>
+              {todo.completed ? "☑" : "☐"} {todo.title}
+            </li>
+          ))}
+        </ul>
+      )}
+    </main>
+  );
+}
+`,
+"/hooks.js": `import { useEffect, useState } from "react";
+
+export function useFetch(url) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        setData(await res.json());
+      } catch (err) {
+        if (err.name !== "AbortError") setError(err.message);
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+
+    load();
+    return () => controller.abort();
+  }, [url]);
+
+  return { data, loading, error };
+}
+
+export function useDebounce(value, delay = 500) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+
+  return debounced;
+}
+
+export function useLocalStorage(key, initialValue) {
+  const [value, setValue] = useState(() => {
+    try {
+      const saved = localStorage.getItem(key);
+      return saved !== null ? JSON.parse(saved) : initialValue;
+    } catch {
+      return initialValue;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // localStorage bisa diblokir browser; abaikan saja.
+    }
+  }, [key, value]);
+
+  return [value, setValue];
+}
+`,
+}} />
+
+Ketik "quis" dengan cepat dan perhatikan baris "Dikirim ke API". Nilainya baru berubah setengah detik setelah kamu berhenti mengetik. Lalu centang "Sembunyikan yang selesai" dan muat ulang preview. Pilihanmu masih tersimpan.
+
+<Callout type="analogi" title="Debounce seperti menunggu teman selesai bicara">
+
+Saat teman bercerita, kamu tidak menjawab setiap kata. Kamu menunggu ia diam sejenak, baru menanggapi.
+
+- Setiap kata teman = setiap ketukan huruf.
+- Diam sejenak = `delay` 500 milidetik tanpa ketikan baru.
+- Kamu menanggapi = request dikirim ke API.
+
+Bedanya, debounce tidak menebak apakah kalimatnya sudah selesai. Ia hanya menghitung waktu sejak ketukan terakhir.
+
+</Callout>
+
+Perhatikan juga bahwa `App` kini tidak memakai `useEffect` sama sekali. Komponen cukup meminta data lewat hook. Detail AbortController dan timer tersimpan rapi di `hooks.js`.
+
+## Aturan hooks
+
+Hook punya tiga aturan yang wajib dipatuhi:
+
+1. **Panggil hook hanya di level teratas komponen.** Level teratas artinya langsung di badan fungsi komponen, bukan di dalam blok lain. Jadi jangan panggil hook di dalam `if`, loop, fungsi di dalam fungsi, atau setelah `return` lebih awal. React tidak mengenali hook dari namanya, tetapi dari **urutan pemanggilannya**. Jadi urutan itu harus sama di setiap render.
+2. **Panggil hook hanya dari komponen React atau custom hook.** Jangan memanggilnya dari fungsi JavaScript biasa.
+3. **Nama custom hook wajib diawali `use`.** Dengan begitu, kamu dan linter tahu fungsi itu memanggil hook. Sebaliknya, fungsi yang tidak memanggil hook jangan diberi awalan `use`.
+
+Aturan pertama mirip absen yang hanya memakai nomor urut, tanpa nama. Kalau satu orang terlewat dipanggil, semua nomor sesudahnya jatuh ke orang yang salah. Begitu juga hook: kalau satu hook dilewati karena `if`, state berikutnya tertukar.
+
+<Compare>
+<CompareItem title="Hook setelah return lebih awal" tone="bad">
+
+```jsx
+function SearchBox({ enabled }) {
+  if (!enabled) return null;
+  const [query, setQuery] = useState(""); // ❌
+  // ...
+}
+```
+
+</CompareItem>
+<CompareItem title="Hook dulu, kondisi belakangan" tone="good">
+
+```jsx
+function SearchBox({ enabled }) {
+  const [query, setQuery] = useState("");
+  if (!enabled) return null; // ✅
+  // ...
+}
+```
+
+</CompareItem>
+</Compare>
+
+Pada versi kiri, coba ubah `enabled` dari `true` menjadi `false`. Saat `enabled` bernilai `false`, fungsi berhenti sebelum `useState` dipanggil, sehingga jumlah hook berkurang. React akan crash dengan pesan `Rendered fewer hooks than expected. This may be caused by an accidental early return statement.` Versi kanan aman karena `useState` selalu dipanggil dulu, apa pun nilai `enabled`.
+
+## Kesalahan umum
+
+- **Effect berulang tanpa henti.** Penyebabnya, effect memanggil `setX`, padahal `x` ada di dependensinya. Bisa juga dependensinya object atau array yang dibuat ulang setiap render. React akan memperingatkan `Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.` Solusinya, hapus effect jika nilainya bisa dihitung saat render. Atau, pindahkan pembuatan object ke dalam effect.
+- **Dependensi terlewat.** Effect membaca `userId`, tetapi array-nya `[]`. Akibatnya, data tidak ikut berganti saat `userId` berubah. Masukkan semua nilai reaktif yang dipakai.
+- **Lupa cleanup.** Interval, *listener*, atau request terus berjalan setelah komponen dilepas. Di StrictMode gejalanya mudah terlihat: timer berjalan dua kali lebih cepat.
+- **Menulis `useEffect(async () => ...)`.** Buat fungsi async di dalam effect, lalu panggil fungsi itu.
+- **Memakai `key={index}` pada list yang bisa berubah.** State dan isi input akan tertukar antar-item.
+
+## Latihan
+
+<Exercise title="Perbaiki timer yang bocor" difficulty="mudah" hints={["Tanpa array dependensi, effect berjalan setelah setiap render. Berapa interval yang terpasang setelah 5 detik?", "Simpan id dari `setInterval`, lalu kembalikan fungsi yang memanggil `clearInterval`.", "Jika dependensinya `[]`, `seconds` di dalam effect akan selalu 0. Pakai updater function."]}>
+
+Komponen timer ini punya **tiga** bug. Baca kodenya, lalu:
+
+1. Cari bug yang membuat interval menumpuk.
+2. Cari bug yang membuat interval tetap hidup setelah komponen dilepas.
+3. Cari bug yang membuat angka macet setelah dua bug pertama diperbaiki.
+4. Perbaiki ketiganya.
+
+```jsx
+function Timer() {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    setInterval(() => {
+      setSeconds(seconds + 1);
+    }, 1000);
+  });
+
+  return <p>{seconds} detik</p>;
+}
+```
+
+<Solution>
+
+```jsx
+import { useEffect, useState } from "react";
+
+function Timer() {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setSeconds((s) => s + 1);
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  return <p>{seconds} detik</p>;
+}
+
+export default function App() {
+  return <Timer />;
+}
+```
+
+1. **Tanpa array dependensi**, effect berjalan setelah setiap render, sehingga setiap detik ada interval baru yang menumpuk. Solusinya, tambahkan `[]`.
+2. **Tanpa cleanup**, interval tetap hidup setelah komponen dilepas. Solusinya, kembalikan `() => clearInterval(id)`.
+3. **`seconds + 1`** memakai snapshot. Setelah dependensinya menjadi `[]`, nilai itu selalu 0, sehingga timer macet di angka 1. Updater `(s) => s + 1` selalu menerima nilai terbaru.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Daftar tugas yang tidak hilang saat reload" difficulty="sedang" hints={["Tambahkan file `/hooks.js` di playground daftar tugas, lalu salin `useLocalStorage` ke sana.", "`useLocalStorage` mengembalikan pasangan `[nilai, setter]` persis seperti `useState`, jadi handler lama tidak perlu diubah."]}>
+
+Targetnya: tugas yang ditambah, dicentang, atau dihapus tetap ada setelah preview dimuat ulang.
+
+1. Buka playground "Daftar tugas (CRUD di state)" di pelajaran [State & Event](/belajar/react-native/state-event).
+2. Tambahkan file `/hooks.js`, lalu salin fungsi `useLocalStorage` dari playground di atas.
+3. Ganti `useState` untuk `tasks` di `/App.js` dengan `useLocalStorage`.
+4. Tambah satu tugas, muat ulang preview, dan pastikan tugasnya masih ada.
+
+<Solution>
+
+Buat file `/hooks.js` berisi fungsi `useLocalStorage` dari playground di atas, lalu ubah dua baris di `/App.js`:
+
+```jsx
+import { useLocalStorage } from "./hooks";
+
+// di dalam App, ganti useState(initialTasks):
+const [tasks, setTasks] = useLocalStorage("daftar-tugas", initialTasks);
+```
+
+Hanya itu yang perlu diubah. Setter dari `useLocalStorage` adalah setter `useState` biasa, sehingga `setTasks((prev) => ...)` di `handleAdd`, `handleToggle`, dan `handleDelete` tetap berjalan. Setiap kali `tasks` berubah, effect di dalam hook menyimpannya sebagai [JSON](/glosarium#json). Untuk mulai dari awal lagi, jalankan `localStorage.removeItem("daftar-tugas")` di console.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Kapan setup effect `useEffect(fn, [])` dijalankan di build produksi?",
+    options: [
+      "Setelah setiap render",
+      "Sekali, setelah komponen pertama kali tampil",
+      "Sebelum render pertama",
+      "Tidak pernah, karena array dependensinya kosong",
+    ],
+    answer: 1,
+    explain: "Array kosong berarti tidak ada dependensi yang bisa berubah, sehingga effect hanya berjalan setelah mount, dan cleanup-nya berjalan saat unmount. Tanpa array sama sekali, effect berjalan setelah setiap render. Effect juga tidak pernah berjalan sebelum render.",
+  },
+  {
+    q: "Mana yang TIDAK membutuhkan `useEffect`?",
+    options: [
+      "Mengambil daftar tugas dari API saat layar tampil",
+      "Memasang `setInterval` untuk timer Pomodoro",
+      "Menghitung jumlah tugas selesai dari state `tasks`",
+      "Membatalkan request saat komponen dilepas",
+    ],
+    answer: 2,
+    explain: "Jumlah tugas selesai adalah derived state yang cukup dihitung saat render. Fetch saat tampil, timer, dan pembatalan request adalah sinkronisasi dengan sistem luar, yang memang tugas effect dan cleanup-nya.",
+  },
+  {
+    q: "Saat development, console menampilkan `mulai`, `hentikan`, `mulai` ketika timer pertama kali tampil. Kenapa?",
+    options: [
+      "Ada bug: dependensi effect salah",
+      "StrictMode sengaja melakukan mount → unmount → mount untuk menguji cleanup",
+      "Browser me-render halaman dua kali",
+      "`setInterval` selalu memanggil callback dua kali",
+    ],
+    answer: 1,
+    explain: "Di development, StrictMode menjalankan setup → cleanup → setup sekali lagi untuk memastikan cleanup-mu benar. Ini tidak terjadi di build produksi dan bukan tanda bug, selama cleanup membatalkan setup dengan benar.",
+  },
+  {
+    q: "Setiap baris list punya input catatan. Setelah item baru disisipkan di paling atas, catatan pindah ke item yang salah. Penyebabnya?",
+    code: "{tasks.map((task, index) => (\n  <TaskRow key={index} title={task.title} />\n))}",
+    options: [
+      "Input tidak dikontrol dengan `value`",
+      "`key` memakai index, sehingga state melekat pada posisi, bukan pada tugas",
+      "`TaskRow` lupa memakai `useEffect`",
+      "Array harus diurutkan sebelum di-`map`",
+    ],
+    answer: 1,
+    explain: "React mencocokkan komponen lama dan baru berdasarkan key. Dengan index, key 0 tetap ada setelah penyisipan, sehingga state catatan dipakai ulang oleh item baru di posisi 0. Gunakan `key={task.id}`.",
+  },
+  {
+    q: "Kode mana yang melanggar aturan hooks?",
+    options: [
+      "`const [q, setQ] = useState(\"\");` di baris pertama komponen",
+      "`if (loggedIn) { const data = useFetch(url); }`",
+      "Memanggil `useState` di dalam custom hook `useDebounce`",
+      "`const debounced = useDebounce(query, 500);` di level teratas komponen",
+    ],
+    answer: 1,
+    explain: "Hook di dalam `if` membuat urutan hook bisa berbeda antar-render. Panggil `useFetch` di level teratas, lalu gunakan hasilnya secara kondisional. Memanggil hook di dalam custom hook atau di level teratas komponen justru diperbolehkan.",
+  },
+]} />
+
+## Ringkasan
+
+- `useEffect` menyinkronkan komponen dengan **sistem luar** setelah render: fetch saat tampil, timer, atau *subscription*.
+- Array dependensi menentukan kapan effect diulang. Masukkan semua nilai reaktif yang dipakai, dan kembalikan **cleanup** untuk membatalkan setup.
+- **StrictMode** menjalankan effect dua kali (*mount → unmount → mount*) saat development untuk menguji cleanup.
+- Tidak semua hal butuh effect. Hitung derived state saat render, dan tangani aksi pengguna di event handler.
+- Fetch di effect perlu state data/loading/error, pengecekan `res.ok`, dan `AbortController` di cleanup agar terhindar dari *race condition*.
+- `key` harus **stabil dan unik**, seperti id dari data. Key berupa index membuat state tertukar saat list disisipi, dihapus, atau diurutkan.
+- **Custom hook** (`useFetch`, `useDebounce`, `useLocalStorage`) membungkus logika berulang. Yang dibagi adalah logikanya, bukan state-nya.
+- Aturan hooks: panggil hook di level teratas, hanya dari komponen atau custom hook, dan beri nama berawalan `use`.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Di aplikasi capstone, `useFetch` buatanmu akan digantikan oleh `useQuery` dari TanStack Query, yang menangani loading, error, cache, dan retry dalam satu baris. Karena kamu sudah paham isinya, kamu tahu persis apa yang dikerjakan library itu. `useLocalStorage` juga akan muncul lagi dengan AsyncStorage di pelajaran [State Global & Storage](/belajar/react-native/state-global-storage), sedangkan prinsip `key` dipakai ulang di [FlatList](/belajar/react-native/flatlist). Selanjutnya: [Intro React Native & Expo](/belajar/react-native/intro-react-native-expo).
+
+</Callout>

@@ -1,0 +1,1342 @@
+## Pengantar
+
+Di pelajaran sebelumnya, `kuliah-app` baru bisa **membaca** data. Daftar tugas tampil di `index.js`, dan detail
+satu tugas tampil di `tasks/[id]/index.js`. Sekarang aplikasinya belajar **menulis**: menambah tugas baru dan
+mengubah tugas lama.
+
+<Callout type="analogi" title="Seperti menambah dan mengedit kontak di HP">
+
+Saat menambah kontak, kamu membuka formulir kosong, mengisi nama dan nomor, lalu menekan Simpan. Saat mengedit
+kontak, formulir yang sama terbuka, tapi sudah terisi data lama. Kamu cukup mengganti nomor yang salah.
+
+- Formulir kosong = layar **Tugas Baru**, dikirim dengan `POST`.
+- Formulir yang sudah terisi = layar **Ubah Tugas**, dikirim dengan `PATCH`.
+- Buku kontak = database di server, yang dicapai lewat API.
+
+Bedanya, kontak tersimpan di HP itu sendiri. Tugas kita tersimpan di server, jadi setiap kali Simpan, aplikasi
+butuh internet.
+
+</Callout>
+
+Kamu akan membuat satu **komponen** form (potongan tampilan yang bisa dipakai ulang, seperti balok LEGO). Komponen
+ini dipakai dua layar:
+
+- **Tugas Baru**, yang mengirim `POST /api/tasks`.
+- **Ubah Tugas**, yang mengirim `PATCH /api/tasks/:id`.
+
+Form kelihatannya sederhana, tapi ada beberapa keputusan kecil di dalamnya:
+
+- Format tanggal apa yang dikirim ke server?
+- Bagaimana pesan "Judul wajib diisi" dari server bisa muncul tepat di bawah kolom judul?
+- Kenapa tombol Simpan harus mati selama request berjalan?
+
+Semuanya dibahas di sini, memakai aturan validasi asli dari API pendamping.
+
+Ada tiga file baru yang akan kamu tulis (yang disorot):
+
+<FileTree title="kuliah-app" tree={`
+src/
+  app/
+    index.js # + tombol Tambah di header
+    tasks/
+      * new.js # layar Tugas Baru (POST)
+      [id]/
+        index.js # + tombol Ubah, muat ulang saat fokus
+        * edit.js # layar Ubah Tugas (PATCH)
+  components/
+    * task-form.js # form bersama: input, validasi, error server
+  lib/
+    api.js # apiFetch + ApiError (sudah ada)
+`} />
+
+Alur satu kali menekan **Simpan**:
+
+<Flow
+  nodes={["Form (state)", "Validasi di HP", "apiFetch", "API + Zod", "Daftar tugas"]}
+  labels={["tekan Simpan", "lolos", "POST / PATCH + JSON", "201 / 200 → router.back()"]}
+  caption="Kalau API membalas 400, alurnya berhenti di form dan pesan error ditempel ke kolomnya masing-masing"
+/>
+
+Baca diagram dari kiri ke kanan. Isian form disimpan di **state** (data yang diingat komponen, seperti papan skor
+yang angkanya bisa berubah). Saat kamu menekan Simpan, HP memeriksa isian dulu. Kalau lolos, `apiFetch` mengirimnya
+ke API. API memeriksa lagi dengan Zod, menyimpan ke database, lalu aplikasi kembali ke daftar tugas.
+
+## Anatomi POST dan PATCH
+
+<Callout type="analogi" title="Formulir baru dan formulir ralat di bagian akademik">
+
+Saat daftar ulang, kamu mengisi formulir lengkap di loket akademik. Petugas mengecek, menyimpannya, lalu memberi
+bukti. Itu **POST**: membuat data baru, dibalas `201 Created` beserta datanya.
+
+Kalau kemudian alamatmu berubah, kamu tidak mengisi ulang formulir pendaftaran. Kamu mengisi formulir ralat yang
+hanya berisi "alamat baru: ...". Itu **PATCH**: kirim bagian yang berubah saja, sisanya dibiarkan.
+
+Kalau ada kolom yang salah, petugas mengembalikan formulir dengan coretan merah di kolom itu. Itu **error 400**
+beserta daftar `details`.
+
+</Callout>
+
+Kedua **endpoint** ini (alamat tujuan request, seperti nomor loket) sudah kamu kenal dari
+[Track 1](/belajar/crud-backend/validasi-error-handling). Bedanya, sekarang yang mengirim adalah aplikasi HP.
+Aplikasi juga harus mematuhi **kontrak** API dengan persis. Kontrak adalah kesepakatan bentuk data antara aplikasi
+dan server (lihat [Arsitektur Full-Stack](/belajar/fullstack/arsitektur-fullstack)).
+
+Contoh request untuk membuat tugas:
+
+```http
+POST /api/tasks
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "title": "Laporan praktikum normalisasi",
+  "description": "Bab 1–3, format PDF",
+  "status": "TODO",
+  "priority": "HIGH",
+  "deadline": "2026-11-14T16:59:00.000Z",
+  "courseId": 1
+}
+```
+
+Cara membacanya:
+
+- Baris pertama berisi method (`POST`) dan alamat tujuan (`/api/tasks`).
+- `Authorization` membawa token, kartu tanda masuk yang membuktikan kamu sudah login. Untuk sekarang `apiFetch`
+  memasangnya otomatis dari token demo.
+- `Content-Type: application/json` memberi tahu server bahwa isi kiriman berformat JSON.
+- Bagian setelah baris kosong adalah **body**, yaitu data tugas yang mau disimpan.
+
+Kalau berhasil, API membalas **201 Created** dan mengembalikan tugas lengkap di dalam `data`:
+
+```json
+{
+  "data": {
+    "id": 11,
+    "title": "Laporan praktikum normalisasi",
+    "description": "Bab 1–3, format PDF",
+    "deadline": "2026-11-14T16:59:00.000Z",
+    "status": "TODO",
+    "priority": "HIGH",
+    "courseId": 1,
+    "course": { "id": 1, "name": "Basis Data", "color": "#4F46E5" },
+    "attachments": [],
+    "createdAt": "2026-10-20T03:12:45.120Z",
+    "updatedAt": "2026-10-20T03:12:45.120Z"
+  }
+}
+```
+
+Server menambahkan beberapa kolom sendiri: `id` (nomor unik tugas), `course` (data mata kuliahnya), `attachments`
+(lampiran, masih kosong), serta `createdAt` dan `updatedAt` (kapan dibuat dan terakhir diubah).
+
+Untuk mengubah, kirim **hanya field yang berubah** dengan PATCH. Field yang tidak dikirim dibiarkan apa adanya:
+
+```http
+PATCH /api/tasks/11
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{ "status": "IN_PROGRESS" }
+```
+
+| | POST `/api/tasks` | PATCH `/api/tasks/:id` |
+| --- | --- | --- |
+| Tujuan | Membuat tugas baru | Mengubah sebagian tugas |
+| Field wajib | `title` | Tidak ada, semua opsional |
+| Field yang tidak dikirim | Diisi default (`TODO`, `MEDIUM`, `null`) | Tidak diubah |
+| Status sukses | `201 Created` | `200 OK` |
+| Kalau id tidak ada | (tidak relevan) | `404` "Tugas tidak ditemukan" |
+
+Aturan tiap field tertulis di **skema Zod** API pendamping. Zod adalah pustaka pengecek data. Skemanya mirip
+daftar syarat di formulir: "judul wajib, maksimal 200 huruf", dan seterusnya. Form kita harus mengikuti daftar
+syarat ini, jadi baca pelan-pelan:
+
+```ts title="api/src/modules/tasks/tasks.schemas.ts"
+export const createTaskSchema = z.object({
+  title: z
+    .string({ error: "Judul wajib diisi" })
+    .trim()
+    .min(1, "Judul wajib diisi")
+    .max(200, "Judul maksimal 200 karakter"),
+  description: z
+    .string()
+    .trim()
+    .max(2000, "Deskripsi maksimal 2000 karakter")
+    .nullish()
+    .transform((value) => (value === "" ? null : value)),
+  // ISO 8601, contoh "2026-11-01T23:59:00.000Z". null = tanpa deadline.
+  deadline: z.iso
+    .datetime({ offset: true, error: "Deadline harus berformat tanggal ISO 8601" })
+    .nullish()
+    .transform((value) => (value ? new Date(value) : value)),
+  status: status.optional(),
+  priority: priority.optional(),
+  courseId: z.number({ error: "courseId harus berupa angka" }).int().positive().nullish(),
+});
+
+// PATCH: field sama dengan POST, tapi semuanya opsional.
+export const updateTaskSchema = createTaskSchema.partial();
+```
+
+Isi skema itu dalam bahasa sehari-hari:
+
+- `title`: teks, spasi di awal dan akhir dibuang (`trim`), tidak boleh kosong, maksimal 200 karakter.
+- `description`: teks maksimal 2000 karakter. Boleh tidak diisi. String kosong diubah menjadi `null` (artinya
+  "tidak ada").
+- `deadline`: tanggal dalam format **ISO 8601**, yaitu format tanggal standar internasional seperti
+  `2026-11-01T23:59:00.000Z`. Boleh `null`.
+- `status` dan `priority`: boleh tidak dikirim. Kalau dikirim, harus salah satu nilai yang sudah ditentukan.
+- `courseId`: angka bulat positif, atau `null`.
+- `updateTaskSchema` memakai `.partial()`, artinya aturan yang sama tetapi semua field jadi opsional. Ini skema
+  untuk PATCH.
+
+Kalau ada yang melanggar, **middleware** `validate` turun tangan. Middleware adalah fungsi yang memeriksa request
+sebelum sampai ke kode utama, seperti satpam di gerbang kampus. Ia mengubah setiap masalah menjadi pasangan `field`
+dan `message`, lalu API membalas **400** dengan bentuk error yang sama seperti endpoint lain:
+
+```json
+{
+  "error": {
+    "message": "Data yang dikirim tidak valid",
+    "code": "VALIDATION_ERROR",
+    "details": [
+      { "field": "title", "message": "Judul wajib diisi" },
+      { "field": "courseId", "message": "courseId harus berupa angka" }
+    ]
+  }
+}
+```
+
+Nama di `field` sama persis dengan nama properti di body (`title`, `courseId`). API sengaja dibuat begitu. Nanti
+aplikasi cukup membaca `field` untuk tahu pesan ini milik kolom yang mana, dan kodenya hanya satu baris.
+
+## Data form tidak sama dengan data API
+
+<Callout type="analogi" title="Seperti petugas TU menyalin formulir tulisan tangan">
+
+Mahasiswa mengisi formulir kertas dengan gaya masing-masing: "14 Nov", spasi berlebih, nomor mata kuliah ditulis
+sebagai teks. Sebelum masuk sistem kampus, petugas TU menyalinnya ke format baku: tanggal lengkap, nama dirapikan,
+kolom kosong ditandai "tidak ada".
+
+- Formulir kertas = **state form** di HP (semua berupa teks bebas).
+- Format baku sistem kampus = **body API** (tipe ketat).
+- Petugas TU yang menyalin = fungsi `toTaskPayload`.
+
+Bedanya, petugas TU bisa menebak maksud tulisan yang aneh. Fungsi kita tidak menebak. Kalau formatnya salah, form
+menolak dan meminta pengguna memperbaikinya.
+
+</Callout>
+
+Kolom input di HP selalu berisi **string** (teks). Padahal API meminta tipe yang lebih ketat. Jadi form butuh dua
+"bentuk" data dan satu fungsi penerjemah di antaranya:
+
+| Field | Di state form | Di body API | Catatan |
+| --- | --- | --- | --- |
+| `title` | `"  Laporan  "` | `"Laporan"` | Di-*trim* dulu |
+| `description` | `""` | `null` | String kosong berarti tidak ada deskripsi |
+| `status` | `"TODO"` | `"TODO"` | Dipilih lewat tombol pilihan, bukan diketik |
+| `priority` | `"MEDIUM"` | `"MEDIUM"` | Sama seperti status |
+| `deadline` | `"2026-11-14"` | `"2026-11-14T16:59:00.000Z"` | Wajib ISO 8601 lengkap dengan jam dan zona |
+| `courseId` | `1` atau `null` | `1` atau `null` | **Angka**, bukan `"1"` |
+
+Deadline paling sering bikin bingung. Server menolak `"2026-11-14"` karena skemanya memakai
+`z.iso.datetime({ offset: true })`, yang mewajibkan jam dan zona waktu. Kita sepakati aturan sederhana: tanggal yang
+diketik berarti **pukul 23.59 waktu HP** pada hari itu. JavaScript lalu mengubahnya ke **UTC** lewat
+`toISOString()`. UTC adalah jam patokan dunia, dan WIB = UTC + 7 jam.
+
+```js
+const date = new Date(2026, 10, 14, 23, 59); // bulan dihitung dari 0, jadi 10 = November
+console.log(date.toISOString());
+```
+
+```txt
+2026-11-14T16:59:00.000Z
+```
+
+Hasilnya jam 16.59 UTC karena HP yang dipakai berada di WIB (23.59 dikurangi 7 jam). Di HP ber-zona WITA (UTC+8)
+hasilnya 15.59 UTC, dan itu juga benar. Bayangkan jadwal siaran sepak bola internasional: satu momen yang sama
+ditulis jam 02.00 WIB atau 03.00 WITA. Server menyimpan **momennya** dalam UTC. Aplikasi yang menampilkannya lagi
+sesuai zona waktu penggunanya.
+
+<Callout type="info" title="Kenapa tidak pakai pemilih tanggal?">
+
+Supaya pelajaran ini tetap fokus ke alur data, kolom deadline berupa teks `YYYY-MM-DD`. Kalau ingin pemilih tanggal
+sungguhan, `@react-native-community/datetimepicker` bisa dipasang belakangan. Menggantinya nanti mudah. Pemilih tanggal
+cukup memanggil `setField("deadline", ...)` dengan string tanggal yang sama, dan fungsi konversinya tidak berubah.
+
+</Callout>
+
+## Validasi di HP vs validasi di server
+
+<Callout type="analogi" title="Cek formulir sendiri, lalu petugas loket tetap mengecek">
+
+Sebelum menyerahkan formulir KRS, kamu membacanya ulang: nama sudah ditulis, tanda tangan ada. Ini cepat dan
+menghindarkanmu dari antre ulang. Tapi petugas loket tetap memeriksa, karena hanya petugas yang punya data kampus:
+apakah kelas itu masih ada kuotanya, apakah NIM-mu aktif.
+
+- Kamu mengecek sendiri = **validasi di HP** (demi kenyamanan).
+- Petugas loket mengecek = **validasi di server** (demi kebenaran).
+
+Petugas tidak bisa berkata "pasti sudah dicek mahasiswanya". Siapa saja bisa datang dengan formulir yang tidak
+pernah dicek.
+
+</Callout>
+
+Kalau server sudah memvalidasi, apakah HP perlu ikut? Perlu, tapi untuk alasan berbeda. Validasi di HP membuat pesan
+langsung muncul tanpa menunggu jaringan. Validasi di server menjaga data tetap benar. Hanya server yang tahu apakah
+`courseId: 3` benar-benar milik pengguna ini. Server juga tidak bisa memercayai klien mana pun, karena siapa saja bisa
+mengirim request lewat curl tanpa membuka aplikasi.
+
+<Compare>
+<CompareItem title="Hindari" tone="bad">
+
+- Hanya validasi di HP, lalu menganggap server pasti menerima.
+- Error 400 cuma ditampilkan sebagai "Terjadi kesalahan".
+- Menyalin semua aturan server ke HP, termasuk yang butuh database.
+
+</CompareItem>
+<CompareItem title="Lebih baik" tone="good">
+
+- Validasi ringan di HP: judul kosong, panjang teks, format tanggal.
+- Setiap `details` dari server ditempel ke kolom yang sesuai.
+- Aturan yang butuh database (mata kuliah milik siapa) dibiarkan ke server.
+
+</CompareItem>
+</Compare>
+
+| Aturan | Di HP | Di server |
+| --- | --- | --- |
+| Judul wajib, maksimal 200 karakter | Ya | Ya |
+| Deskripsi maksimal 2000 karakter | Ya (`maxLength`) | Ya |
+| Format tanggal deadline | Ya, `YYYY-MM-DD` | Ya, ISO 8601 |
+| Status dan prioritas valid | Tidak perlu, hanya bisa dipilih | Ya |
+| Mata kuliah ada dan milik pengguna | Tidak bisa | Ya, "Mata kuliah tidak ditemukan" |
+
+Pesan di HP sengaja dibuat **sama** dengan pesan server ("Judul wajib diisi"). Dengan begitu pengguna tidak melihat
+dua kalimat berbeda untuk masalah yang sama.
+
+## Membangun TaskForm
+
+`task-form.js` berisi dua hal. Pertama, **fungsi murni**: fungsi yang hanya mengolah input menjadi output, tanpa
+menyentuh layar atau jaringan, jadi mudah diuji tanpa HP. Kedua, komponen `TaskForm` itu sendiri. Kita tulis dalam
+tiga bagian, semuanya di file yang sama.
+
+### Bagian 1: nilai awal dan konversi
+
+```js title="src/components/task-form.js (bagian 1)"
+import { useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { ApiError, apiFetch } from "../lib/api";
+
+export const STATUS_OPTIONS = [
+  { value: "TODO", label: "Belum mulai" },
+  { value: "IN_PROGRESS", label: "Dikerjakan" },
+  { value: "DONE", label: "Selesai" },
+];
+
+export const PRIORITY_OPTIONS = [
+  { value: "LOW", label: "Rendah" },
+  { value: "MEDIUM", label: "Sedang" },
+  { value: "HIGH", label: "Tinggi" },
+];
+
+export const EMPTY_TASK_VALUES = {
+  title: "",
+  description: "",
+  status: "TODO",
+  priority: "MEDIUM",
+  deadline: "", // "YYYY-MM-DD" di form, ISO 8601 di API
+  courseId: null,
+};
+
+const FORM_FIELDS = Object.keys(EMPTY_TASK_VALUES);
+const pad = (n) => String(n).padStart(2, "0");
+
+// "2026-11-14" -> "2026-11-14T16:59:00.000Z" (23.59 waktu HP). Format salah -> null.
+export function dateInputToIso(text) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text.trim());
+  if (!match) return null;
+  const [year, month, day] = match.slice(1).map(Number);
+  const date = new Date(year, month - 1, day, 23, 59, 0, 0);
+  const sameDay =
+    date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+  return sameDay ? date.toISOString() : null; // menolak 2026-02-31
+}
+
+// Kebalikannya: ISO dari server -> "YYYY-MM-DD" menurut zona waktu HP.
+export function isoToDateInput(iso) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+export function taskToValues(task) {
+  return {
+    title: task.title,
+    description: task.description ?? "",
+    status: task.status,
+    priority: task.priority,
+    deadline: isoToDateInput(task.deadline),
+    courseId: task.courseId ?? null,
+  };
+}
+
+export function toTaskPayload(values) {
+  return {
+    title: values.title.trim(),
+    description: values.description.trim() || null,
+    status: values.status,
+    priority: values.priority,
+    deadline: values.deadline.trim() ? dateInputToIso(values.deadline) : null,
+    courseId: values.courseId,
+  };
+}
+
+// Hanya field yang berubah, dibandingkan dalam "bentuk form" agar deadline tidak bergeser.
+export function buildPatch(initialValues, values) {
+  const before = toTaskPayload(initialValues);
+  const after = toTaskPayload(values);
+  const patch = {};
+  for (const key of Object.keys(after)) {
+    if (before[key] !== after[key]) patch[key] = after[key];
+  }
+  return patch;
+}
+```
+
+Isi bagian 1, dari atas ke bawah:
+
+- `STATUS_OPTIONS` dan `PRIORITY_OPTIONS` memasangkan nilai untuk API (`"TODO"`) dengan label untuk manusia
+  ("Belum mulai").
+- `EMPTY_TASK_VALUES` adalah isi form kosong untuk layar Tugas Baru. `FORM_FIELDS` menyimpan daftar nama kolomnya.
+- `dateInputToIso` mengubah `"2026-11-14"` menjadi ISO 8601 pukul 23.59 waktu HP. Kalau formatnya salah, hasilnya
+  `null`.
+- `isoToDateInput` melakukan kebalikannya, dipakai saat mengisi form ubah dengan data dari server.
+- `taskToValues` mengubah tugas dari server menjadi isi form. `null` diganti `""` karena kolom teks tidak bisa
+  menampilkan `null`.
+- `toTaskPayload` adalah "petugas TU" tadi: merapikan isi form menjadi body yang diterima API.
+- `buildPatch` membandingkan isi form sebelum dan sesudah, lalu hanya menyimpan field yang berbeda.
+
+Kenapa `new Date(2026, 1, 31)` perlu dicek ulang? JavaScript diam-diam "menggulirkan" tanggal yang tidak ada, jadi
+31 Februari berubah menjadi 3 Maret. Pengecekan `sameDay` menangkapnya dengan membandingkan tahun, bulan, dan tanggal
+hasil dengan yang diketik.
+
+### Bagian 2: validasi dan error dari server
+
+```js title="src/components/task-form.js (bagian 2)"
+export function validateTaskValues(values) {
+  const errors = {};
+  const title = values.title.trim();
+  if (!title) errors.title = "Judul wajib diisi";
+  else if (title.length > 200) errors.title = "Judul maksimal 200 karakter";
+
+  if (values.description.trim().length > 2000) {
+    errors.description = "Deskripsi maksimal 2000 karakter";
+  }
+  if (values.deadline.trim() && !dateInputToIso(values.deadline)) {
+    errors.deadline = "Gunakan format YYYY-MM-DD, misalnya 2026-11-14";
+  }
+  return errors;
+}
+
+// Error apa pun -> { fieldErrors: { title: "..." }, formError: "..." | null }
+export function toFormErrors(error) {
+  if (error instanceof ApiError && error.code === "VALIDATION_ERROR") {
+    const fieldErrors = {};
+    const others = [];
+    for (const { field, message } of error.details ?? []) {
+      if (FORM_FIELDS.includes(field)) fieldErrors[field] ??= message;
+      else others.push(message);
+    }
+    if (others.length === 0 && Object.keys(fieldErrors).length === 0) others.push(error.message);
+    return { fieldErrors, formError: others.join("\n") || null };
+  }
+  if (error instanceof ApiError) return { fieldErrors: {}, formError: error.message };
+  return { fieldErrors: {}, formError: "Tidak bisa terhubung ke server. Cek koneksi lalu coba lagi." };
+}
+```
+
+Ada dua fungsi di bagian ini:
+
+- `validateTaskValues` adalah pengecekan di HP. Hasilnya objek berisi pesan per kolom, misalnya
+  `{ title: "Judul wajib diisi" }`. Objek kosong berarti semua aman.
+- `toFormErrors` menerima error apa pun dari `apiFetch`, lalu memilahnya menjadi pesan per kolom (`fieldErrors`) dan
+  satu pesan umum (`formError`).
+
+Pemilahan di `toFormErrors` bisa sesederhana itu karena `details` berisi `field` yang namanya sama dengan kunci
+state form. Pesan server cukup dimasukkan ke `fieldErrors[field]`. Satu kolom bisa punya beberapa pesan, dan operator
+`??=` hanya menyimpan yang pertama. Pesan yang tidak punya kolom (misalnya `field: "body"`) dan error selain
+validasi, seperti 404 atau 500, ditampilkan sebagai **banner**, yaitu kotak pesan merah di atas form. Error jaringan juga sampai ke banner, karena
+`apiFetch` sudah membungkusnya menjadi `ApiError` dengan kode `NETWORK_ERROR`. Baris terakhir menjadi jaring
+pengaman untuk error lain yang tidak terduga.
+
+### Bagian 3: komponen
+
+```jsx title="src/components/task-form.js (bagian 3)"
+function Field({ label, error, hint, children }) {
+  return (
+    <View style={styles.field}>
+      <Text style={styles.label}>{label}</Text>
+      {children}
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {!error && hint ? <Text style={styles.hint}>{hint}</Text> : null}
+    </View>
+  );
+}
+
+function ChoiceGroup({ options, value, onChange }) {
+  return (
+    <View style={styles.chips} accessibilityRole="radiogroup">
+      {options.map((option) => {
+        const selected = option.value === value;
+        return (
+          <Pressable
+            key={String(option.value)}
+            onPress={() => onChange(option.value)}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: selected }}
+            style={[styles.chip, selected && styles.chipSelected]}
+          >
+            {option.color ? <View style={[styles.dot, { backgroundColor: option.color }]} /> : null}
+            <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{option.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function CoursePicker({ value, onChange, error }) {
+  const [courses, setCourses] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    apiFetch("/api/courses?limit=50", { signal: controller.signal })
+      .then(({ data }) => setCourses(data))
+      .catch(() => {
+        if (!controller.signal.aborted) setLoadError("Gagal memuat mata kuliah.");
+      })
+      .finally(() => setLoading(false));
+    return () => controller.abort();
+  }, []);
+
+  const options = [
+    { value: null, label: "Tanpa mata kuliah" },
+    ...courses.map((course) => ({ value: course.id, label: course.name, color: course.color })),
+  ];
+
+  return (
+    <Field label="Mata kuliah (opsional)" error={error ?? loadError}>
+      {loading ? (
+        <ActivityIndicator style={styles.loader} />
+      ) : (
+        <ChoiceGroup options={options} value={value} onChange={onChange} />
+      )}
+    </Field>
+  );
+}
+
+export function TaskForm({ initialValues = EMPTY_TASK_VALUES, submitLabel = "Simpan", onSubmit }) {
+  const [values, setValues] = useState(initialValues);
+  const [errors, setErrors] = useState({});
+  const [formError, setFormError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+
+  function setField(name, value) {
+    setValues((prev) => ({ ...prev, [name]: value }));
+    setErrors((prev) => ({ ...prev, [name]: undefined }));
+  }
+
+  async function handleSubmit() {
+    if (savingRef.current) return; // ketukan kedua yang terlalu cepat
+    const clientErrors = validateTaskValues(values);
+    setErrors(clientErrors);
+    setFormError(null);
+    if (Object.keys(clientErrors).length > 0) return;
+
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      await onSubmit(values);
+      // Sukses: layar sedang kembali (router.back), tombol sengaja tetap nonaktif.
+    } catch (error) {
+      const mapped = toFormErrors(error);
+      setErrors(mapped.fieldErrors);
+      setFormError(mapped.formError);
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        {formError ? (
+          <View style={styles.banner}>
+            <Text style={styles.bannerText}>{formError}</Text>
+          </View>
+        ) : null}
+
+        <Field label="Judul" error={errors.title}>
+          <TextInput
+            value={values.title}
+            onChangeText={(text) => setField("title", text)}
+            placeholder="mis. Laporan praktikum normalisasi"
+            maxLength={200}
+            style={[styles.input, errors.title && styles.inputError]}
+          />
+        </Field>
+
+        <Field label="Deskripsi" error={errors.description}>
+          <TextInput
+            value={values.description}
+            onChangeText={(text) => setField("description", text)}
+            placeholder="Catatan tambahan (opsional)"
+            multiline
+            maxLength={2000}
+            textAlignVertical="top"
+            style={[styles.input, styles.textarea, errors.description && styles.inputError]}
+          />
+        </Field>
+
+        <Field label="Status" error={errors.status}>
+          <ChoiceGroup
+            options={STATUS_OPTIONS}
+            value={values.status}
+            onChange={(v) => setField("status", v)}
+          />
+        </Field>
+
+        <Field label="Prioritas" error={errors.priority}>
+          <ChoiceGroup
+            options={PRIORITY_OPTIONS}
+            value={values.priority}
+            onChange={(v) => setField("priority", v)}
+          />
+        </Field>
+
+        <Field
+          label="Deadline"
+          error={errors.deadline}
+          hint="Format YYYY-MM-DD, disimpan pukul 23.59. Kosongkan jika tanpa deadline."
+        >
+          <TextInput
+            value={values.deadline}
+            onChangeText={(text) => setField("deadline", text)}
+            placeholder="2026-11-14"
+            keyboardType="numbers-and-punctuation"
+            autoCorrect={false}
+            maxLength={10}
+            style={[styles.input, errors.deadline && styles.inputError]}
+          />
+        </Field>
+
+        <CoursePicker
+          value={values.courseId}
+          onChange={(id) => setField("courseId", id)}
+          error={errors.courseId}
+        />
+
+        <Pressable
+          onPress={handleSubmit}
+          disabled={saving}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: saving, busy: saving }}
+          style={[styles.submit, saving && styles.submitDisabled]}
+        >
+          {saving ? <ActivityIndicator color="#FFFFFF" /> : null}
+          <Text style={styles.submitText}>{saving ? "Menyimpan…" : submitLabel}</Text>
+        </Pressable>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  container: { padding: 16, gap: 16, paddingBottom: 48 },
+  field: { gap: 6 },
+  label: { fontSize: 14, fontWeight: "600", color: "#111827" },
+  input: {
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    backgroundColor: "#FFFFFF",
+  },
+  textarea: { minHeight: 96 },
+  inputError: { borderColor: "#DC2626" },
+  error: { color: "#DC2626", fontSize: 13 },
+  hint: { color: "#6B7280", fontSize: 13 },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  chipSelected: { backgroundColor: "#EEF2FF", borderColor: "#4F46E5" },
+  chipText: { color: "#374151" },
+  chipTextSelected: { color: "#4F46E5", fontWeight: "600" },
+  dot: { width: 10, height: 10, borderRadius: 5 },
+  loader: { alignSelf: "flex-start" },
+  banner: { backgroundColor: "#FEF2F2", borderRadius: 10, padding: 12 },
+  bannerText: { color: "#991B1B" },
+  submit: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#4F46E5",
+    borderRadius: 10,
+    paddingVertical: 14,
+  },
+  submitDisabled: { opacity: 0.6 },
+  submitText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
+});
+```
+
+Kodenya panjang, tapi strukturnya sederhana. Ada tiga komponen kecil dan satu komponen utama:
+
+- `Field` membungkus satu kolom: label di atas, input di tengah, lalu pesan error merah atau petunjuk abu-abu di
+  bawah.
+- `ChoiceGroup` menampilkan deretan tombol pilihan (chip). Yang dipilih diberi warna.
+- `CoursePicker` mengambil daftar mata kuliah dari API saat pertama tampil, lalu menampilkannya lewat `ChoiceGroup`.
+- `TaskForm` menyimpan isi form, error, dan status "sedang menyimpan", lalu menyusun semua kolom dan tombol Simpan.
+  Urutan kerja `handleSubmit`: tolak ketukan ganda, validasi di HP, berhenti kalau ada error, kunci tombol, panggil
+  `onSubmit`. Kalau `onSubmit` gagal, error dipetakan ke kolom dan tombol dibuka lagi.
+- `styles` di bagian bawah hanya mengatur tampilan.
+
+<Callout type="analogi" title="Seperti tombol lift yang ditekan berkali-kali">
+
+Saat lift lama datang, banyak orang menekan tombolnya berulang-ulang. Lift yang baik hanya mencatat satu panggilan.
+Tombol Simpan juga begitu. Saat sinyal lemah, pengguna sering mengetuk dua atau tiga kali. Tanpa penjaga, setiap
+ketukan mengirim POST, dan tugas yang sama tersimpan beberapa kali.
+
+- Lampu tombol lift yang menyala = `saving` (tanda untuk mata pengguna).
+- Catatan di dalam mesin lift = `savingRef` (penjaga yang langsung berlaku, sebelum lampunya sempat menyala).
+
+</Callout>
+
+Beberapa keputusan di kode ini perlu kamu pahami, jangan hanya disalin:
+
+- **Controlled input.** Artinya isi kolom selalu dikendalikan state. Setiap `TextInput` membaca `value` dari state
+  dan menulis lewat `setField`. Jadi state menjadi satu-satunya sumber data. `setField` sekaligus menghapus error
+  kolom itu begitu pengguna mulai memperbaikinya.
+- **Status, prioritas, dan mata kuliah tidak diketik.** Pengguna hanya bisa memilih tombol, jadi nilai di luar
+  `TODO`, `IN_PROGRESS`, atau `DONE` tidak mungkin terkirim. `courseId` diambil dari `course.id` di respons API,
+  jadi tipenya sudah angka.
+- **Pemilih mata kuliah diisi dari `GET /api/courses?limit=50`.** Batas maksimal `limit` di API adalah 50, dan
+  hasilnya sudah urut nama. Satu request cukup untuk jumlah mata kuliah seorang mahasiswa. `AbortController`
+  membatalkan request kalau layar ditutup sebelum jawabannya datang.
+- **Tombol nonaktif ganda.** `saving` untuk tampilan: spinner, label "Menyimpan…", dan `disabled`. `savingRef`
+  untuk penjagaan. Nilai state baru berlaku di render berikutnya, sedangkan **ref** (kotak penyimpan yang isinya
+  langsung berubah tanpa render ulang) berubah saat itu juga. Hasilnya, dua ketukan yang sangat cepat tetap hanya
+  menghasilkan satu POST.
+- **Keyboard.** `KeyboardAvoidingView` dengan `behavior="padding"` di iOS mendorong konten ke atas keyboard. Di
+  Android, jendela aplikasi sudah menyusut sendiri. `ScrollView` memastikan kolom paling bawah tetap bisa digulir.
+  `keyboardShouldPersistTaps="handled"` membuat ketukan pertama di tombol langsung diproses, bukan hanya menutup
+  keyboard.
+
+## Layar Tugas Baru
+
+Form sudah lengkap, jadi kode layarnya tinggal sedikit. Layar hanya punya dua tugas: menentukan **request apa** yang
+dikirim dan **ke mana** pengguna pergi setelah sukses.
+
+```jsx title="src/app/tasks/new.js"
+import { Stack, useRouter } from "expo-router";
+import { apiFetch } from "../../lib/api";
+import { TaskForm, toTaskPayload } from "../../components/task-form";
+
+export default function NewTaskScreen() {
+  const router = useRouter();
+
+  async function handleSubmit(values) {
+    await apiFetch("/api/tasks", { method: "POST", body: toTaskPayload(values) });
+    if (router.canGoBack()) router.back();
+    else router.replace("/");
+  }
+
+  return (
+    <>
+      <Stack.Screen options={{ title: "Tugas Baru" }} />
+      <TaskForm submitLabel="Simpan tugas" onSubmit={handleSubmit} />
+    </>
+  );
+}
+```
+
+Alurnya: `handleSubmit` merapikan isi form dengan `toTaskPayload`, mengirim POST, lalu menutup layar.
+`Stack.Screen` mengatur judul di header.
+
+`handleSubmit` sengaja **tidak** memakai `try/catch`. Kalau `apiFetch` melempar `ApiError`, error itu naik ke
+`TaskForm`, yang sudah tahu cara menempelkannya ke kolom. `router.canGoBack()` mengecek apakah ada layar sebelumnya.
+Kalau layar ini dibuka langsung lewat tautan (misalnya setelah me-refresh halaman di versi web), tidak ada riwayat
+untuk kembali, jadi aplikasi pindah ke daftar dengan `router.replace("/")`.
+
+Tambahkan pintu masuknya di header layar daftar. Di dalam `return` milik `src/app/index.js`, lengkapi
+`Stack.Screen` dengan tombol di kanan header:
+
+```jsx title="src/app/index.js (potongan)"
+import { Link, Stack } from "expo-router";
+import { Pressable, Text } from "react-native";
+
+// di dalam return:
+<Stack.Screen
+  options={{
+    headerRight: () => (
+      <Link href="/tasks/new" asChild>
+        <Pressable hitSlop={8}>
+          <Text style={{ color: "#4F46E5", fontSize: 16, fontWeight: "600" }}>Tambah</Text>
+        </Pressable>
+      </Link>
+    ),
+  }}
+/>
+```
+
+`Link` dengan `asChild` membuat `Pressable` di dalamnya berfungsi sebagai tautan ke `/tasks/new`. `hitSlop={8}`
+memperluas area ketuk 8 titik ke segala arah, supaya tombol kecil di header mudah disentuh jari.
+
+Kalau `index.js` kamu sudah punya `Stack.Screen` dengan `title`, cukup tambahkan `headerRight` di objek `options`
+yang sama.
+
+## Layar Ubah Tugas
+
+Layar ubah punya satu langkah tambahan: **memuat** tugas lama, mengubahnya ke bentuk form, baru menampilkan form.
+Ini seperti membuka kontak di HP sebelum mengeditnya: datanya harus ada dulu sebelum bisa diganti.
+
+```jsx title="src/app/tasks/[id]/edit.js"
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { ApiError, apiFetch } from "../../../lib/api";
+import { TaskForm, buildPatch, taskToValues } from "../../../components/task-form";
+
+export default function EditTaskScreen() {
+  const { id } = useLocalSearchParams();
+  const router = useRouter();
+  const [initialValues, setInitialValues] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    apiFetch(`/api/tasks/${id}`, { signal: controller.signal })
+      .then(({ data }) => setInitialValues(taskToValues(data)))
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadError(error instanceof ApiError ? error.message : "Gagal memuat tugas.");
+      });
+    return () => controller.abort();
+  }, [id]);
+
+  async function handleSubmit(values) {
+    const patch = buildPatch(initialValues, values);
+    if (Object.keys(patch).length > 0) {
+      await apiFetch(`/api/tasks/${id}`, { method: "PATCH", body: patch });
+    }
+    if (router.canGoBack()) router.back();
+    else router.replace(`/tasks/${id}`);
+  }
+
+  let content;
+  if (loadError) {
+    content = (
+      <View style={styles.center}>
+        <Text style={styles.message}>{loadError}</Text>
+        <Pressable onPress={() => router.back()} style={styles.button}>
+          <Text style={styles.buttonText}>Kembali</Text>
+        </Pressable>
+      </View>
+    );
+  } else if (!initialValues) {
+    content = (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  } else {
+    content = (
+      <TaskForm initialValues={initialValues} submitLabel="Simpan perubahan" onSubmit={handleSubmit} />
+    );
+  }
+
+  return (
+    <>
+      <Stack.Screen options={{ title: "Ubah Tugas" }} />
+      {content}
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, padding: 24 },
+  message: { color: "#991B1B", textAlign: "center" },
+  button: { backgroundColor: "#4F46E5", borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
+  buttonText: { color: "#FFFFFF", fontWeight: "600" },
+});
+```
+
+Cara kerja layar ini:
+
+1. `useLocalSearchParams` membaca `id` dari alamat layar, misalnya `/tasks/11/edit`.
+2. `useEffect` memanggil `GET /api/tasks/11` sekali saat layar dibuka. Hasilnya diubah dengan `taskToValues`.
+3. Selama data belum datang, layar menampilkan spinner. Kalau gagal, tampil pesan dan tombol Kembali.
+4. Setelah data ada, `TaskForm` dirender dengan isi lama.
+5. Saat disimpan, `buildPatch` menghitung field yang berubah. Kalau tidak ada yang berubah, tidak ada request sama
+   sekali. Layar langsung ditutup.
+
+<Callout type="warning" title="Form kosong padahal data sudah datang?">
+
+`useState(initialValues)` hanya membaca nilai awal **sekali**, di render pertama. Kalau `TaskForm` dirender saat
+`initialValues` masih `null` lalu datanya datang belakangan, state form tidak ikut berubah. Karena itu layar ini
+menampilkan spinner dulu dan baru merender `TaskForm` setelah data lengkap. Jangan "memperbaikinya" dengan
+`useEffect` yang menyalin props ke state. Cara itu menimpa ketikan pengguna setiap kali props berubah.
+
+</Callout>
+
+### Kenapa hanya field yang berubah?
+
+<Callout type="analogi" title="Seperti mengedit file laporan kelompok lewat grup WA">
+
+Kamu dan teman sekelompok sama-sama mengunduh `laporan.docx` dari grup WA. Temanmu memperbaiki Bab 2 lalu
+mengunggahnya. Kamu memperbaiki Bab 3 di salinan lamamu, lalu mengunggah file lengkap versimu. Perbaikan Bab 2 milik
+temanmu hilang, padahal kamu tidak pernah menyentuh Bab 2.
+
+- Mengunggah file lengkap = mengirim **semua field** tugas.
+- Mengirim pesan "Bab 3 diganti jadi ini" = **PATCH berisi field yang berubah**.
+
+PATCH tidak menyelesaikan semua masalah. Kalau kalian berdua mengubah bab yang sama (field yang sama), yang terakhir
+menyimpan tetap menang.
+
+</Callout>
+
+Hal yang sama bisa terjadi pada tugas. Kamu membuka tugas di HP, sementara teman sekelompok (atau kamu sendiri di
+laptop) mengganti statusnya menjadi `DONE`. Kalau form mengirim **semua** field, status lama di HP akan menimpa
+perubahan itu tanpa ada yang sadar. Dengan PATCH berisi field yang berubah saja, risiko itu jauh lebih kecil.
+
+<Compare>
+<CompareItem title="Kirim semua field" tone="bad">
+
+```json
+{
+  "title": "Laporan praktikum normalisasi",
+  "description": "Bab 1–3, format PDF",
+  "status": "TODO",
+  "priority": "HIGH",
+  "deadline": "2026-11-14T16:59:00.000Z",
+  "courseId": 1
+}
+```
+
+Hanya prioritas yang diubah, tapi status lama ikut terkirim dan bisa menimpa data terbaru.
+
+</CompareItem>
+<CompareItem title="Kirim yang berubah" tone="good">
+
+```json
+{ "priority": "LOW" }
+```
+
+Body kecil, niatnya jelas, dan field lain tidak tersentuh.
+
+</CompareItem>
+</Compare>
+
+Ada satu detail lagi. `buildPatch` membandingkan **dua nilai form**, bukan form dengan tugas mentah dari server.
+Alasannya deadline. Misalnya server menyimpan `2026-11-02T15:59:00.000Z` (23.59 WITA). Di HP ber-zona WIB, form
+menampilkan `2026-11-02`. Kalau dikonversi balik, hasilnya `2026-11-02T16:59:00.000Z`, karena form selalu memakai
+23.59 waktu HP. Jika dibandingkan dengan nilai server, deadline akan selalu terlihat "berubah" dan jamnya diam-diam
+bergeser satu jam. Membandingkan dua nilai form menghindari itu: tanggal yang tidak disentuh tidak ikut dikirim.
+
+Kamu bisa membuktikannya di Node. Salin fungsi `pad`, `dateInputToIso`, `isoToDateInput`, `taskToValues`,
+`toTaskPayload`, dan `buildPatch` ke file `patch-helpers.mjs`. Lalu jalankan skrip ini
+dengan zona waktu WIB: `$env:TZ="Asia/Jakarta"; node cek-patch.mjs` di PowerShell, atau
+`TZ=Asia/Jakarta node cek-patch.mjs` di macOS/Linux.
+
+```js title="cek-patch.mjs"
+import { buildPatch, taskToValues } from "./patch-helpers.mjs"; // salinan fungsi bagian 1
+
+const task = {
+  title: "Laporan praktikum normalisasi",
+  description: null,
+  status: "TODO",
+  priority: "HIGH",
+  deadline: "2026-11-02T15:59:00.000Z",
+  courseId: 1,
+};
+const initial = taskToValues(task);
+console.log(initial.deadline);
+console.log(buildPatch(initial, initial));
+console.log(buildPatch(initial, { ...initial, priority: "LOW", description: "  Bab 1–3  " }));
+```
+
+```txt
+2026-11-02
+{}
+{ description: 'Bab 1–3', priority: 'LOW' }
+```
+
+Baris pertama menunjukkan deadline tampil sebagai tanggal biasa. Baris kedua kosong karena tidak ada yang diubah,
+termasuk deadline yang tidak bergeser. Baris ketiga hanya berisi dua field yang benar-benar diganti, dan spasi di
+deskripsi sudah dibuang.
+
+Terakhir, pasang tombol **Ubah** di layar detail. Tambahkan `Link` ini di `src/app/tasks/[id]/index.js`, di dekat
+judul tugas:
+
+```jsx title="src/app/tasks/[id]/index.js (potongan)"
+<Link href={{ pathname: "/tasks/[id]/edit", params: { id } }} asChild>
+  <Pressable style={styles.editButton}>
+    <Text style={styles.editButtonText}>Ubah</Text>
+  </Pressable>
+</Link>
+```
+
+`href` berbentuk objek: `pathname` adalah pola alamat, dan `params` mengisi bagian `[id]`. Hasilnya tautan ke
+`/tasks/11/edit` untuk tugas nomor 11.
+
+## Kembali ke daftar dengan data segar
+
+Setelah menempel pengumuman di mading kampus, kamu pasti membaca ulang madingnya untuk memastikan pengumumanmu
+terpasang. Layar daftar juga perlu "membaca ulang" data setiap kali kamu kembali ke sana.
+
+Setelah POST atau PATCH sukses, `router.back()` menutup layar form. Layar di bawahnya tidak dibuat ulang. Ia hanya
+**kembali fokus**, artinya kembali menjadi layar yang sedang dilihat pengguna. Di
+[Menampilkan Data](/belajar/fullstack/read-data), daftar tugas dimuat di dalam `useFocusEffect`. Jadi setiap kali
+layar daftar fokus lagi, request `GET /api/tasks` dijalankan ulang dan tugas baru langsung muncul. Polanya seperti
+ini:
+
+```jsx
+useFocusEffect(
+  useCallback(() => {
+    const controller = new AbortController();
+    loadTasks(controller.signal);
+    return () => controller.abort();
+  }, [loadTasks])
+);
+```
+
+`useCallback` menjaga fungsi di dalamnya tetap sama antar-render, supaya `useFocusEffect` tidak menjalankannya
+berulang tanpa alasan. Fungsi yang di-`return` dijalankan saat layar kehilangan fokus, dan membatalkan request yang
+belum selesai.
+
+Layar detail juga perlu pola yang sama. Alurnya: daftar → detail → ubah → simpan → kembali ke **detail**. Kalau
+detail memuat datanya dengan `useEffect` biasa, `useEffect` itu hanya jalan sekali saat layar pertama dibuka. Detail
+akan tetap menampilkan data lama. Jika detail kamu masih begitu, ubah seperti ini:
+
+```diff title="src/app/tasks/[id]/index.js"
+-import { useEffect, useState } from "react";
+-import { useLocalSearchParams } from "expo-router";
++import { useCallback, useState } from "react";
++import { useFocusEffect, useLocalSearchParams } from "expo-router";
+
+-  useEffect(() => {
+-    const controller = new AbortController();
+-    loadTask(controller.signal);
+-    return () => controller.abort();
+-  }, [loadTask]);
++  useFocusEffect(
++    useCallback(() => {
++      const controller = new AbortController();
++      loadTask(controller.signal);
++      return () => controller.abort();
++    }, [loadTask])
++  );
+```
+
+Nama fungsi pemuatnya mungkin berbeda di kodemu. Yang penting, `useEffect` diganti `useFocusEffect` yang dibungkus
+`useCallback`. Cara ini sederhana tapi boros, karena setiap kembali ke layar berarti satu request baru. Di
+[TanStack Query](/belajar/fullstack/tanstack-query) kamu akan menggantinya dengan **cache** (salinan data yang
+disimpan sementara di HP) dan **invalidasi** (menandai salinan itu basi supaya diambil ulang hanya saat perlu).
+
+## Mencoba alurnya
+
+<Steps>
+<Step title="Pastikan API dan aplikasi berjalan">
+
+Jalankan `npm run dev` di folder `api` dan `npx expo start` di `kuliah-app`, seperti di pelajaran sebelumnya.
+
+</Step>
+<Step title="Buat tugas baru">
+
+Ketuk **Tambah**, isi judul "Laporan praktikum normalisasi", pilih prioritas Tinggi, deadline `2026-11-14`, dan mata
+kuliah Basis Data. Ketuk **Simpan tugas**. Tombol berubah menjadi "Menyimpan…", lalu layar kembali dan tugas baru
+ada di urutan teratas daftar.
+
+</Step>
+<Step title="Coba validasi di HP">
+
+Buka lagi layar Tugas Baru, kosongkan judul, ketik deadline `2026-02-31`, lalu ketuk Simpan. Dua pesan merah muncul
+tanpa ada request ke server.
+
+</Step>
+<Step title="Lihat error server tampil di kolomnya">
+
+Untuk sementara, di `handleSubmit` milik `TaskForm`, ganti `validateTaskValues(values)` dengan `{}`. Isi judul
+hanya dengan spasi lalu simpan. Pesan "Judul wajib diisi" tetap muncul di bawah kolom judul, tapi kali ini datangnya
+dari `details` server. Setelah terbukti, **kembalikan** validasi HP.
+
+</Step>
+<Step title="Ubah tugas">
+
+Buka detail tugas tadi, ketuk **Ubah**, ganti status menjadi Dikerjakan, lalu simpan. Layar detail menampilkan
+status baru. Di terminal API, request yang masuk adalah PATCH dengan body `{"status":"IN_PROGRESS"}` saja.
+
+</Step>
+</Steps>
+
+Kamu juga bisa melihat respons 400 mentahnya dari terminal. Skrip berikut login dulu untuk mendapat token, lalu
+mengirim tugas dengan body yang sengaja salah di tiga tempat:
+
+<Tabs items={["Windows (PowerShell)", "macOS / Linux"]}>
+<Tab>
+
+```powershell
+$login = Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/auth/login -ContentType "application/json" -Body '{"email":"demo@kampus.ac.id","password":"password123"}'
+$token = $login.data.accessToken
+
+try {
+  Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/tasks -Headers @{ Authorization = "Bearer $token" } -ContentType "application/json" -Body '{"title":"   ","deadline":"2026-11-14","courseId":"1"}'
+} catch {
+  $_.ErrorDetails.Message
+}
+```
+
+</Tab>
+<Tab>
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"demo@kampus.ac.id","password":"password123"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.accessToken')
+
+curl -s -X POST http://localhost:3000/api/tasks \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"   ","deadline":"2026-11-14","courseId":"1"}'
+```
+
+</Tab>
+</Tabs>
+
+```txt
+{"error":{"message":"Data yang dikirim tidak valid","code":"VALIDATION_ERROR","details":[{"field":"title","message":"Judul wajib diisi"},{"field":"deadline","message":"Deadline harus berformat tanggal ISO 8601"},{"field":"courseId","message":"courseId harus berupa angka"}]}}
+```
+
+Ketiga kesalahan ini paling sering terjadi:
+
+- Judul berisi spasi saja. Setelah di-*trim* (spasi di awal dan akhir dibuang), judulnya kosong.
+- Tanggal tanpa jam dan zona waktu.
+- `courseId` dikirim sebagai string `"1"`, bukan angka `1`.
+
+Ingin mencoba method lain tanpa terminal? Buka [HTTP Explorer](/lab/http-explorer).
+
+## Kesalahan umum
+
+- **`courseId` terkirim sebagai `"1"`.** Biasanya karena nilainya diambil dari input teks atau parameter URL. API
+  membalas "courseId harus berupa angka". Ambil dari `course.id` di respons, atau ubah dengan `Number(...)`.
+- **Deadline tanpa jam.** `"2026-11-14"` ditolak dengan "Deadline harus berformat tanggal ISO 8601". Selalu kirim
+  hasil `toISOString()`.
+- **Tugas tersimpan dua kali.** Tombol tidak dinonaktifkan, atau hanya mengandalkan state tanpa ref. Ketukan ganda
+  saat jaringan lambat langsung menghasilkan dua POST.
+- **Form ubah kosong.** `TaskForm` dirender sebelum data datang (lihat peringatan di atas).
+- **Muncul error di `field: "body"`.** Body tidak terbaca sebagai objek JSON, biasanya karena header
+  `Content-Type: application/json` hilang. Pastikan `apiFetch` mengirim objek lewat `JSON.stringify` dan memasang
+  header itu.
+- **"Tugas tidak ditemukan" (404) saat menyimpan.** Tugasnya sudah dihapus di perangkat lain. Banner menampilkan
+  pesannya, dan pengguna cukup kembali ke daftar.
+- **Kolom bawah tertutup keyboard di iOS.** Jika header navigasi membuat perhitungan meleset, beri
+  `keyboardVerticalOffset` kira-kira setinggi header pada `KeyboardAvoidingView`.
+
+## Latihan
+
+<Exercise title="Tombol cepat deadline" difficulty="sedang" hints={["Buat `Date` hari ini lalu tambahkan hari dengan `setDate(getDate() + n)`.", "`isoToDateInput(date.toISOString())` sudah menghasilkan format `YYYY-MM-DD` di zona HP."]}>
+
+Mengetik tanggal itu merepotkan. Buat jalan pintasnya:
+
+1. Di bawah kolom deadline, tambahkan tiga tombol kecil: **Hari ini**, **Besok**, dan **Minggu depan**.
+2. Saat diketuk, setiap tombol mengisi kolom deadline dengan tanggal yang sesuai.
+3. Formatnya harus `YYYY-MM-DD`, sama seperti kalau diketik manual.
+
+<Solution>
+
+```jsx
+function dateInputFromToday(days) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return isoToDateInput(date.toISOString());
+}
+
+const QUICK_DEADLINES = [
+  { label: "Hari ini", days: 0 },
+  { label: "Besok", days: 1 },
+  { label: "Minggu depan", days: 7 },
+];
+
+// di dalam <Field label="Deadline">, setelah TextInput:
+<View style={styles.chips}>
+  {QUICK_DEADLINES.map((item) => (
+    <Pressable
+      key={item.label}
+      onPress={() => setField("deadline", dateInputFromToday(item.days))}
+      style={styles.chip}
+    >
+      <Text style={styles.chipText}>{item.label}</Text>
+    </Pressable>
+  ))}
+</View>
+```
+
+`dateInputFromToday` mengambil tanggal hari ini, menambah sejumlah hari, lalu mengubahnya ke format form. `setDate`
+otomatis menangani pergantian bulan dan tahun (31 Desember + 1 menjadi 1 Januari). Tombol cukup mengisi state lewat
+`setField`. Konversi ke ISO tetap terjadi di satu tempat, yaitu `toTaskPayload`.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Simpan hanya kalau ada perubahan" difficulty="sedang" hints={["Tambahkan prop baru di `TaskForm`, misalnya `requireChanges`.", "Gunakan `buildPatch(initialValues, values)` dan cek apakah hasilnya kosong."]}>
+
+Saat ini tombol **Simpan perubahan** di layar Ubah Tugas tetap aktif walaupun belum ada yang diubah. Perbaiki:
+
+1. Selama isi form masih sama dengan data awal, buat tombol Simpan nonaktif.
+2. Di bawah tombol, tampilkan petunjuk "Belum ada perubahan".
+3. Layar Tugas Baru tidak boleh ikut terpengaruh.
+
+<Solution>
+
+```jsx
+export function TaskForm({ initialValues = EMPTY_TASK_VALUES, submitLabel = "Simpan", requireChanges = false, onSubmit }) {
+  // ...state seperti sebelumnya
+  const unchanged = requireChanges && Object.keys(buildPatch(initialValues, values)).length === 0;
+  const disabled = saving || unchanged;
+
+  // ...
+  <Pressable
+    onPress={handleSubmit}
+    disabled={disabled}
+    accessibilityState={{ disabled, busy: saving }}
+    style={[styles.submit, disabled && styles.submitDisabled]}
+  >
+    {/* isi tombol sama */}
+  </Pressable>
+  {unchanged ? <Text style={styles.hint}>Belum ada perubahan</Text> : null}
+}
+```
+
+`unchanged` bernilai `true` kalau `buildPatch` tidak menemukan perbedaan. Karena `requireChanges` bawaannya `false`,
+layar Tugas Baru tidak terpengaruh. Di `edit.js`, kirim `requireChanges` ke `TaskForm`. Perhitungan `unchanged`
+ringan karena hanya membandingkan enam field, jadi aman dihitung di setiap render tanpa `useMemo`.
+
+</Solution>
+</Exercise>
+
+## Kuis
+
+<Quiz questions={[
+  {
+    q: "Pengguna hanya mengganti prioritas di layar Ubah Tugas. Body apa yang sebaiknya dikirim?",
+    options: [
+      "Semua field tugas dengan method PUT",
+      "Semua field tugas dengan method PATCH",
+      "`{ \"priority\": \"LOW\" }` dengan method PATCH",
+      "Tidak perlu body, cukup `PATCH /api/tasks/11?priority=LOW`",
+    ],
+    answer: 2,
+    explain: "Kirim yang berubah saja. Dengan begitu, perubahan lain tidak ikut tertimpa, misalnya status yang baru diganti dari HP lain. API pendamping juga tidak punya PUT, dan isi tugas dikirim lewat body JSON, bukan lewat URL.",
+  },
+  {
+    q: "Pengguna di WIB mengetik deadline `2026-11-14`. Nilai apa yang dikirim form ke API?",
+    options: [
+      "`\"2026-11-14\"`",
+      "`\"2026-11-14T16:59:00.000Z\"`",
+      "`\"14/11/2026 23:59\"`",
+      "Objek `Date` JavaScript",
+    ],
+    answer: 1,
+    explain: "Server hanya menerima format ISO 8601 lengkap: tanggal, jam, dan zona waktu. Pukul 23.59 WIB sama dengan 16.59 UTC. Tanggal saja ditolak, format `14/11/2026` tidak dikenali, dan objek `Date` tidak bisa dikirim apa adanya lewat JSON.",
+  },
+  {
+    q: "Kenapa layar edit baru merender `TaskForm` setelah data tugas selesai dimuat?",
+    options: [
+      "Supaya request PATCH lebih cepat",
+      "Karena `useLocalSearchParams` baru tersedia setelah data dimuat",
+      "Agar `apiFetch` tidak dipanggil dua kali",
+      "Karena `useState(initialValues)` hanya membaca nilai awal sekali, di render pertama",
+    ],
+    answer: 3,
+    explain: "`useState` hanya memakai nilai awal di render pertama, lalu mengabaikannya. Kalau form muncul saat data masih `null`, isiannya tetap kosong walaupun data datang belakangan. Parameter URL sudah ada sejak awal, dan urutan render tidak memengaruhi kecepatan PATCH.",
+  },
+  {
+    q: "Server membalas 400 dengan `details: [{ field: \"courseId\", message: \"Mata kuliah tidak ditemukan\" }]`. Di mana pesan itu sebaiknya tampil?",
+    options: [
+      "Di bawah pemilih mata kuliah",
+      "Di `console.log` saja, pengguna tidak perlu tahu",
+      "Sebagai alert dengan teks \"Terjadi kesalahan\"",
+      "Di bawah kolom judul, karena judul adalah field wajib",
+    ],
+    answer: 0,
+    explain: "Nilai `field` sama dengan nama kolom di state form, jadi pesannya ditempel ke kolom `courseId`. Pesan umum atau pesan yang disembunyikan membuat pengguna bingung harus memperbaiki apa.",
+  },
+  {
+    q: "Validasi di HP sudah memeriksa judul dan format tanggal. Kenapa server tetap memvalidasi?",
+    options: [
+      "Karena validasi di HP tidak bisa menampilkan pesan dalam Bahasa Indonesia",
+      "Supaya HP tidak perlu memvalidasi apa pun",
+      "Karena server tidak bisa memercayai klien, dan hanya server yang tahu aturan yang butuh database",
+      "Karena Zod hanya bisa berjalan di server",
+    ],
+    answer: 2,
+    explain: "Siapa pun bisa mengirim request lewat curl tanpa membuka form. Aturan seperti 'mata kuliah ini milik pengguna ini' juga hanya bisa dicek dengan database. Validasi di HP tetap berguna supaya pengguna cepat tahu salahnya, tapi tidak menggantikan validasi server.",
+  },
+]} />
+
+## Ringkasan
+
+- `TaskForm` adalah satu form yang dipakai dua layar. Layar `new.js` dan `edit.js` hanya menentukan request apa
+  yang dikirim dan ke mana pengguna pergi sesudahnya.
+- Form menyimpan semua isian sebagai teks (`deadline: "2026-11-14"`). API butuh format yang lebih ketat: ISO 8601
+  untuk deadline, `null` untuk kolom kosong, dan angka untuk `courseId`. `toTaskPayload` yang menerjemahkannya.
+- POST membuat tugas baru (status 201). PATCH mengirim **hanya field yang berubah** (status 200). Daftar perubahan
+  itu dihitung `buildPatch` dari isian form, supaya deadline tidak bergeser.
+- Validasi di HP membuat pengguna cepat tahu salahnya. Validasi server memastikan data yang masuk benar. Pesan di
+  `details` error 400 ditempel ke kolom yang namanya sama dengan `field`.
+- Tombol Simpan nonaktif selama menyimpan. State mengatur tampilan tombol, ref mencegah ketukan ganda.
+- Setelah berhasil, `router.back()` membawa pengguna kembali. `useFocusEffect` memuat ulang daftar dan detail
+  setiap kali layar itu terlihat lagi.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Pastikan `kuliah-app` kamu sudah bisa:
+
+1. Membuat tugas dengan judul, prioritas, deadline, dan mata kuliah.
+2. Mengubah status tugas dari layar detail.
+3. Menampilkan pesan server di bawah kolom yang salah.
+
+Fungsi `toTaskPayload` dan `buildPatch` di `task-form.js` tidak bergantung pada tampilan. Nanti, saat `kuliah-app`
+dirapikan, keduanya yang pertama dipindah ke `src/features/tasks/`. Berikutnya,
+[Delete & Optimistic Update](/belajar/fullstack/delete-optimistic) menambahkan fitur hapus tugas yang terasa instan.
+
+</Callout>

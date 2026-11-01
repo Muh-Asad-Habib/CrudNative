@@ -1,0 +1,919 @@
+## Pengantar
+
+Sari membuka aplikasi tugas di KRL menuju kampus. Di antara dua stasiun, sinyal hilang. Aplikasi dari Track 3 langsung menampilkan spinner (ikon loading yang berputar), lalu pesan "Tidak dapat terhubung ke server". Padahal daftar itu sudah dimuat lima menit sebelumnya. Sari hanya ingin menandai "Laporan Praktikum Basis Data" selesai.
+
+<Callout type="analogi" title="Kasir yang mencatat di buku saat sistem mati">
+
+Bayangkan kasir warung yang biasanya mencatat pesanan di aplikasi kasir online. Suatu siang, sinyal hilang. Kasir yang sigap tidak menutup warung. Ia mencatat pesanan di buku tulis, tetap melayani pembeli, lalu memasukkan semuanya ke sistem saat sinyal kembali.
+
+- Buku tulis di meja kasir = penyimpanan lokal di HP.
+- Daftar "belum diinput ke sistem" = antrean perubahan.
+- Sistem kasir pusat = server (API).
+
+Bedanya, kasir harus ingat sendiri untuk menginput ulang. Aplikasi melakukannya otomatis, dan harus pintar kalau data di pusat sudah berubah duluan.
+
+</Callout>
+
+**Offline-first** membalik cara pandang aplikasi Track 3. Data di HP menjadi sumber pertama untuk layar. Jaringan hanya saluran sinkronisasi, yaitu jalur untuk menyamakan data HP dengan server. Layar selalu membaca dari penyimpanan lokal. Perubahan ditulis ke lokal dulu, dicatat di antrean, lalu dikirim ke server ketika koneksi tersedia.
+
+Pelajaran ini melanjutkan [TanStack Query](/belajar/fullstack/tanstack-query) dan [Delete & Optimistic Update](/belajar/fullstack/delete-optimistic). Kodenya TypeScript dan menjadi contoh referensi untuk `kuliah-app` versi TypeScript dari Track 4, yang sudah dirapikan ke struktur `src/features/...`. Semua paket di sini sudah tersedia di Expo Go SDK 58.
+
+## Tiga tingkat offline-first
+
+Offline-first bukan saklar hidup/mati. Ada beberapa tingkat, dan tiap tingkat menambah kerumitan. Pakai lagi contoh warung tadi: tingkat 1 seperti menempel daftar harga terakhir di dinding, tingkat 2 seperti buku catatan pesanan, dan tingkat 3 seperti cabang warung yang punya pembukuan sendiri.
+
+| Tingkat | Yang tetap bekerja tanpa internet | Alat utama | Cocok untuk |
+| --- | --- | --- | --- |
+| 0. Online-only | Tidak ada | `fetch` biasa | Prototipe |
+| 1. Baca dari cache | Melihat data terakhir yang pernah dimuat | Cache TanStack Query yang dipersistenkan | Hampir semua aplikasi |
+| 2. Tulis diantrekan | Melihat dan mengubah data, perubahan dikirim belakangan | Paused mutation + optimistic UI | Aplikasi tugas, catatan, to-do |
+| 3. Sinkronisasi penuh | Semua fitur, ribuan baris, berhari-hari offline | Database lokal (`expo-sqlite`) + mesin sinkron | Aplikasi lapangan, email, inventaris |
+
+Target `kuliah-app` adalah **tingkat 2**. Di tingkat ini Sari bisa melihat dan mengubah tugas tanpa sinyal, lalu perubahannya terkirim belakangan. Tingkat 3 kita bahas di akhir supaya kamu tahu kapan perlu naik kelas.
+
+<Flow nodes={["Layar", "Cache lokal", "Antrean mutasi", "API pendamping"]} labels={["baca & tulis langsung", "dikirim saat online", "respons memperbarui cache"]} caption="Alur data aplikasi offline-first tingkat 2" />
+
+## Mendeteksi status jaringan
+
+Langkah pertama: aplikasi harus tahu kapan HP offline. Di browser, TanStack Query membaca event `online` dan `offline` milik `window`. Di React Native event itu tidak ada, jadi kita yang harus memberi tahu.
+
+<Callout type="analogi" title="Papan buka-tutup di loket kantor pos">
+
+Di kantor pos ada petugas yang memegang papan "Loket buka" atau "Loket tutup sementara". Seorang teknisi mengecek listrik dan memberi kabar ke petugas itu. Saat papan bertuliskan "tutup sementara", antrean tidak dibubarkan. Orang tetap memegang nomor antreannya dan menunggu loket buka lagi.
+
+- Teknisi yang mengecek listrik = **NetInfo** (membaca status jaringan HP).
+- Petugas dengan papan buka/tutup = **`onlineManager`** milik TanStack Query.
+- Antrean yang menunggu, bukan bubar = request yang **dijeda** (paused), bukan gagal.
+
+Bedanya, teknisi kita hanya tahu HP tersambung ke jaringan. Ia tidak tahu apakah server di ujung sana benar-benar hidup.
+
+</Callout>
+
+### NetInfo
+
+Pasang paket resmi komunitas React Native:
+
+```bash
+npx expo install @react-native-community/netinfo
+```
+
+`NetInfo.fetch()` membaca status sekali. `NetInfo.addEventListener()` mendaftarkan *listener*, yaitu fungsi yang dipanggil setiap kali status berubah. Listener ini juga langsung dipanggil sekali setelah didaftarkan.
+
+```ts
+import NetInfo from '@react-native-community/netinfo';
+
+NetInfo.fetch().then((state) => {
+  console.log(state.type, state.isConnected, state.isInternetReachable);
+});
+// → wifi true true
+```
+
+Kode ini membaca status sekali lalu mencetak tiga nilai. Hasil `wifi true true` artinya HP memakai Wi-Fi, tersambung, dan internet bisa dijangkau. Arti tiap properti:
+
+| Properti | Arti | Catatan |
+| --- | --- | --- |
+| `isConnected` | HP tersambung ke suatu jaringan | Bisa `null` saat belum diketahui |
+| `isInternetReachable` | Internet benar-benar bisa dijangkau | Dicek lewat server pihak ketiga |
+| `type` | `wifi`, `cellular`, `none`, `unknown`, dan lainnya | Menunda sinkron besar |
+| `details.isConnectionExpensive` | Koneksi berbayar, misalnya data seluler | Tunda upload foto sampai Wi-Fi |
+
+Kita memakai `isConnected`, bukan `isInternetReachable`. Saat development, API berjalan di laptop pada Wi-Fi yang sama. Misalkan Wi-Fi kos sedang habis kuota. `isInternetReachable` bernilai `false`, padahal laptopmu tetap bisa dijangkau dari HP.
+
+### Menyambungkan ke onlineManager dan focusManager
+
+`onlineManager` adalah tempat TanStack Query menyimpan status online. Saat nilainya `false`, query dan mutasi (perubahan data seperti create, update, delete) yang baru **dijeda**, bukan gagal. Saat kembali `true`, query yang tertunda dilanjutkan dan mutasi yang dijeda dikirim ulang.
+
+Contoh `kuliah-app/src/lib/query-client.ts` di bawah sudah menyambungkan `focusManager` ke `AppState`. Gunanya, query basi diambil ulang (*refetch*) ketika aplikasi kembali dari background. Kalau punyamu belum, salin bagian itu juga. Kita tambahkan NetInfo dan memperpanjang `gcTime`. Alasan `gcTime` dijelaskan di bagian persistensi.
+
+```ts title="src/lib/query-client.ts" {1,7,13-14,34-39} showLineNumbers
+import NetInfo from '@react-native-community/netinfo';
+import { focusManager, onlineManager, QueryClient } from '@tanstack/react-query';
+import { AppState, Platform, type AppStateStatus } from 'react-native';
+
+import { ApiError } from './api';
+
+export const ONE_DAY = 24 * 60 * 60 * 1000;
+
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      // Harus >= maxAge persister, kalau tidak cache dibuang sebelum sempat dipulihkan.
+      gcTime: ONE_DAY,
+      retry: (failureCount, error) => {
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false;
+        return failureCount < 2;
+      },
+    },
+    mutations: {
+      retry: 0,
+    },
+  },
+});
+
+// Bukan bagian baru: refetch saat aplikasi kembali aktif.
+function onAppStateChange(status: AppStateStatus) {
+  if (Platform.OS !== 'web') {
+    focusManager.setFocused(status === 'active');
+  }
+}
+AppState.addEventListener('change', onAppStateChange);
+
+// null berarti "belum tahu"; anggap online supaya query tidak terjeda saat aplikasi baru dibuka.
+onlineManager.setEventListener((setOnline) =>
+  NetInfo.addEventListener((state) => {
+    setOnline(state.isConnected !== false);
+  }),
+);
+```
+
+Baris yang disorot adalah bagian baru:
+
+- Baris 1 meng-import NetInfo.
+- Baris 7 dan 13–14 membuat cache bertahan satu hari di memori (`gcTime: ONE_DAY`).
+- Baris 34–39 memberi tahu `onlineManager` setiap kali status jaringan berubah. `state.isConnected !== false` artinya nilai `null` (belum tahu) dianggap online.
+
+`setEventListener` menerima fungsi yang mendaftarkan listener dan mengembalikan fungsi pembersih. Kebetulan `NetInfo.addEventListener` sudah mengembalikan fungsi untuk berhenti mendengarkan (*unsubscribe*), jadi cukup dikembalikan langsung.
+
+<Callout type="info" title="Pilih satu sumber status jaringan">
+
+Memakai `expo-network` untuk `onlineManager` juga benar. Yang penting hanya **satu** sumber yang memanggil `setOnline`. NetInfo dipilih karena dicontohkan dokumentasi resmi TanStack Query dan memberi info tambahan seperti `type`.
+
+</Callout>
+
+### Hook useIsOnline untuk UI
+
+Komponen sebaiknya membaca status dari `onlineManager` juga. Dengan begitu, UI dan TanStack Query tidak pernah berbeda pendapat soal online atau offline. Untuk berlangganan ke data di luar React seperti ini, React menyediakan `useSyncExternalStore`:
+
+```ts title="src/lib/use-is-online.ts"
+import { onlineManager } from '@tanstack/react-query';
+import { useSyncExternalStore } from 'react';
+
+const subscribe = (onChange: () => void) => onlineManager.subscribe(onChange);
+const getSnapshot = () => onlineManager.isOnline();
+
+export function useIsOnline() {
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+```
+
+`subscribe` memberi tahu React cara mendengarkan perubahan. `getSnapshot` membaca nilai saat ini. Setiap kali `onlineManager` berubah, komponen yang memakai `useIsOnline()` ikut dirender ulang dengan nilai `true` atau `false` yang baru.
+
+## Mempersistenkan cache TanStack Query
+
+<Callout type="analogi" title="Memfoto papan tulis sebelum kelas bubar">
+
+Cache TanStack Query mirip catatan jawaban di papan tulis kelas. Selama kelas berlangsung, semua orang bisa melihatnya tanpa bertanya ulang ke dosen. Begitu kelas bubar, papan dihapus. Kalau kamu memfoto papan sebelum pulang, besok pagi catatannya masih bisa kamu lihat walaupun dosennya belum datang.
+
+- Papan tulis = cache di memori.
+- Foto di galeri HP = salinan cache di disk (*persist*).
+- Dosen = server.
+
+Foto itu tetap catatan kemarin. Bisa saja dosen sudah merevisi jawabannya, jadi begitu dosen datang kamu tetap perlu mengecek ulang.
+
+</Callout>
+
+Cache TanStack Query hidup di memori. Begitu aplikasi ditutup paksa atau HP restart, cache hilang. Untuk tingkat 1, kita menyimpan salinannya ke disk lalu memulihkannya saat aplikasi dibuka. Istilahnya *mempersistenkan* cache, artinya membuatnya bertahan setelah aplikasi ditutup.
+
+```bash
+npx expo install @tanstack/react-query-persist-client @tanstack/query-async-storage-persister @react-native-async-storage/async-storage
+```
+
+Perintah ini memasang tiga paket: penghubung persistensi untuk TanStack Query, *persister* (bagian yang menulis dan membaca cache dari penyimpanan), dan AsyncStorage (penyimpanan key-value sederhana di HP). Pastikan versi `@tanstack/react-query-persist-client` sama persis dengan `@tanstack/react-query` di `package.json`, karena paket TanStack dirilis bersamaan.
+
+```ts title="src/lib/query-persister.ts"
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
+
+export const queryPersister = createAsyncStoragePersister({
+  storage: AsyncStorage,
+  key: 'kuliah-app-cache',
+  // Tulis ke disk paling sering sekali per detik, bukan setiap perubahan kecil.
+  throttleTime: 1000,
+});
+```
+
+Persister ini menyimpan seluruh cache sebagai satu entri bernama `kuliah-app-cache` di AsyncStorage. `throttleTime` menjaga HP agar tidak sibuk menulis ke disk setiap ada perubahan kecil.
+
+Lalu ganti `QueryClientProvider` di `src/app/_layout.tsx` dengan `PersistQueryClientProvider`. Komponen ini menerima props yang sama, ditambah `persistOptions` dan `onSuccess`:
+
+```diff title="src/app/_layout.tsx"
+-import { QueryClientProvider } from '@tanstack/react-query';
++import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
+ // ...import lain tetap
+-import { queryClient } from '@/lib/query-client';
++import { registerTaskMutationDefaults } from '@/features/tasks/mutation-defaults';
++import { ONE_DAY, queryClient } from '@/lib/query-client';
++import { queryPersister } from '@/lib/query-persister';
++
++// Wajib sebelum provider memulihkan cache, lihat bagian antrean mutasi.
++registerTaskMutationDefaults(queryClient);
+
+ export default function RootLayout() {
+   return (
+-    <QueryClientProvider client={queryClient}>
++    <PersistQueryClientProvider
++      client={queryClient}
++      persistOptions={{ persister: queryPersister, maxAge: ONE_DAY, buster: 'tasks-v1' }}
++      onSuccess={() => queryClient.resumePausedMutations()}
++    >
+       <AuthProvider>
+         <RootNavigator />
+       </AuthProvider>
+-    </QueryClientProvider>
++    </PersistQueryClientProvider>
+   );
+ }
+```
+
+Yang berubah di file ini:
+
+- `registerTaskMutationDefaults(queryClient)` dipanggil sebelum provider dirender. Alasannya dibahas di bagian antrean mutasi.
+- `persistOptions` memberi tahu provider persister mana yang dipakai, berapa umur maksimum cache (`maxAge`), dan versi cache (`buster`).
+- `onSuccess` berjalan setelah cache selesai dipulihkan dari disk. Di sini kita memanggil `resumePausedMutations()` untuk melanjutkan perubahan yang tertunda.
+
+`AuthProvider` tetap di dalam provider karena ia memakai `useQueryClient`. `RootNavigator` tidak berubah.
+
+### gcTime dan maxAge
+
+Dua angka ini sering tertukar. Padahal salah satunya bisa diam-diam menghapus cache yang sudah disimpan ke disk:
+
+| Opsi | Tempat | Arti | Bawaan |
+| --- | --- | --- | --- |
+| `gcTime` | `QueryClient` | Lama query yang tidak dipakai layar mana pun disimpan **di memori** | 5 menit |
+| `maxAge` | `persistOptions` | Umur maksimum cache **di disk**. Lebih tua dari ini dibuang diam-diam saat restore | 24 jam |
+| `buster` | `persistOptions` | String versi. Kalau berbeda dengan yang tersimpan, cache lama dibuang | `''` |
+
+Persister menyimpan isi cache memori apa adanya. Jika `gcTime` tetap 5 menit, query daftar mata kuliah yang tidak dibuka selama 5 menit dihapus dari memori. Pada penulisan berikutnya, data itu ikut hilang dari salinan di disk.
+
+Kembali ke papan tulis tadi. `gcTime` = petugas kebersihan yang menghapus bagian papan yang 5 menit tidak dilihat siapa pun. Kamu memfoto papan berkali-kali, jadi foto terbaru ikut kehilangan bagian yang sudah dihapus. `maxAge` = aturan bahwa foto yang lebih tua dari 24 jam dibuang.
+
+Aturannya: **`gcTime` minimal sama dengan `maxAge`**. Itu sebabnya `query-client.ts` memakai `ONE_DAY` untuk keduanya.
+
+Ganti `buster` setiap kali bentuk data berubah, misalnya `Task` mendapat field baru. Cache lama dengan bentuk berbeda bisa membuat layar error, jadi lebih aman dibuang. Secara bawaan, yang disimpan hanya query yang **sukses** dan mutasi yang **dijeda**.
+
+### Tampilan saat offline tanpa data
+
+Setelah persistensi aktif, layar daftar langsung terisi dari cache walaupun offline. Masih ada satu kasus: query yang **belum pernah sukses sama sekali**, misalnya kamu baru login lalu sinyal langsung hilang. Query itu punya dua status sekaligus:
+
+- `status: 'pending'` artinya data belum ada.
+- `fetchStatus: 'paused'` artinya TanStack Query sedang menunggu jaringan, bukan sedang mengambil data.
+
+Kalau layar hanya mengecek `isPending`, `LoadingState` akan tampil selamanya. Ambil juga `fetchStatus` dari `useTasks(filters)`, lalu tampilkan pesan khusus untuk kasus ini:
+
+```diff title="src/app/(app)/(tabs)/index.tsx"
+   function renderEmpty() {
++    if (isPending && fetchStatus === 'paused') {
++      return <EmptyState title="Kamu sedang offline" message="Daftar tugas dimuat saat koneksi kembali." />;
++    }
+     if (isPending) return <LoadingState message="Memuat tugas…" />;
+```
+
+### Sesi login saat offline
+
+Ada satu jebakan di alur login `kuliah-app`. Saat aplikasi dibuka, fungsi `restore()` di `src/features/auth/auth-context.tsx` memanggil `authApi.me()` untuk mengecek siapa yang sedang login. Kalau HP offline, request ini gagal. Blok `catch` lalu memindahkan pengguna ke layar login. Akibatnya cache yang sudah dipulihkan tidak pernah terlihat.
+
+Perbaikannya dua langkah:
+
+1. Simpan profil terakhir setiap kali login atau `me()` berhasil, misalnya dengan `AsyncStorage.setItem('kuliah-app-user', JSON.stringify(me))`.
+2. Di `catch`, bedakan "server menolak" (token memang salah) dari "server tidak terjangkau" (sinyal hilang).
+
+```ts title="src/features/auth/auth-context.tsx (potongan restore)"
+} catch (error) {
+  // Status 0 = tidak ada respons (offline/timeout). Token belum tentu salah, jadi tetap masuk.
+  const lastUser = await AsyncStorage.getItem('kuliah-app-user');
+  if (active && error instanceof ApiError && error.status === 0 && lastUser) {
+    setUser(JSON.parse(lastUser) as User);
+    setStatus('signedIn');
+    return;
+  }
+  if (active) setStatus('signedOut');
+}
+```
+
+Cara membacanya: kalau error-nya berstatus `0` (tidak ada jawaban sama sekali) dan profil terakhir tersimpan, pengguna tetap dianggap login memakai profil itu. Error lain, misalnya `401` karena token ditolak, tetap mengarah ke layar login. Variabel `active` mencegah state diubah setelah komponen sudah hilang dari layar.
+
+Begitu online lagi, request pertama yang ditolak server (misalnya refresh token sudah dicabut) tetap memicu handler "sesi berakhir" seperti biasa.
+
+<Callout type="danger" title="Cache persisten bukan tempat rahasia">
+
+AsyncStorage **tidak terenkripsi**, isinya bisa dibaca siapa pun yang punya akses ke file aplikasi. Token tetap disimpan di `expo-secure-store` (`src/lib/token-storage.ts`), jangan pernah di cache query.
+
+`resetSession()` di `auth-context.tsx` sudah memanggil `queryClient.clear()`, tetapi itu hanya membersihkan memori. Tambahkan juga penghapusan salinan di disk dan profil tersimpan. Kalau tidak, teman yang meminjam HP-mu bisa melihat tugasmu setelah kamu logout:
+
+```ts
+queryClient.clear();
+void queryPersister.removeClient();
+void AsyncStorage.removeItem('kuliah-app-user');
+```
+
+</Callout>
+
+## Mengantrekan mutasi saat offline
+
+Tingkat 2 dimulai di sini. Ingat buku catatan kasir di awal pelajaran: pesanan dicatat dulu, lalu diinput ke sistem saat sinyal kembali. Kabar baiknya, TanStack Query sudah punya "buku catatan" seperti itu untuk mutasi. Perilakunya diatur oleh opsi **`networkMode`** (mode jaringan):
+
+| `networkMode` | Perilaku tanpa jaringan | Kapan dipakai |
+| --- | --- | --- |
+| `'online'` (bawaan) | Tidak dijalankan, menunggu dengan status paused | Request ke API pendamping |
+| `'always'` | Tetap dijalankan | Query yang membaca `expo-sqlite` atau AsyncStorage |
+| `'offlineFirst'` | Dijalankan sekali, percobaan ulang (retry) dijeda sampai online | Ada lapisan cache HTTP sendiri |
+
+Dengan mode `'online'`, mutasi yang dipanggil saat offline berstatus `isPaused: true` (dijeda) dan tetap `isPending: true` (belum selesai). `onMutate` tetap berjalan, jadi UI optimistis langsung tampil. Begitu `onlineManager` kembali online, mutasi dilanjutkan otomatis.
+
+### Masalahnya: fungsi tidak bisa disimpan
+
+<Callout type="analogi" title="Seperti SOP kasir yang ditempel di dinding">
+
+Kasir shift pagi menulis di buku: "TAMBAH-TUGAS, Kuis Pemrograman Mobile". Siang harinya kasir shift pagi pulang. Kasir shift siang membaca catatan itu, tetapi tidak tahu cara menginputnya ke sistem. Solusinya: tempel SOP (prosedur tertulis) di dinding, satu lembar untuk setiap kode catatan. Kasir mana pun cukup mencocokkan kode di buku dengan kode di SOP.
+
+- catatan di buku = state mutasi yang disimpan ke disk (key dan variabel)
+- kode "TAMBAH-TUGAS" = **mutation key**
+- SOP di dinding = **`setMutationDefaults`**
+- kasir shift siang = aplikasi yang dibuka ulang setelah ditutup
+
+Bedanya, SOP harus sudah ditempel sebelum kasir baru mulai membaca buku. Di kode, default harus didaftarkan sebelum cache dipulihkan.
+
+</Callout>
+
+Persister menyimpan **state** mutasi (key, variabel, status) sebagai JSON. Fungsi seperti `mutationFn` dan `onSuccess` tidak bisa diubah menjadi JSON. Setelah aplikasi dibuka ulang, mutasi yang dipulihkan tidak tahu endpoint mana yang harus dipanggil. Saat diputar ulang, ia gagal dengan error `No mutationFn found` (fungsi mutasi tidak ditemukan).
+
+Solusinya `setMutationDefaults`: daftarkan fungsi berdasarkan **mutation key** (nama unik untuk jenis mutasi, misalnya `['tasks', 'create']`). Mutasi yang dipulihkan mencari default dengan key yang sama, lalu mendapatkan kembali fungsinya.
+
+```ts title="src/features/tasks/mutation-defaults.ts" showLineNumbers
+import type { QueryClient } from '@tanstack/react-query';
+
+import { courseKeys } from '@/features/courses/query-keys';
+
+import { tasksApi } from './api';
+import { taskKeys } from './query-keys';
+import type { Task, TaskInput } from './types';
+
+export const taskMutationKeys = {
+  create: ['tasks', 'create'] as const,
+  update: ['tasks', 'update'] as const,
+};
+
+export type CreateTaskVariables = { tempId: number; input: TaskInput };
+export type UpdateTaskVariables = { id: number; input: Partial<TaskInput> };
+
+// Semua mutasi tugas berbagi satu jalur antre: dijalankan berurutan, bukan paralel.
+const TASK_SCOPE = { id: 'tasks' };
+
+// id sementara (negatif) → id asli dari server. Diisi ketika create berhasil.
+const realIds = new Map<number, number>();
+
+export function resolveTaskId(id: number) {
+  return id < 0 ? (realIds.get(id) ?? id) : id;
+}
+
+export function registerTaskMutationDefaults(queryClient: QueryClient) {
+  const syncWithServer = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: taskKeys.all }),
+      queryClient.invalidateQueries({ queryKey: courseKeys.lists() }),
+    ]);
+
+  queryClient.setMutationDefaults<Task, Error, CreateTaskVariables>(taskMutationKeys.create, {
+    mutationFn: ({ input }) => tasksApi.create(input),
+    scope: TASK_SCOPE,
+    onSuccess: (task, { tempId }) => {
+      realIds.set(tempId, task.id);
+    },
+    onSettled: syncWithServer,
+  });
+
+  queryClient.setMutationDefaults<Task, Error, UpdateTaskVariables>(taskMutationKeys.update, {
+    mutationFn: async ({ id, input }) => {
+      // Hentikan refetch yang sedang jalan agar tidak menimpa data optimistis dengan data lama.
+      await queryClient.cancelQueries({ queryKey: taskKeys.all });
+      return tasksApi.update(resolveTaskId(id), input);
+    },
+    scope: TASK_SCOPE,
+    onSettled: syncWithServer,
+  });
+}
+```
+
+Isi file ini, dari atas ke bawah:
+
+- `taskMutationKeys` berisi dua key: satu untuk membuat tugas, satu untuk mengubah tugas.
+- `TASK_SCOPE` membuat semua mutasi tugas antre di satu jalur.
+- `realIds` mencatat pasangan "id sementara → id asli dari server". `resolveTaskId` memakai catatan itu untuk menerjemahkan id negatif.
+- `registerTaskMutationDefaults` mendaftarkan "SOP" untuk tiap key: fungsi yang memanggil API, `onSuccess` yang mengisi `realIds`, dan `onSettled` yang menyegarkan daftar setelah server menjawab.
+
+Tiga aturan penting dari file ini:
+
+- **Daftarkan sebelum restore.** Default dicari saat mutasi dibuat ulang dari disk. Karena itu `registerTaskMutationDefaults` dipanggil di tingkat modul `_layout.tsx`, sebelum `PersistQueryClientProvider` dirender.
+- **`scope` membuat mutasi berjalan berurutan.** Mutasi dengan `scope.id` yang sama dikirim satu per satu. Tanpa `scope`, "buat tugas" dan "ubah tugas itu" bisa terkirim bersamaan, dan update tiba di server sebelum tugasnya ada.
+- **Callback yang wajib jalan setelah restart ditaruh di default.** Contohnya mengisi `realIds` dan invalidasi. Mutasi yang dipulihkan dari disk hanya mengenal default, karena komponen yang dulu memanggil `mutate` mungkin sudah lama hilang.
+
+Hook di `src/features/tasks/hooks.ts` kini cukup menyebut key-nya. `onMutate` dan `onError` tetap di hook, karena keduanya butuh snapshot cache (foto isi cache) saat itu juga. Tipe variabel pindah ke `mutation-defaults.ts`:
+
+```diff title="src/features/tasks/hooks.ts"
++import { taskMutationKeys, type CreateTaskVariables, type UpdateTaskVariables } from './mutation-defaults';
++
+ export function useCreateTask() {
+   const queryClient = useQueryClient();
+
+-  return useMutation({
+-    mutationFn: (input: TaskInput) => tasksApi.create(input),
+-    onMutate: async (input) => {
++  return useMutation<Task, Error, CreateTaskVariables, Snapshot>({
++    // mutationFn, scope, onSuccess, dan onSettled datang dari setMutationDefaults.
++    mutationKey: taskMutationKeys.create,
++    onMutate: async ({ tempId, input }) => {
+       const snapshot = await snapshotTasks(queryClient);
+       const now = new Date().toISOString();
+       const optimisticTask: Task = {
+         ...input,
+-        id: -Date.now(),
++        id: tempId,
+         course: findCourseSummary(queryClient, input.courseId),
+         attachments: [],
+         createdAt: now,
+         updatedAt: now,
+       };
+       // ...sisipkan ke daftar seperti sebelumnya
++      haptics.success();
+       return snapshot;
+     },
+-    onSuccess: () => haptics.success(),
+     onError: rollback(queryClient, 'Gagal menambah tugas'),
+-    onSettled: () => invalidateTasks(queryClient),
+   });
+ }
+
+-type UpdateTaskVariables = { id: number; input: Partial<TaskInput> };
+-
+ export function useUpdateTask() {
+   const queryClient = useQueryClient();
+
+-  return useMutation({
+-    mutationFn: ({ id, input }: UpdateTaskVariables) => tasksApi.update(id, input),
++  return useMutation<Task, Error, UpdateTaskVariables, Snapshot>({
++    mutationKey: taskMutationKeys.update,
+     onMutate: async ({ id, input }) => {
+       // ...patch cache seperti sebelumnya
+     },
+     onSuccess: (task) => queryClient.setQueryData(taskKeys.detail(task.id), task),
+     onError: rollback(queryClient, 'Gagal menyimpan perubahan'),
+-    onSettled: () => invalidateTasks(queryClient),
+   });
+ }
+```
+
+Opsi di hook **menggantikan** opsi default yang namanya sama, bukan menambahinya. Karena itu getar sukses (`haptics.success()`) dipindah ke `onMutate`. Kalau `onSuccess` tetap ada di hook, `onSuccess` default yang mengisi `realIds` tidak pernah jalan. Terapkan pola yang sama untuk `useDeleteTask` dengan key `['tasks', 'delete']` dan `tasksApi.remove(resolveTaskId(id))`.
+
+<Flow nodes={["mutate()", "onMutate", "paused", "disimpan ke disk", "online lagi", "server menjawab"]} labels={["UI optimistis", "tidak ada jaringan", "persister", "resumePausedMutations", "onSettled → invalidate"]} caption="Perjalanan satu mutasi yang dibuat saat offline" />
+
+Mutasi yang dijeda bisa diputar ulang lewat dua jalan:
+
+1. **Koneksi kembali selama aplikasi masih terbuka.** `QueryClient` mendengarkan `onlineManager` dan memanggil `resumePausedMutations()` sendiri.
+2. **Aplikasi dibuka ulang.** `onSuccess` di `PersistQueryClientProvider` dipanggil setelah cache selesai dipulihkan. Kita **mengembalikan** promise dari `resumePausedMutations()`, jadi provider menunda pengambilan ulang query sampai antrean terkirim. Dengan begitu, daftar tidak sempat berkedip kembali ke data lama. Kalau masih offline, promise itu langsung selesai tanpa mengirim apa pun.
+
+### Form jangan menunggu server
+
+Layar tambah tugas saat ini menunggu `await createTask.mutateAsync(input)` sebelum menutup form. Saat offline, promise itu baru selesai berjam-jam kemudian. Pengguna terjebak di form dengan tombol "Simpan" yang terus berputar. Solusinya: kirim ke antrean, lalu tutup form segera.
+
+```diff title="src/app/(app)/tasks/new.tsx"
+   async function handleSubmit(input: TaskInput) {
+-    await createTask.mutateAsync(input);
+-    // Tutup form hanya setelah server menyimpan; daftar sudah di-invalidate oleh hook.
++    // Jangan menunggu server: mutasi masuk antrean dan tugas sudah tampil optimistis di daftar.
++    createTask.mutate({ tempId: -Date.now(), input });
+     if (router.canGoBack()) router.back();
+     else router.replace('/');
+   }
+```
+
+Bedanya, `mutateAsync` mengembalikan promise yang bisa ditunggu, sedangkan `mutate` hanya menitipkan mutasi ke antrean lalu langsung lanjut. `tempId: -Date.now()` membuat id sementara bernilai negatif (dibahas di bagian berikutnya). Kata `async` tetap dipertahankan karena tipe `onSubmit` di `TaskForm` mengharapkan fungsi yang mengembalikan promise.
+
+Ubah `tasks/[id]/edit.tsx` dengan cara yang sama: panggil `updateTask.mutate({ id: taskId, input })`, lalu `router.back()`.
+
+### Optimistic UI dengan id sementara
+
+**Optimistic UI** artinya layar langsung menampilkan hasil seolah server sudah setuju, lalu dibatalkan kalau ternyata gagal. Masalahnya, tugas baru belum punya id dari server. Contoh `kuliah-app` memakai **id negatif** sebagai id sementara, dan menyediakan helper `isOptimisticTask(task)` di `hooks.ts` untuk mengenalinya.
+
+Yang baru di pelajaran ini: `tempId` dibuat oleh pemanggil dan dikirim sebagai variabel mutasi. Variabel ikut tersimpan di disk. Jadi setelah aplikasi dibuka ulang pun, mutasi create masih tahu id sementaranya, lalu mengisi `realIds` ketika server menjawab.
+
+`TaskCard.tsx` sudah punya pengaman. `const pending = isOptimisticTask(task)` membuat kartu tidak bisa ditekan (`disabled`), tampil redup, berlabel "Menyimpan…", dan dibacakan pembaca layar sebagai "sedang disimpan". Pengaman ini tetap perlu untuk membuka detail, karena `GET /api/tasks/:id` menolak id negatif. Tetapi tombol status kini aman ditekan, karena update akan antre di belakang create:
+
+```diff title="src/features/tasks/components/TaskCard.tsx"
+       <Pressable
+         onPress={() => onToggleStatus(task)}
+-        disabled={pending}
+         accessibilityRole="button"
+```
+
+Contoh skenarionya:
+
+1. Sari sedang offline. Ia membuat tugas "Kuis Pemrograman Mobile" dengan id sementara `-1730342400000`.
+2. Ia langsung menandai tugas itu selesai. Antrean kini berisi create, lalu update dengan id negatif.
+3. Sinyal kembali. Karena satu `scope`, create jalan dulu. Server membalas dengan id asli `42`, dan `realIds` mencatat pasangan itu.
+4. Update menjalankan `resolveTaskId(-1730342400000)`, mendapat `42`, lalu mengirim `PATCH /api/tasks/42`.
+
+## Menangani konflik data
+
+<Callout type="analogi" title="Seperti dua anggota kelompok mengedit fotokopi laporan yang sama">
+
+Kamu dan temanmu sama-sama memegang fotokopi draf laporan kelompok. Pagi hari kamu mengedit judul di kereta. Siangnya temanmu mengedit judul dan tanggal di rumah, lalu langsung menyerahkannya ke ketua kelompok. Sore hari baru kamu menyerahkan fotokopimu. Kalau ketua kelompok asal memakai kertas yang datang terakhir, editan temanmu yang lebih baru hilang.
+
+- fotokopi draf = data yang tersimpan di HP saat offline
+- ketua kelompok = server
+- kertas yang datang terakhir menang = strategi *last-write-wins*
+- ketua mengecek nomor revisi di pojok kertas = strategi cek versi
+
+</Callout>
+
+Antrean menyelesaikan masalah "kapan mengirim". Tetapi muncul masalah baru: data di server bisa sudah berubah saat antrean akhirnya terkirim. Contohnya:
+
+```txt
+08.00  HP Sari (offline)  : ubah judul jadi "Laporan Basis Data - revisi"
+09.00  Laptop Sari (web)  : ubah deadline dan judul jadi "Laporan Basis Data final"
+10.00  HP Sari online     : antrean mengirim PATCH judul versi jam 08.00
+       Hasil              : judul "final" tertimpa versi yang lebih lama
+```
+
+Ini disebut **lost update** (perubahan yang hilang tertimpa). Ada beberapa strategi untuk mencegahnya, dari yang paling sederhana:
+
+| Strategi | Cara kerja | Kelebihan | Kekurangan |
+| --- | --- | --- | --- |
+| Last-write-wins (waktu tiba) | Request yang tiba terakhir menang | Tanpa kode tambahan. Ini perilaku API pendamping sekarang | Edit lama yang terlambat menimpa edit baru |
+| Last-write-wins (`updatedAt` klien) | Server hanya menerima edit yang lebih baru dari `updatedAt` di database | Edit terbaru menang walau tiba belakangan | Bergantung pada jam HP, yang bisa salah |
+| Cek versi | Klien mengirim nomor versi yang ia lihat. Server membalas `409` kalau versinya sudah berubah | Tidak ada perubahan yang hilang diam-diam | Pengguna harus memilih saat konflik |
+| Gabung per field | PATCH hanya berisi field yang diubah | Konflik jauh lebih jarang | Logika lebih rumit |
+
+PATCH di API pendamping sudah setengah jalan ke strategi terakhir. `updateTaskSchema` adalah `createTaskSchema.partial()`, artinya semua field boleh tidak dikirim. Jadi klien cukup mengirim field yang berubah. Kalau Sari mengubah status dari HP, judul yang diubah dari laptop tidak ikut tertimpa.
+
+### Ide dukungan server: kolom version
+
+API pendamping belum memeriksa konflik. Tetapi `api/src/lib/http-error.ts` sudah menyediakan `HttpError.conflict()` dengan status `409` dan kode `CONFLICT`. Berikut sketsa yang bisa kamu tambahkan.
+
+Pertama, tambahkan kolom versi di model `Task` pada `api/prisma/schema.prisma`. Setiap tugas mulai dari versi 1. Lalu buat migrasi dengan `npx prisma migrate dev --name task-version`:
+
+```diff title="api/prisma/schema.prisma"
+   createdAt   DateTime     @default(now())
+   updatedAt   DateTime     @updatedAt
++  version     Int          @default(1)
+```
+
+Kedua, izinkan klien mengirim `version` di `updateTaskSchema`. Field ini opsional, jadi klien lama yang tidak mengirimnya tetap jalan: `version: z.number().int().positive().optional()`. Lalu ubah `updateTask` di `api/src/modules/tasks/tasks.service.ts`:
+
+```ts title="api/src/modules/tasks/tasks.service.ts"
+export async function updateTask(userId: number, id: number, input: UpdateTaskInput) {
+  const { version, ...data } = input;
+  await assertCourseOwned(userId, data.courseId);
+
+  // Satu UPDATE atomik: ... WHERE id = ? AND userId = ? AND version = ?
+  // Jika version undefined, Prisma mengabaikan filter itu (perilaku lama).
+  const { count } = await prisma.task.updateMany({
+    where: { id, userId, version },
+    data: { ...data, version: { increment: 1 } },
+  });
+
+  if (count === 0) {
+    await assertTaskOwned(userId, id); // 404 kalau tugasnya memang tidak ada
+    throw HttpError.conflict("Tugas sudah diubah dari perangkat lain. Muat ulang lalu coba lagi.");
+  }
+  return getTask(userId, id);
+}
+```
+
+Cara membaca kode di atas:
+
+1. `version` dipisahkan dari field lain. Sisanya (`data`) adalah perubahan yang mau disimpan.
+2. `updateMany` mencari tugas dengan `id`, pemilik, dan `version` yang cocok. Kalau ketemu, field diperbarui dan `version` dinaikkan satu (`increment: 1`).
+3. `count` berisi jumlah baris yang berhasil diubah. Nilai `0` berarti tidak ada yang cocok.
+4. Kalau `count` bernilai `0`, kode mengecek dulu apakah tugasnya memang ada. Kalau tidak ada, `assertTaskOwned` melempar `404`. Kalau ada, berarti versinya sudah berubah, jadi server membalas `409`.
+
+Kenapa memakai `updateMany` dan bukan "baca dulu, bandingkan, lalu tulis"? Karena cek dan tulis terjadi dalam satu perintah `UPDATE`. Database mengerjakannya sekaligus (atomik), jadi dua request yang tiba bersamaan tidak bisa sama-sama lolos. Kalau kamu membaca dulu lalu membandingkan di JavaScript, ada celah waktu di antara baca dan tulis. Request kedua bisa menyelinap di celah itu.
+
+HTTP sebenarnya punya mekanisme standar yang mirip. Server mengirim header `ETag` (semacam sidik jari data), klien mengirimnya balik di header `If-Match`, dan server membalas `412 Precondition Failed` kalau tidak cocok. Ada juga `If-Unmodified-Since`, tetapi header ini memakai tanggal yang ketelitiannya hanya per detik. Dua edit dalam detik yang sama bisa lolos. Field `version` di body lebih mudah divalidasi dengan Zod dan cocok dengan format error `{ error: { message, code } }` yang sudah kita pakai.
+
+Di sisi klien, kirim `version` dari data yang sedang tampil di layar setiap kali PATCH. `ApiError` dari `kuliah-app/src/lib/api.ts` membawa `status` dan `code`, jadi kamu bisa mengenali balasan `409`. Penanganannya menjadi latihan di akhir pelajaran.
+
+## Data besar: database lokal dengan expo-sqlite
+
+Cache TanStack Query cocok untuk puluhan sampai ratusan tugas. Masalahnya, setiap kali disimpan, seluruh cache diubah menjadi satu string JSON panjang (proses ini disebut serialisasi). Makin besar datanya, makin lama proses itu. Ibaratnya, setiap ada satu catatan baru, seluruh buku catatan difotokopi ulang dari halaman pertama.
+
+Pertimbangkan database lokal kalau:
+
+- datanya sudah ribuan baris,
+- pengguna perlu mencari data saat offline, atau
+- pengguna bekerja berhari-hari tanpa sinyal, misalnya saat KKN di desa.
+
+Ini tingkat 3 dari bagian awal: cabang warung yang punya pembukuan sendiri. `expo-sqlite` memberi SQLite sungguhan di HP. Kamu sudah mengenal SQL-nya dari [Dasar SQL](/belajar/crud-backend/dasar-sql):
+
+```ts title="src/lib/local-db.ts"
+import * as SQLite from 'expo-sqlite';
+
+import type { Task } from '@/features/tasks/types';
+
+export async function openLocalDb() {
+  const db = await SQLite.openDatabaseAsync('kuliah.db');
+  await db.execAsync(`
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY NOT NULL,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  return db;
+}
+
+// Simpan hasil dari server: baris baru ditambah, baris lama diperbarui.
+export async function upsertTasks(db: SQLite.SQLiteDatabase, tasks: Task[]) {
+  await db.withTransactionAsync(async () => {
+    for (const task of tasks) {
+      await db.runAsync(
+        `INSERT INTO tasks (id, title, status, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           title = excluded.title, status = excluded.status, updated_at = excluded.updated_at`,
+        task.id,
+        task.title,
+        task.status,
+        task.updatedAt,
+      );
+    }
+  });
+}
+```
+
+Isi file di atas:
+
+- `openLocalDb` membuka file database `kuliah.db` di HP dan membuat tabel `tasks` kalau belum ada. `PRAGMA journal_mode = WAL` adalah pengaturan SQLite agar baca dan tulis bisa berjalan bersamaan dengan lebih lancar.
+- `upsertTasks` menyimpan data dari server. Upsert adalah gabungan insert dan update: baris baru ditambahkan, baris yang id-nya sudah ada diperbarui. Bagian `ON CONFLICT(id) DO UPDATE` yang mengatur itu. `excluded.title` berarti "nilai title yang barusan mau dimasukkan".
+- `withTransactionAsync` membungkus semua penyimpanan dalam satu transaksi. Kalau satu baris gagal, semuanya dibatalkan, jadi database tidak setengah terisi.
+
+Setelah itu, layar membaca data dari SQLite, bukan dari API. Kamu tetap bisa memakai TanStack Query untuk itu. Cukup pasang `networkMode: 'always'`, karena query ke database lokal tidak butuh jaringan. Tanpa opsi ini, TanStack Query akan menahan query saat offline, padahal datanya ada di HP sendiri:
+
+```ts
+useQuery({
+  queryKey: ['local', 'tasks'],
+  queryFn: () => db.getAllAsync<{ id: number; title: string }>('SELECT id, title FROM tasks ORDER BY updated_at DESC'),
+  networkMode: 'always',
+});
+```
+
+Untuk proyek serius, tulis skema dengan Drizzle ORM (`drizzle-orm/expo-sqlite`). Fungsinya mirip Prisma di backend: query punya tipe TypeScript dan perubahan skema (migrasi) lebih teratur.
+
+Sinkronisasi penuh juga butuh dua hal dari server:
+
+- `GET /api/tasks?updatedSince=...`, yang hanya mengirim data yang berubah sejak waktu tertentu. Jadi HP tidak perlu mengunduh semua tugas setiap kali.
+- Tombstone, yaitu penanda "data ini sudah dihapus". Tanpa tombstone, HP tidak tahu bahwa tugas yang masih ada di SQLite sebenarnya sudah dihapus dari perangkat lain.
+
+Keduanya belum ada di API pendamping. Karena itu pelajaran ini berhenti di tingkat 2.
+
+## Banner offline
+
+Pengguna harus tahu dua hal: data yang ia lihat mungkin bukan yang terbaru, dan perubahannya belum terkirim. Kalau tidak diberi tahu, ia bisa mengira tugasnya sudah tersimpan di server lalu menutup aplikasi dengan tenang.
+
+Untuk menghitung perubahan yang belum terkirim, pakai `useMutationState`. Hook ini membaca semua mutasi di cache, termasuk yang dipulihkan dari penyimpanan HP:
+
+```jsx title="src/components/OfflineBanner.tsx"
+import { useMutationState } from '@tanstack/react-query';
+import { StyleSheet, Text, View } from 'react-native';
+
+import { useIsOnline } from '@/lib/use-is-online';
+
+export function OfflineBanner() {
+  const isOnline = useIsOnline();
+  const queued = useMutationState({
+    filters: { predicate: (mutation) => mutation.state.isPaused },
+  }).length;
+
+  if (isOnline && queued === 0) return null;
+
+  const message = isOnline
+    ? `Menyinkronkan ${queued} perubahan...`
+    : queued > 0
+      ? `Offline - ${queued} perubahan menunggu dikirim`
+      : 'Offline - menampilkan data tersimpan';
+
+  return (
+    <View accessibilityRole="alert" style={[styles.banner, !isOnline && styles.offline]}>
+      <Text style={styles.text}>{message}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  banner: { paddingVertical: 8, paddingHorizontal: 16, backgroundColor: '#1d4ed8' },
+  offline: { backgroundColor: '#475569' },
+  text: { color: '#ffffff', fontSize: 13, textAlign: 'center' },
+});
+```
+
+Cara kerja komponen ini:
+
+- `predicate` adalah fungsi penyaring. Ia hanya meloloskan mutasi yang `isPaused`, yaitu yang sedang menunggu jaringan. `.length` menghitung jumlahnya.
+- Kalau online dan antrean kosong, banner tidak tampil sama sekali (`return null`).
+- Kalau online tapi masih ada antrean, pesannya "Menyinkronkan...". Ini muncul sebentar setelah sinyal kembali.
+- Kalau offline, pesannya menyebut jumlah perubahan yang menunggu, atau "menampilkan data tersimpan" kalau antrean kosong.
+- `accessibilityRole="alert"` membuat pembaca layar (screen reader) mengumumkan banner ini ke pengguna tunanetra.
+
+Pasang `<OfflineBanner />` di layar daftar tugas `src/app/(app)/(tabs)/index.tsx`, tepat di atas `FlatList`. Dengan begitu banner tidak bentrok dengan header dan safe area (area aman di sekitar notch dan tepi layar).
+
+## Menguji mode offline
+
+Kode offline yang tidak pernah diuji dalam keadaan offline hampir pasti punya bug. Cara mematikan jaringan berbeda di tiap perangkat:
+
+<Tabs items={["HP fisik", "Emulator Android", "iOS Simulator"]}>
+<Tab>
+
+Aktifkan mode pesawat dan pastikan Wi-Fi ikut mati. Koneksi ke Metro (server pengembangan Expo di laptopmu) ikut putus. Tetapi JavaScript yang sudah dimuat tetap berjalan, asal kamu tidak reload. Cara ini paling mendekati kondisi pengguna sungguhan, jadi lakukan sebelum rilis.
+
+</Tab>
+<Tab>
+
+Buka panel samping emulator, pilih **Extended controls → Cellular**, lalu set *Data status* ke `Denied`. Setelah itu matikan Wi-Fi dari quick settings. Kamu juga bisa memakai terminal:
+
+```bash
+adb shell svc wifi disable
+adb shell svc data disable
+# nyalakan lagi
+adb shell svc wifi enable
+adb shell svc data enable
+```
+
+</Tab>
+<Tab>
+
+Simulator iOS memakai jaringan Mac. Matikan Wi-Fi Mac, atau pakai **Network Link Conditioner** (bagian dari *Additional Tools for Xcode*) dengan profil `100% Loss`. Simulator kadang terlambat mendeteksi perubahan jaringan, jadi uji akhir tetap di HP fisik.
+
+</Tab>
+</Tabs>
+
+Untuk debugging cepat, buat tombol khusus development yang memanggil `onlineManager.setOnline(false)`. Ini hanya menipu TanStack Query: `fetch` sebenarnya masih bisa jalan, dan event NetInfo berikutnya akan menimpa nilainya. Meski begitu, cara ini praktis untuk melihat tampilan saat mutasi dijeda. Panel devtools `@dev-plugins/react-query` (lihat pelajaran TanStack Query) juga menampilkan status setiap query dan mutasi.
+
+Skenario berikut wajib lolos sebelum fitur dianggap selesai:
+
+| Skenario | Hasil yang diharapkan |
+| --- | --- |
+| Buka aplikasi dalam mode pesawat setelah pernah online | Daftar tampil dari cache, banner "Offline" muncul |
+| Ubah status tugas saat offline | Kartu langsung berubah, banner menghitung 1 perubahan |
+| Tutup paksa aplikasi, buka lagi masih offline | Perubahan masih terlihat, antrean masih 1 |
+| Nyalakan jaringan | Banner "Menyinkronkan" muncul lalu hilang, data cocok dengan server |
+| Buat tugas lalu langsung ubah, semuanya offline | Setelah online, keduanya terkirim berurutan tanpa 404 |
+| HP online tapi API dimatikan (`Ctrl+C`) | Mutasi gagal dan dibatalkan (rollback), tidak dijeda |
+
+<Callout type="warning" title="Online bukan berarti server bisa dihubungi">
+
+`onlineManager` hanya tahu HP tersambung ke jaringan. Ia tidak tahu apakah servermu hidup. Kalau server mati atau `EXPO_PUBLIC_API_URL` salah, request tetap dikirim lalu gagal dengan `ApiError` berkode `NETWORK_ERROR` (status `0`). Karena mutasi memakai `retry: 0`, perubahan langsung dibatalkan.
+
+Supaya lebih tahan banting, coba ulang khusus untuk status `0` sampai tiga kali: `retry: (count, error) => error instanceof ApiError && error.status === 0 && count < 3`. Error lain, misalnya `400` karena data tidak valid, tetap tidak diulang karena hasilnya pasti sama.
+
+</Callout>
+
+## Kesalahan umum
+
+| Gejala atau pesan | Penyebab | Perbaikan |
+| --- | --- | --- |
+| `No mutationFn found` setelah aplikasi dibuka ulang | Mutasi dipulihkan dari penyimpanan, tapi belum ada default untuk key-nya | Daftarkan `setMutationDefaults` dengan `mutationKey` yang sama, sebelum provider dirender |
+| Cache kosong setelah restart padahal kemarin ada | `gcTime` masih 5 menit, jadi query sudah dibuang sebelum disimpan. Atau umur cache melewati `maxAge` | Samakan `gcTime` dengan `maxAge` |
+| Spinner tidak pernah berhenti saat offline | Query pertama kali jalan saat offline, jadi `fetchStatus` bernilai `paused` | Cek `isPending && fetchStatus === 'paused'` dan tampilkan pesan offline |
+| Semua query terjeda padahal API bisa dihubungi | `onlineManager` memakai `isInternetReachable` | Pakai `isConnected` |
+| `PATCH /api/tasks/-1730342400000` dibalas 400 atau 404 | Update untuk tugas sementara terkirim sebelum create selesai | Pakai `scope` yang sama dan `resolveTaskId` |
+| `realIds` kosong, invalidasi tidak terjadi | Hook punya `onSuccess` atau `onSettled` sendiri, sehingga default dengan nama sama tertimpa | Pindahkan logikanya ke default saja |
+| Tugas akun lain terlihat setelah ganti akun | Cache yang tersimpan tidak dihapus saat logout | Tambahkan `queryPersister.removeClient()` di `resetSession()` |
+
+## Latihan
+
+<Exercise title="Tombol Sinkronkan sekarang" difficulty="sedang" hints={["`useMutationState` dengan `predicate` yang sama seperti di `OfflineBanner` memberi jumlah antrean.", "`queryClient.resumePausedMutations()` mengembalikan promise, jadi kamu bisa menampilkan loading selama prosesnya.", "Tampilkan tombol hanya jika online dan antrean lebih dari 0."]}>
+
+Kadang `onlineManager` terlambat tahu bahwa koneksi sudah kembali. Buat tombol cadangan agar pengguna bisa memaksa sinkronisasi:
+
+1. Tambahkan tombol **Sinkronkan sekarang** di `OfflineBanner`.
+2. Tombol hanya muncul ketika HP online dan masih ada mutasi yang dijeda.
+3. Saat ditekan, tombol memanggil `resumePausedMutations()`.
+4. Selama proses berjalan, tombol menampilkan teks "Mengirim..." dan tidak bisa ditekan lagi.
+
+<Solution>
+
+```jsx title="src/components/OfflineBanner.tsx (tambahan)"
+import { useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+import { Pressable } from 'react-native';
+
+function SyncButton() {
+  const queryClient = useQueryClient();
+  const [syncing, setSyncing] = useState(false);
+
+  async function handlePress() {
+    setSyncing(true);
+    try {
+      await queryClient.resumePausedMutations();
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  return (
+    <Pressable onPress={handlePress} disabled={syncing} accessibilityRole="button">
+      <Text style={styles.text}>{syncing ? 'Mengirim...' : 'Sinkronkan sekarang'}</Text>
+    </Pressable>
+  );
+}
+
+// Di dalam OfflineBanner, di bawah teks pesan:
+// {isOnline && queued > 0 && <SyncButton />}
+```
+
+`syncing` menyimpan status "sedang mengirim". Blok `try/finally` memastikan status itu kembali `false` walaupun pengiriman gagal, jadi tombol tidak macet di "Mengirim...".
+
+`resumePausedMutations()` aman dipanggil berkali-kali. Mutasi yang sudah berjalan tidak diulang, dan `scope` tetap menjaga urutannya.
+
+</Solution>
+</Exercise>
+
+<Exercise title="Tangani konflik 409 di klien" difficulty="sulit" hints={["`ApiError` punya properti `status` dan `code`.", "Pada konflik, versi server yang menang: kembalikan snapshot lalu invalidate detail tugasnya.", "`Alert.alert` bisa menerima array tombol jika kamu ingin memberi pilihan."]}>
+
+Anggap server sudah menerapkan cek `version` seperti sketsa di atas. Ubah `onError` di `useUpdateTask`:
+
+1. Kalau error punya kode `CONFLICT`, tampilkan pesan "Tugas ini sudah diubah dari perangkat lain".
+2. Pulihkan cache dari snapshot (data sebelum perubahan optimistic).
+3. Muat ulang detail tugas dari server.
+4. Error lain tetap memakai helper `rollback` yang sudah ada.
+
+<Solution>
+
+```ts title="src/features/tasks/hooks.ts (potongan useUpdateTask)"
+onError: (error, variables, snapshot) => {
+  if (error instanceof ApiError && error.code === 'CONFLICT') {
+    snapshot?.previous.forEach(([queryKey, data]) => queryClient.setQueryData(queryKey, data));
+    void queryClient.invalidateQueries({ queryKey: taskKeys.detail(resolveTaskId(variables.id)) });
+    Alert.alert(
+      'Data sudah berubah',
+      'Tugas ini sudah diubah dari perangkat lain. Perubahanmu dibatalkan dan data terbaru dimuat ulang.',
+    );
+    return;
+  }
+  rollback(queryClient, 'Gagal menyimpan perubahan')(error, variables, snapshot);
+},
+```
+
+Baris `snapshot?.previous.forEach(...)` mengembalikan setiap query ke data lamanya. `invalidateQueries` lalu menandai detail tugas sebagai basi, sehingga TanStack Query mengambil versi terbaru dari server. `return` di akhir blok mencegah `rollback` ikut jalan dan menampilkan pesan kedua.
+
+Kita memilih "versi server menang" karena paling aman untuk pemula. Versi lebih lanjut menawarkan dua tombol: **Pakai versi server** (seperti di atas) atau **Timpa dengan punyaku**. Tombol kedua mengambil versi terbaru dulu, lalu mengirim ulang `mutate` dengan `version` yang baru.
+
+</Solution>
+</Exercise>
+
+## Uji pemahaman
+
+<Quiz questions={[
+  {
+    q: "Kamu memasang persister dengan `maxAge` 24 jam tetapi `gcTime` dibiarkan bawaan. Esok harinya daftar mata kuliah tidak muncul saat offline. Kenapa?",
+    options: ["AsyncStorage dihapus otomatis setiap malam", "`buster` belum diisi", "Query yang tidak dipakai lebih dari 5 menit sudah dibuang dari memori, jadi tidak ikut tersimpan di penyimpanan HP", "Persister hanya menyimpan mutasi"],
+    answer: 2,
+    explain: "Persister menyimpan isi cache yang ada di memori. Dengan `gcTime` 5 menit, query yang tidak dipakai sudah dibuang dari memori, jadi ikut hilang dari salinan di penyimpanan HP. `buster` yang kosong tidak membuang apa pun, dan persister menyimpan query yang sukses serta mutasi yang dijeda.",
+  },
+  {
+    q: "Kenapa mutasi yang dijeda butuh `setMutationDefaults` agar tetap terkirim setelah aplikasi dibuka ulang?",
+    options: ["Fungsi seperti `mutationFn` tidak bisa disimpan sebagai JSON, jadi harus didaftarkan ulang berdasarkan mutation key", "Supaya mutasi berjalan lebih cepat", "Karena `useMutation` tidak bisa dipakai di React Native", "Agar `onMutate` dijalankan dua kali"],
+    answer: 0,
+    explain: "Yang disimpan hanya datanya: key, variabel, dan status. Fungsinya tidak ikut. Tanpa default, mutasi hasil pemulihan gagal dengan `No mutationFn found`. Kecepatan dan `onMutate` tidak ada hubungannya.",
+  },
+  {
+    q: "Query yang membaca daftar tugas dari `expo-sqlite` sebaiknya memakai `networkMode` apa?",
+    options: ["`'online'`", "`'offlineFirst'`", "Tidak perlu TanStack Query sama sekali", "`'always'`"],
+    answer: 3,
+    explain: "Query lokal tidak butuh jaringan, jadi `'always'` membuatnya tetap jalan saat offline. Dengan `'online'`, query itu malah dijeda. `'offlineFirst'` ditujukan untuk request jaringan yang memakai cache HTTP.",
+  },
+  {
+    q: "Dengan strategi cek versi, apa yang dilakukan server jika `version` yang dikirim klien sudah tidak sama dengan di database?",
+    options: ["Menyimpan perubahan dan menaikkan versi", "Menolak dengan `409 CONFLICT` tanpa mengubah data", "Menghapus tugasnya", "Membalas `204 No Content`"],
+    answer: 1,
+    explain: "Cek versi dibuat untuk mencegah lost update. Perubahan yang berdasar versi lama ditolak, lalu klien yang memutuskan langkah berikutnya. Kalau tetap disimpan, hasilnya sama dengan last-write-wins. `204` justru menandakan sukses.",
+  },
+  {
+    q: "HP Sari tersambung ke Wi-Fi tetapi API di laptop sedang mati. Apa yang terjadi saat ia mengubah status tugas?",
+    options: ["Mutasi dijeda sampai server hidup", "Aplikasi otomatis beralih ke `expo-sqlite`", "Mutasi dijalankan, gagal dengan `NETWORK_ERROR`, lalu di-rollback karena `retry: 0`", "NetInfo mengubah status menjadi offline"],
+    answer: 2,
+    explain: "`onlineManager` hanya tahu HP tersambung ke jaringan, bukan apakah server hidup. Jadi mutasi tetap dikirim lalu gagal. NetInfo tidak memeriksa API milikmu, dan tidak ada peralihan otomatis ke SQLite.",
+  },
+]} />
+
+## Ringkasan
+
+- Offline-first berarti layar membaca dan menulis ke data di HP dulu. Jaringan hanya jalur untuk menyinkronkan. Ada tiga tingkat: baca dari cache, tulis diantrekan, dan sinkronisasi penuh.
+- NetInfo memberi tahu status jaringan. Sambungkan ke `onlineManager` dengan `isConnected`, dan sambungkan `focusManager` ke `AppState`, supaya TanStack Query tahu kapan menjeda dan melanjutkan.
+- `PersistQueryClientProvider` dan `createAsyncStoragePersister` menyimpan cache ke penyimpanan HP. Buat `gcTime` minimal sama dengan `maxAge`, ganti `buster` saat bentuk data berubah, dan hapus cache saat logout.
+- Mutasi dengan `networkMode: 'online'` dijeda saat offline. `setMutationDefaults` dan `mutationKey` membuatnya bisa dilanjutkan setelah aplikasi dibuka ulang. `scope` menjaga urutannya.
+- Optimistic UI dengan id sementara butuh pemetaan ke id asli dari server, plus pengaman di UI.
+- Konflik bisa diatasi dengan last-write-wins, cek `version` yang dibalas `409`, atau PATCH per field.
+- `expo-sqlite` (bisa ditambah Drizzle) dipakai saat data terlalu besar untuk disimpan sebagai cache JSON.
+
+<Callout type="capstone" title="Langkah capstone">
+
+Jadikan "Aplikasi Tugas & Catatan Kuliah" tahan sinyal kampus yang putus-nyambung:
+
+1. Pasang NetInfo dan persister.
+2. Pindahkan create dan update tugas ke `setMutationDefaults` dengan satu `scope` yang sama.
+3. Tampilkan `OfflineBanner` di layar daftar tugas.
+4. Jalankan keenam skenario uji di atas di HP fisik dengan mode pesawat.
+
+</Callout>

@@ -14,7 +14,16 @@ Mulai dari JavaScript dasar → bikin API & database → bangun aplikasi HP yang
 [![License: MIT](https://img.shields.io/badge/kode-MIT-blue)](LICENSE)
 [![License: CC BY 4.0](https://img.shields.io/badge/materi-CC_BY_4.0-lightgrey)](LICENSE-CONTENT.md)
 
-[Daftar Bab](#-daftar-bab) · [Mulai Cepat](#-mulai-cepat) · [Deploy](#-deploy-ke-netlify) · [Lisensi](#-lisensi)
+<br/>
+
+[![Buka Situs](https://img.shields.io/badge/🚀_Buka_Situs-crudnative.netlify.app-1e3a8a?style=for-the-badge)](https://crudnative.netlify.app/)
+[![Netlify Status](https://img.shields.io/badge/Netlify-online-00C7B7?style=for-the-badge&logo=netlify&logoColor=white)](https://crudnative.netlify.app/)
+
+[Preview](#-preview) · [Daftar Bab](#-daftar-bab) · [Mulai Cepat](#-mulai-cepat) · [Deploy](#-deploy-ke-netlify) · [Lisensi](#-lisensi)
+
+<br/>
+
+<a href="https://crudnative.netlify.app/"><img src="docs/preview/beranda-desktop.jpg" alt="Beranda CRUDNative" width="820"/></a>
 
 </div>
 
@@ -30,6 +39,87 @@ Mulai dari JavaScript dasar → bikin API & database → bangun aplikasi HP yang
 - 📱 **Ramah HP**: nyaman dibuka di HP maupun laptop.
 - 💾 **Tanpa akun**: progres belajar tersimpan di browser.
 - 🛠️ **Langsung praktik**: sepanjang materi kamu membangun proyek latihan **"Tugas & Catatan Kuliah"**. Polanya bisa dipakai untuk aplikasi CRUD apa pun.
+
+## 👀 Preview
+
+Klik tiap bagian untuk melihat tampilan **desktop** 🖥️ dan **mobile** 📱.
+
+<details open>
+<summary><b>🏠 Beranda</b> · <a href="https://crudnative.netlify.app/">buka</a></summary>
+
+<br/>
+
+| 🖥️ Desktop | 📱 Mobile |
+| :---: | :---: |
+| <img src="docs/preview/beranda-desktop.jpg" width="560"/> | <img src="docs/preview/beranda-mobile.jpg" width="200"/> |
+
+</details>
+
+<details>
+<summary><b>📚 Kurikulum</b> · <a href="https://crudnative.netlify.app/belajar/">buka</a></summary>
+
+<br/>
+
+| 🖥️ Desktop | 📱 Mobile |
+| :---: | :---: |
+| <img src="docs/preview/belajar-desktop.jpg" width="560"/> | <img src="docs/preview/belajar-mobile.jpg" width="200"/> |
+
+</details>
+
+<details>
+<summary><b>📝 Halaman Pelajaran</b> · <a href="https://crudnative.netlify.app/belajar/fondasi/selamat-datang/">buka</a></summary>
+
+<br/>
+
+| 🖥️ Desktop | 📱 Mobile |
+| :---: | :---: |
+| <img src="docs/preview/pelajaran-desktop.jpg" width="560"/> | <img src="docs/preview/pelajaran-mobile.jpg" width="200"/> |
+
+</details>
+
+<details>
+<summary><b>🧪 Lab Interaktif</b> · <a href="https://crudnative.netlify.app/lab/">buka</a></summary>
+
+<br/>
+
+| 🖥️ Desktop | 📱 Mobile |
+| :---: | :---: |
+| <img src="docs/preview/lab-desktop.jpg" width="560"/> | <img src="docs/preview/lab-mobile.jpg" width="200"/> |
+
+</details>
+
+<details>
+<summary><b>📄 Cheatsheet</b> · <a href="https://crudnative.netlify.app/cheatsheet/">buka</a></summary>
+
+<br/>
+
+| 🖥️ Desktop | 📱 Mobile |
+| :---: | :---: |
+| <img src="docs/preview/cheatsheet-desktop.jpg" width="560"/> | <img src="docs/preview/cheatsheet-mobile.jpg" width="200"/> |
+
+</details>
+
+<details>
+<summary><b>📖 Glosarium</b> · <a href="https://crudnative.netlify.app/glosarium/">buka</a></summary>
+
+<br/>
+
+| 🖥️ Desktop | 📱 Mobile |
+| :---: | :---: |
+| <img src="docs/preview/glosarium-desktop.jpg" width="560"/> | <img src="docs/preview/glosarium-mobile.jpg" width="200"/> |
+
+</details>
+
+<details>
+<summary><b>📊 Progres Belajar</b> · <a href="https://crudnative.netlify.app/progres/">buka</a></summary>
+
+<br/>
+
+| 🖥️ Desktop | 📱 Mobile |
+| :---: | :---: |
+| <img src="docs/preview/progres-desktop.jpg" width="560"/> | <img src="docs/preview/progres-mobile.jpg" width="200"/> |
+
+</details>
 
 ## 🗺️ Alur Belajar
 
@@ -133,7 +223,7 @@ Pengaturan build sudah ada di [`netlify.toml`](netlify.toml), jadi tidak perlu i
 
 1. Push repo ini ke GitHub.
 2. Di Netlify pilih **Add new project → Import an existing project**, lalu pilih repo ini.
-3. Tekan **Deploy**. Situs bisa dibuka di `https://nama-situs.netlify.app`.
+3. Tekan **Deploy**. Situs bisa dibuka di `https://nama-situs.netlify.app` (versi resmi: [crudnative.netlify.app](https://crudnative.netlify.app/)).
 
 <details>
 <summary><b>⚙️ Pengaturan yang dipakai otomatis</b></summary>

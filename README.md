@@ -1,78 +1,183 @@
-# CRUDNative: Belajar CRUD & React Native
+<div align="center">
 
-Situs belajar berbahasa Indonesia untuk pemula yang ingin bisa membuat aplikasi **CRUD** (Create, Read, Update, Delete) dan aplikasi HP dengan **React Native**. Kamu mulai dari JavaScript dasar, lanjut membuat API dan database, lalu membangun aplikasi React Native (Expo) yang tersambung ke API buatanmu sendiri. Materi, kuis, dan lab interaktifnya jalan langsung di browser, nyaman dibuka di HP maupun laptop.
+# 📱 CRUDNative
 
-**Isi:** 5 bab, 46 pelajaran (sekitar 28 jam), 6 lab interaktif, 8 cheatsheet, dan glosarium 137 istilah. Progres belajar disimpan di browser, tanpa akun.
+**Belajar CRUD & React Native dari nol, dalam Bahasa Indonesia.**
 
-Supaya teorinya langsung dipraktikkan, sepanjang materi kamu membangun satu **proyek latihan**: aplikasi "Tugas & Catatan Kuliah". Proyek ini hanya contoh; polanya bisa kamu pakai untuk aplikasi CRUD apa pun.
+Mulai dari JavaScript dasar → bikin API & database → bangun aplikasi HP yang tersambung ke API buatanmu sendiri.
+
+[![Next.js](https://img.shields.io/badge/Next.js-16-000?logo=nextdotjs&logoColor=white)](https://nextjs.org)
+[![Expo](https://img.shields.io/badge/Expo-React_Native-000020?logo=expo&logoColor=white)](https://expo.dev)
+[![Express](https://img.shields.io/badge/Express-5-444?logo=express&logoColor=white)](https://expressjs.com)
+[![Prisma](https://img.shields.io/badge/Prisma-7-2D3748?logo=prisma&logoColor=white)](https://prisma.io)
+[![Node](https://img.shields.io/badge/Node.js-22.18+-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/badge/kode-MIT-blue)](LICENSE)
+[![License: CC BY 4.0](https://img.shields.io/badge/materi-CC_BY_4.0-lightgrey)](LICENSE-CONTENT.md)
+
+[Daftar Bab](#-daftar-bab) · [Mulai Cepat](#-mulai-cepat) · [Deploy](#-deploy-ke-netlify) · [Lisensi](#-lisensi)
+
+</div>
+
+---
+
+## ✨ Sekilas
+
+| 📚 Bab | 📝 Pelajaran | ⏱️ Durasi | 🧪 Lab | 📄 Cheatsheet | 📖 Glosarium |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| **5** | **46** | **~28 jam** | **6** | **8** | **137 istilah** |
+
+- 🌐 **Jalan di browser**: materi, kuis, dan lab interaktif tanpa instalasi.
+- 📱 **Ramah HP**: nyaman dibuka di HP maupun laptop.
+- 💾 **Tanpa akun**: progres belajar tersimpan di browser.
+- 🛠️ **Langsung praktik**: sepanjang materi kamu membangun proyek latihan **"Tugas & Catatan Kuliah"**. Polanya bisa dipakai untuk aplikasi CRUD apa pun.
+
+## 🗺️ Alur Belajar
+
+```mermaid
+flowchart LR
+    A["🧱 Bab 0<br/>Fondasi JS"] --> B["🗄️ Bab 1<br/>CRUD & Backend"]
+    B --> C["📱 Bab 2<br/>React Native"]
+    C --> D["🔗 Bab 3<br/>Full-stack"]
+    D --> E["🚀 Bab 4<br/>Expert"]
+```
+
+## 📚 Daftar Bab
+
+<details>
+<summary><b>🧱 Bab 0 · Fondasi Web & JavaScript</b></summary>
+
+<br/>
+
+Terminal, Node.js, JavaScript modern, async/await, Git, JSON.
+
+</details>
+
+<details>
+<summary><b>🗄️ Bab 1 · CRUD & Backend dengan Express</b></summary>
+
+<br/>
+
+Konsep CRUD, HTTP & REST, SQL, relasi, Express, Prisma + SQLite, validasi, pagination.
+
+</details>
+
+<details>
+<summary><b>📱 Bab 2 · React & React Native dengan Expo</b></summary>
+
+<br/>
+
+React dasar, state & effect, komponen inti, flexbox, FlatList, Expo Router, form, state global.
+
+</details>
+
+<details>
+<summary><b>🔗 Bab 3 · Full-stack: CRUD Mobile + API</b></summary>
+
+<br/>
+
+Menyambungkan Expo ke API, create/read/update/delete, TanStack Query, upload gambar, login, capstone.
+
+</details>
+
+<details>
+<summary><b>🚀 Bab 4 · Expert: Aplikasi Siap Dipakai Banyak Orang</b></summary>
+
+<br/>
+
+TypeScript end-to-end, arsitektur, keamanan API, performa, testing, offline-first, real-time, deploy & CI/CD.
+
+</details>
+
+## 📂 Struktur Repo
 
 | Folder | Isi | Teknologi |
 | --- | --- | --- |
-| [`web/`](web/README.md) | Situs belajar: materi, kuis, lab, cheatsheet, glosarium, halaman progres | Next.js 16 (static export), Tailwind CSS v4, MDX |
-| [`api/`](api/README.md) | API pendamping (opsional): contoh REST API proyek latihan | Express 5, Prisma 7, SQLite, TypeScript, Zod, JWT |
+| 🌐 [`web/`](web/README.md) | Situs belajar: materi, kuis, lab, cheatsheet, glosarium, progres | Next.js 16 (static export), Tailwind CSS v4, MDX |
+| ⚙️ [`api/`](api/README.md) | API pendamping (opsional) untuk proyek latihan | Express 5, Prisma 7, SQLite, TypeScript, Zod, JWT |
 
-Aplikasi Expo proyek latihan (`kuliah-app`) **tidak** disertakan di repo. Kamu membangunnya sendiri langkah demi langkah di Bab 2 dan Bab 3.
+> [!NOTE]
+> Aplikasi Expo proyek latihan (`kuliah-app`) **tidak** disertakan di repo. Kamu membangunnya sendiri langkah demi langkah di Bab 2 dan Bab 3.
 
-## Daftar bab
+## ⚡ Mulai Cepat
 
-| Bab | Judul | Isi singkat |
-| --- | --- | --- |
-| 0 | Fondasi Web & JavaScript | Terminal, Node.js, JavaScript modern, async/await, Git, JSON |
-| 1 | CRUD & Backend dengan Express | Konsep CRUD, HTTP & REST, SQL, relasi, Express, Prisma + SQLite, validasi, pagination |
-| 2 | React & React Native dengan Expo | React dasar, state & effect, komponen inti, flexbox, FlatList, Expo Router, form, state global |
-| 3 | Full-stack: CRUD Mobile + API | Menyambungkan Expo ke API, create/read/update/delete, TanStack Query, upload gambar, login, capstone |
-| 4 | Expert: Aplikasi Siap Dipakai Banyak Orang | TypeScript end-to-end, arsitektur, keamanan API, performa, testing, offline-first, real-time, deploy & CI/CD |
+> [!IMPORTANT]
+> Butuh **Node.js 22.18+**.
 
-## Menjalankan di komputer sendiri
-
-Butuh **Node.js 22.18+**.
+**1️⃣ Situs belajar**
 
 ```powershell
-# 1) Situs belajar
 cd web
 npm install
 npm run dev -- -p 3001   # buka http://localhost:3001
+```
 
-# 2) API pendamping (terminal lain, opsional)
+<details>
+<summary><b>2️⃣ API pendamping (opsional, di terminal lain)</b></summary>
+
+<br/>
+
+```powershell
 cd api
 npm install
-Copy-Item .env.example .env   # di macOS/Linux: cp .env.example .env
+Copy-Item .env.example .env   # macOS/Linux: cp .env.example .env
 npm run db:migrate
 npm run db:seed
 npm run dev                   # http://localhost:3000/api
 ```
 
-## Deploy ke Netlify
+</details>
 
-Pengaturan build sudah ada di [`netlify.toml`](netlify.toml), jadi kamu tidak perlu mengisi apa pun secara manual.
+## 🚀 Deploy ke Netlify
+
+Pengaturan build sudah ada di [`netlify.toml`](netlify.toml), jadi tidak perlu isi manual.
 
 1. Push repo ini ke GitHub.
 2. Di Netlify pilih **Add new project → Import an existing project**, lalu pilih repo ini.
-3. Netlify membaca `netlify.toml` dan otomatis memakai:
+3. Tekan **Deploy**. Situs bisa dibuka di `https://nama-situs.netlify.app`.
 
-   | Pengaturan | Nilai |
-   | --- | --- |
-   | Base directory | `web` |
-   | Build command | `npm run build` |
-   | Publish directory | `web/out` |
-   | Node.js | 22 |
+<details>
+<summary><b>⚙️ Pengaturan yang dipakai otomatis</b></summary>
 
-4. Tekan **Deploy**. Setelah selesai, situs bisa dibuka di `https://nama-situs.netlify.app`.
+<br/>
 
-Yang di-deploy hanya folder `web/` (situs statis). API di folder `api/` butuh server Node.js sungguhan, jadi tidak ikut ke Netlify. Cara deploy API dibahas di Bab 4.
+| Pengaturan | Nilai |
+| --- | --- |
+| Base directory | `web` |
+| Build command | `npm run build` |
+| Publish directory | `web/out` |
+| Node.js | 22 |
 
-Kalau memakai domain sendiri, tambahkan environment variable `SITE_URL` (contoh `https://belajar.domainmu.com`) di Netlify supaya canonical, `sitemap.xml`, dan `robots.txt` memakai domain itu.
+</details>
 
-Hasil `npm run build` ada di `web/out/` dan juga bisa di-hosting di layanan statis lain. Untuk GitHub Pages, lihat catatan `BASE_PATH` di [`web/README.md`](web/README.md).
+<details>
+<summary><b>🌍 Domain sendiri & hosting lain</b></summary>
 
-## Perintah pengecekan
+<br/>
+
+- Tambahkan environment variable `SITE_URL` (contoh `https://belajar.domainmu.com`) supaya canonical, `sitemap.xml`, dan `robots.txt` memakai domain itu.
+- Hasil `npm run build` ada di `web/out/` dan bisa di-hosting di layanan statis lain. Untuk GitHub Pages, lihat catatan `BASE_PATH` di [`web/README.md`](web/README.md).
+
+</details>
+
+> [!TIP]
+> Yang di-deploy hanya `web/` (situs statis). API di `api/` butuh server Node.js sungguhan; cara deploy-nya dibahas di Bab 4.
+
+## ✅ Perintah Pengecekan
 
 | Folder | Perintah |
 | --- | --- |
-| `web` | `npm run typecheck`, `npm run lint`, `npm test`, `npm run check:content`, `npm run build` |
-| `api` | `npm run typecheck`, `npm test` |
+| `web` | `npm run typecheck` · `npm run lint` · `npm test` · `npm run check:content` · `npm run build` |
+| `api` | `npm run typecheck` · `npm test` |
 
-## Lisensi
+## 📜 Lisensi
 
-- Kode program: [MIT](LICENSE).
-- Materi belajar di `web/content/`: [CC BY 4.0](LICENSE-CONTENT.md). Boleh dipakai ulang asal menyebut sumbernya.
+- 💻 **Kode program**: [MIT](LICENSE)
+- 📝 **Materi belajar** di `web/content/`: [CC BY 4.0](LICENSE-CONTENT.md). Boleh dipakai ulang asal menyebut sumbernya.
+
+<div align="center">
+
+<br/>
+
+Dibuat dengan ❤️ untuk pemula Indonesia · ⭐ Beri bintang kalau bermanfaat!
+
+</div>

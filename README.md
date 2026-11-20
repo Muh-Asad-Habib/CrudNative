@@ -51,7 +51,7 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/beranda-desktop.gif" width="560"/> | <img src="docs/preview/beranda-mobile.gif" width="200"/> |
+| <img src="docs/preview/beranda-desktop.gif" width="560"/> | <img src="docs/preview/beranda-mobile.gif" width="230"/> |
 
 </details>
 
@@ -62,7 +62,7 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/belajar-desktop.gif" width="560"/> | <img src="docs/preview/belajar-mobile.gif" width="200"/> |
+| <img src="docs/preview/belajar-desktop.gif" width="560"/> | <img src="docs/preview/belajar-mobile.gif" width="230"/> |
 
 </details>
 
@@ -73,7 +73,7 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/pelajaran-desktop.gif" width="560"/> | <img src="docs/preview/pelajaran-mobile.gif" width="200"/> |
+| <img src="docs/preview/pelajaran-desktop.gif" width="560"/> | <img src="docs/preview/pelajaran-mobile.gif" width="230"/> |
 
 </details>
 
@@ -84,7 +84,7 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/lab-desktop.gif" width="560"/> | <img src="docs/preview/lab-mobile.gif" width="200"/> |
+| <img src="docs/preview/lab-desktop.gif" width="560"/> | <img src="docs/preview/lab-mobile.gif" width="230"/> |
 
 </details>
 
@@ -95,7 +95,7 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/cheatsheet-desktop.gif" width="560"/> | <img src="docs/preview/cheatsheet-mobile.gif" width="200"/> |
+| <img src="docs/preview/cheatsheet-desktop.gif" width="560"/> | <img src="docs/preview/cheatsheet-mobile.gif" width="230"/> |
 
 </details>
 
@@ -106,7 +106,7 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/glosarium-desktop.gif" width="560"/> | <img src="docs/preview/glosarium-mobile.gif" width="200"/> |
+| <img src="docs/preview/glosarium-desktop.gif" width="560"/> | <img src="docs/preview/glosarium-mobile.gif" width="230"/> |
 
 </details>
 
@@ -117,7 +117,7 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/progres-desktop.gif" width="560"/> | <img src="docs/preview/progres-mobile.gif" width="200"/> |
+| <img src="docs/preview/progres-desktop.gif" width="560"/> | <img src="docs/preview/progres-mobile.gif" width="230"/> |
 
 </details>
 

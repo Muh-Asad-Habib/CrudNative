@@ -23,7 +23,7 @@ Mulai dari JavaScript dasar → bikin API & database → bangun aplikasi HP yang
 
 <br/>
 
-<a href="https://crudnative.netlify.app/"><img src="docs/preview/beranda-desktop.jpg" alt="Beranda CRUDNative" width="820"/></a>
+<a href="https://crudnative.netlify.app/"><img src="docs/preview/beranda-desktop.gif" alt="Beranda CRUDNative" width="820"/></a>
 
 </div>
 
@@ -42,7 +42,7 @@ Mulai dari JavaScript dasar → bikin API & database → bangun aplikasi HP yang
 
 ## 👀 Preview
 
-Klik tiap bagian untuk melihat tampilan **desktop** 🖥️ dan **mobile** 📱.
+Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile** 📱.
 
 <details open>
 <summary><b>🏠 Beranda</b> · <a href="https://crudnative.netlify.app/">buka</a></summary>
@@ -51,7 +51,7 @@ Klik tiap bagian untuk melihat tampilan **desktop** 🖥️ dan **mobile** 📱.
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/beranda-desktop.jpg" width="560"/> | <img src="docs/preview/beranda-mobile.jpg" width="200"/> |
+| <img src="docs/preview/beranda-desktop.gif" width="560"/> | <img src="docs/preview/beranda-mobile.gif" width="200"/> |
 
 </details>
 
@@ -62,7 +62,7 @@ Klik tiap bagian untuk melihat tampilan **desktop** 🖥️ dan **mobile** 📱.
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/belajar-desktop.jpg" width="560"/> | <img src="docs/preview/belajar-mobile.jpg" width="200"/> |
+| <img src="docs/preview/belajar-desktop.gif" width="560"/> | <img src="docs/preview/belajar-mobile.gif" width="200"/> |
 
 </details>
 
@@ -73,7 +73,7 @@ Klik tiap bagian untuk melihat tampilan **desktop** 🖥️ dan **mobile** 📱.
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/pelajaran-desktop.jpg" width="560"/> | <img src="docs/preview/pelajaran-mobile.jpg" width="200"/> |
+| <img src="docs/preview/pelajaran-desktop.gif" width="560"/> | <img src="docs/preview/pelajaran-mobile.gif" width="200"/> |
 
 </details>
 
@@ -84,7 +84,7 @@ Klik tiap bagian untuk melihat tampilan **desktop** 🖥️ dan **mobile** 📱.
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/lab-desktop.jpg" width="560"/> | <img src="docs/preview/lab-mobile.jpg" width="200"/> |
+| <img src="docs/preview/lab-desktop.gif" width="560"/> | <img src="docs/preview/lab-mobile.gif" width="200"/> |
 
 </details>
 
@@ -95,7 +95,7 @@ Klik tiap bagian untuk melihat tampilan **desktop** 🖥️ dan **mobile** 📱.
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/cheatsheet-desktop.jpg" width="560"/> | <img src="docs/preview/cheatsheet-mobile.jpg" width="200"/> |
+| <img src="docs/preview/cheatsheet-desktop.gif" width="560"/> | <img src="docs/preview/cheatsheet-mobile.gif" width="200"/> |
 
 </details>
 
@@ -106,7 +106,7 @@ Klik tiap bagian untuk melihat tampilan **desktop** 🖥️ dan **mobile** 📱.
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/glosarium-desktop.jpg" width="560"/> | <img src="docs/preview/glosarium-mobile.jpg" width="200"/> |
+| <img src="docs/preview/glosarium-desktop.gif" width="560"/> | <img src="docs/preview/glosarium-mobile.gif" width="200"/> |
 
 </details>
 
@@ -117,7 +117,7 @@ Klik tiap bagian untuk melihat tampilan **desktop** 🖥️ dan **mobile** 📱.
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
-| <img src="docs/preview/progres-desktop.jpg" width="560"/> | <img src="docs/preview/progres-mobile.jpg" width="200"/> |
+| <img src="docs/preview/progres-desktop.gif" width="560"/> | <img src="docs/preview/progres-mobile.gif" width="200"/> |
 
 </details>
 

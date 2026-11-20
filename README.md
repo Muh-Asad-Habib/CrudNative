@@ -44,10 +44,16 @@ Mulai dari JavaScript dasar → bikin API & database → bangun aplikasi HP yang
 
 Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile** 📱.
 
+> [!NOTE]
+> Data di preview adalah **progres contoh** (23/46 pelajaran, streak 14 hari) agar fitur terlihat. Saat pertama dibuka, progresmu mulai dari nol.
+
 <details open>
 <summary><b>🏠 Beranda</b> · <a href="https://crudnative.netlify.app/">buka</a></summary>
 
 <br/>
+
+✨ Animasi **alur simpan** data · tombol **Lanjutkan** ke pelajaran terakhir · pencarian <kbd>Ctrl</kbd>+<kbd>K</kbd> · **mode gelap** · menu mobile.
+
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
@@ -60,6 +66,9 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 
 <br/>
 
+✨ Bar **progres** keseluruhan · tanda ✔️ pelajaran selesai · **kuis akhir bab** · sidebar bab yang bisa dilipat.
+
+
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
 | <img src="docs/preview/belajar-desktop.gif" width="560"/> | <img src="docs/preview/belajar-mobile.gif" width="230"/> |
@@ -70,6 +79,9 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 <summary><b>📝 Halaman Pelajaran</b> · <a href="https://crudnative.netlify.app/belajar/fondasi/selamat-datang/">buka</a></summary>
 
 <br/>
+
+✨ Tab kode per **perangkat** · tombol **salin kode** · **petunjuk bertahap** · kuis dengan **pembahasan** · tandai **selesai**.
+
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
@@ -82,6 +94,9 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 
 <br/>
 
+✨ Simulator **CRUD** langsung: tambah, ubah, hapus data lalu lihat **Request → SQL → Response** dan isi **tabel database** berubah real-time.
+
+
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
 | <img src="docs/preview/lab-desktop.gif" width="560"/> | <img src="docs/preview/lab-mobile.gif" width="230"/> |
@@ -92,6 +107,9 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 <summary><b>📄 Cheatsheet</b> · <a href="https://crudnative.netlify.app/cheatsheet/">buka</a></summary>
 
 <br/>
+
+✨ **Daftar isi** cepat · tab **INNER / LEFT JOIN** & **INSERT / UPDATE** · tombol salin · **cetak ke PDF**.
+
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
@@ -104,6 +122,9 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 
 <br/>
 
+✨ **Cari istilah** instan · **filter kategori** · penjelasan singkat berbahasa Indonesia.
+
+
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
 | <img src="docs/preview/glosarium-desktop.gif" width="560"/> | <img src="docs/preview/glosarium-mobile.gif" width="230"/> |
@@ -114,6 +135,9 @@ Klik tiap bagian untuk melihat animasi tampilan **desktop** 🖥️ dan **mobile
 <summary><b>📊 Progres Belajar</b> · <a href="https://crudnative.netlify.app/progres/">buka</a></summary>
 
 <br/>
+
+✨ **Heatmap** hari belajar & streak · progres **per bab** · **cap prestasi** · riwayat **nilai kuis** · pelajaran ditandai · **ekspor / impor** progres.
+
 
 | 🖥️ Desktop | 📱 Mobile |
 | :---: | :---: |
